@@ -1,0 +1,193 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" font-family="'SF Mono', 'Fira Code', 'Consolas', monospace">
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="glow-strong">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <marker id="arrow-green" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#00FF41"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#FF3333"/>
+    </marker>
+    <marker id="arrow-dim" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#555"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="800" fill="#0a0a0a"/>
+
+  <!-- Title -->
+  <text x="600" y="40" text-anchor="middle" fill="#00FF41" font-size="22" font-weight="bold" filter="url(#glow)">AgentWard — Architecture</text>
+
+  <!-- ==================== LAYER 1: Agent Hosts ==================== -->
+  <text x="50" y="85" fill="#666" font-size="11" letter-spacing="3">AGENT HOSTS</text>
+
+  <!-- Agent host boxes -->
+  <g>
+    <!-- Claude Desktop -->
+    <rect x="50" y="95" width="155" height="42" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text x="127" y="121" text-anchor="middle" fill="#aaa" font-size="12">Claude Desktop</text>
+
+    <!-- Claude Code -->
+    <rect x="225" y="95" width="140" height="42" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text x="295" y="121" text-anchor="middle" fill="#aaa" font-size="12">Claude Code</text>
+
+    <!-- Cursor -->
+    <rect x="385" y="95" width="110" height="42" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text x="440" y="121" text-anchor="middle" fill="#aaa" font-size="12">Cursor</text>
+
+    <!-- Windsurf -->
+    <rect x="515" y="95" width="120" height="42" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text x="575" y="121" text-anchor="middle" fill="#aaa" font-size="12">Windsurf</text>
+
+    <!-- VS Code -->
+    <rect x="655" y="95" width="130" height="42" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text x="720" y="121" text-anchor="middle" fill="#aaa" font-size="12">VS Code</text>
+
+    <!-- ClawdBot UI -->
+    <rect x="805" y="95" width="145" height="42" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text x="877" y="121" text-anchor="middle" fill="#aaa" font-size="12">ClawdBot UI</text>
+
+    <!-- API Clients -->
+    <rect x="970" y="95" width="145" height="42" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text x="1042" y="121" text-anchor="middle" fill="#aaa" font-size="12">API Clients</text>
+  </g>
+
+  <!-- Arrows from agents to AgentWard -->
+  <!-- MCP stdio arrows (left 5 boxes) -->
+  <line x1="127" y1="137" x2="127" y2="220" stroke="#555" stroke-width="1.5" marker-end="url(#arrow-dim)"/>
+  <line x1="295" y1="137" x2="295" y2="220" stroke="#555" stroke-width="1.5" marker-end="url(#arrow-dim)"/>
+  <line x1="440" y1="137" x2="440" y2="220" stroke="#555" stroke-width="1.5" marker-end="url(#arrow-dim)"/>
+  <line x1="575" y1="137" x2="575" y2="220" stroke="#555" stroke-width="1.5" marker-end="url(#arrow-dim)"/>
+  <line x1="720" y1="137" x2="720" y2="220" stroke="#555" stroke-width="1.5" marker-end="url(#arrow-dim)"/>
+
+  <!-- HTTP arrows (right 2 boxes) -->
+  <line x1="877" y1="137" x2="877" y2="220" stroke="#555" stroke-width="1.5" marker-end="url(#arrow-dim)"/>
+  <line x1="1042" y1="137" x2="1042" y2="220" stroke="#555" stroke-width="1.5" marker-end="url(#arrow-dim)"/>
+
+  <!-- Protocol labels -->
+  <text x="400" y="185" text-anchor="middle" fill="#00FF41" font-size="10" opacity="0.7">JSON-RPC tools/call</text>
+  <text x="950" y="185" text-anchor="middle" fill="#00FF41" font-size="10" opacity="0.7">POST /tools-invoke</text>
+
+  <!-- ==================== LAYER 2: AgentWard ==================== -->
+  <!-- Main green border box -->
+  <rect x="30" y="210" width="1140" height="310" rx="6" fill="#0d1a0d" stroke="#00FF41" stroke-width="2" filter="url(#glow-strong)"/>
+
+  <!-- AgentWard title bar -->
+  <rect x="30" y="210" width="1140" height="40" rx="6" fill="#00FF41" opacity="0.15"/>
+  <rect x="30" y="244" width="1140" height="6" fill="#0d1a0d"/>
+  <text x="600" y="237" text-anchor="middle" fill="#00FF41" font-size="16" font-weight="bold" filter="url(#glow)">AGENTWARD — PERMISSION CONTROL PLANE</text>
+
+  <!-- Proxy boxes -->
+  <!-- Stdio Proxy -->
+  <rect x="70" y="270" width="340" height="70" rx="4" fill="#111" stroke="#00FF41" stroke-width="1" opacity="0.8"/>
+  <text x="240" y="295" text-anchor="middle" fill="#00FF41" font-size="14" font-weight="bold">Stdio Proxy</text>
+  <text x="240" y="318" text-anchor="middle" fill="#668866" font-size="11">MCP JSON-RPC 2.0 over stdio</text>
+  <text x="240" y="332" text-anchor="middle" fill="#668866" font-size="11">Subprocess management</text>
+
+  <!-- HTTP Reverse Proxy -->
+  <rect x="460" y="270" width="340" height="70" rx="4" fill="#111" stroke="#00FF41" stroke-width="1" opacity="0.8"/>
+  <text x="630" y="295" text-anchor="middle" fill="#00FF41" font-size="14" font-weight="bold">HTTP Reverse Proxy</text>
+  <text x="630" y="318" text-anchor="middle" fill="#668866" font-size="11">Gateway interception + WebSocket</text>
+  <text x="630" y="332" text-anchor="middle" fill="#668866" font-size="11">passthrough for UI</text>
+
+  <!-- Policy YAML file icon -->
+  <rect x="860" y="270" width="270" height="70" rx="4" fill="#111" stroke="#444" stroke-width="1"/>
+  <!-- File icon -->
+  <polygon points="880,282 880,328 910,328 910,294 898,282" fill="none" stroke="#00FF41" stroke-width="1.5"/>
+  <polyline points="898,282 898,294 910,294" fill="none" stroke="#00FF41" stroke-width="1.5"/>
+  <text x="930" y="300" fill="#00FF41" font-size="13" font-weight="bold">agentward.yaml</text>
+  <text x="930" y="318" fill="#668866" font-size="10">Declarative policy rules</text>
+
+  <!-- Connecting line from YAML to Policy Engine -->
+  <line x1="995" y1="340" x2="995" y2="370" stroke="#00FF41" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>
+
+  <!-- Policy Engine -->
+  <rect x="70" y="370" width="530" height="65" rx="4" fill="#111" stroke="#00FF41" stroke-width="1.5"/>
+  <text x="335" y="395" text-anchor="middle" fill="#00FF41" font-size="14" font-weight="bold">Policy Engine</text>
+
+  <!-- Decision badges -->
+  <rect x="105" y="408" width="80" height="22" rx="11" fill="#00FF41" opacity="0.2" stroke="#00FF41" stroke-width="1"/>
+  <text x="145" y="423" text-anchor="middle" fill="#00FF41" font-size="11" font-weight="bold">ALLOW</text>
+
+  <rect x="205" y="408" width="80" height="22" rx="11" fill="#FF3333" opacity="0.2" stroke="#FF3333" stroke-width="1"/>
+  <text x="245" y="423" text-anchor="middle" fill="#FF3333" font-size="11" font-weight="bold">BLOCK</text>
+
+  <rect x="305" y="408" width="90" height="22" rx="11" fill="#FFaa00" opacity="0.2" stroke="#FFaa00" stroke-width="1"/>
+  <text x="350" y="423" text-anchor="middle" fill="#FFaa00" font-size="11" font-weight="bold">APPROVE</text>
+
+  <rect x="415" y="408" width="65" height="22" rx="11" fill="#4488FF" opacity="0.2" stroke="#4488FF" stroke-width="1"/>
+  <text x="447" y="423" text-anchor="middle" fill="#4488FF" font-size="11" font-weight="bold">LOG</text>
+
+  <rect x="500" y="408" width="80" height="22" rx="11" fill="#aa44ff" opacity="0.2" stroke="#aa44ff" stroke-width="1"/>
+  <text x="540" y="423" text-anchor="middle" fill="#aa44ff" font-size="11" font-weight="bold">REDACT</text>
+
+  <!-- Connecting lines from proxies to engine -->
+  <line x1="240" y1="340" x2="240" y2="370" stroke="#00FF41" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>
+  <line x1="630" y1="340" x2="500" y2="370" stroke="#00FF41" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>
+
+  <!-- Audit Logger -->
+  <rect x="660" y="370" width="470" height="65" rx="4" fill="#111" stroke="#444" stroke-width="1"/>
+  <text x="895" y="395" text-anchor="middle" fill="#ccc" font-size="14" font-weight="bold">Audit Logger</text>
+  <text x="895" y="418" text-anchor="middle" fill="#668866" font-size="11">Structured JSON Lines  ·  Rich stderr output</text>
+  <text x="895" y="432" text-anchor="middle" fill="#668866" font-size="11">Every decision logged with full context</text>
+
+  <!-- Connecting line from engine to audit -->
+  <line x1="600" y1="402" x2="660" y2="402" stroke="#444" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- ==================== Decision Arrows ==================== -->
+
+  <!-- ALLOW path (green) — left side -->
+  <line x1="250" y1="520" x2="250" y2="600" stroke="#00FF41" stroke-width="2.5" marker-end="url(#arrow-green)" filter="url(#glow)"/>
+  <rect x="195" y="548" width="110" height="24" rx="12" fill="#0a0a0a" stroke="#00FF41" stroke-width="1"/>
+  <text x="250" y="565" text-anchor="middle" fill="#00FF41" font-size="12" font-weight="bold">✓ ALLOW</text>
+
+  <!-- ALLOW path (green) — right side -->
+  <line x1="800" y1="520" x2="800" y2="600" stroke="#00FF41" stroke-width="2.5" marker-end="url(#arrow-green)" filter="url(#glow)"/>
+  <rect x="745" y="548" width="110" height="24" rx="12" fill="#0a0a0a" stroke="#00FF41" stroke-width="1"/>
+  <text x="800" y="565" text-anchor="middle" fill="#00FF41" font-size="12" font-weight="bold">✓ ALLOW</text>
+
+  <!-- BLOCK path (red) — center -->
+  <line x1="530" y1="520" x2="530" y2="565" stroke="#FF3333" stroke-width="2.5"/>
+  <!-- X symbol -->
+  <line x1="515" y1="565" x2="545" y2="595" stroke="#FF3333" stroke-width="3"/>
+  <line x1="545" y1="565" x2="515" y2="595" stroke="#FF3333" stroke-width="3"/>
+  <rect x="480" y="548" width="100" height="24" rx="12" fill="#0a0a0a" stroke="#FF3333" stroke-width="1"/>
+  <text x="530" y="565" text-anchor="middle" fill="#FF3333" font-size="12" font-weight="bold">✗ BLOCK</text>
+  <text x="530" y="625" text-anchor="middle" fill="#FF3333" font-size="10" opacity="0.7">Call never reaches</text>
+  <text x="530" y="640" text-anchor="middle" fill="#FF3333" font-size="10" opacity="0.7">tool servers</text>
+
+  <!-- ==================== LAYER 3: Tool Servers ==================== -->
+  <text x="50" y="660" fill="#666" font-size="11" letter-spacing="3">TOOL SERVERS</text>
+
+  <!-- MCP Servers -->
+  <rect x="70" y="670" width="400" height="55" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+  <text x="270" y="695" text-anchor="middle" fill="#aaa" font-size="13" font-weight="bold">MCP Servers</text>
+  <text x="270" y="714" text-anchor="middle" fill="#555" font-size="11">filesystem  ·  GitHub  ·  database  ·  Slack</text>
+
+  <!-- ClawdBot Gateway -->
+  <rect x="560" y="670" width="400" height="55" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+  <text x="760" y="695" text-anchor="middle" fill="#aaa" font-size="13" font-weight="bold">ClawdBot Gateway</text>
+  <text x="760" y="714" text-anchor="middle" fill="#555" font-size="11">email  ·  calendar  ·  shell  ·  web browser</text>
+
+  <!-- Transport labels on bottom -->
+  <text x="270" y="745" text-anchor="middle" fill="#00FF41" font-size="10" opacity="0.5">stdio</text>
+  <text x="760" y="745" text-anchor="middle" fill="#00FF41" font-size="10" opacity="0.5">HTTP / WebSocket</text>
+
+  <!-- ==================== Footer ==================== -->
+  <line x1="100" y1="768" x2="1100" y2="768" stroke="#222" stroke-width="1"/>
+  <text x="600" y="790" text-anchor="middle" fill="#00FF41" font-size="12" opacity="0.6" filter="url(#glow)">Code-level enforcement outside the LLM context window — prompt injection can't override structural policies</text>
+
+</svg>
