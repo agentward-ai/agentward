@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "memory-server": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"]
+    }
+  }
+}

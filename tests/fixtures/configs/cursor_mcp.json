@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "local-files": {
+      "command": "python",
+      "args": ["-m", "mcp_server_filesystem", "/tmp"]
+    },
+    "remote-api": {
+      "type": "http",
+      "url": "https://api.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer test-token-123"
+      }
+    }
+  }
+}

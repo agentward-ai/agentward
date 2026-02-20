@@ -1,0 +1,45 @@
+# AgentWard project context (local only, not committed)
+CLAUDE.md
+BRIEF.md
+.claude/
+
+# Local config files
+agentward.yaml
+sample_mcp_config.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Distribution
+*.whl
+*.tar.gz

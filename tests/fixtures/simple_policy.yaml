@@ -1,0 +1,9 @@
+version: "1.0"
+
+skills:
+  email-manager:
+    gmail:
+      read: true
+      send: false
+      delete: false
+      draft: true

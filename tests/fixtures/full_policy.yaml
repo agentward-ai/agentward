@@ -1,0 +1,70 @@
+version: "1.0"
+
+skills:
+  email-manager:
+    gmail:
+      read: true
+      send: false
+      delete: false
+      draft: true
+      filters:
+        exclude_labels: ["Finance", "Medical"]
+    google_calendar:
+      denied: true
+
+  calendar-assistant:
+    google_calendar:
+      read: true
+      create: true
+      delete: false
+      modify:
+        own_events: true
+        others_events: false
+    gmail:
+      denied: true
+
+  finance-tracker:
+    gmail:
+      read: true
+      filters:
+        only_from: ["chase.com", "amex.com", "venmo.com"]
+    filesystem:
+      read: true
+      write: false
+    network:
+      outbound: false
+
+  web-researcher:
+    browser:
+      allowed: true
+    gmail:
+      denied: true
+    filesystem:
+      denied: true
+
+skill_chaining:
+  - email-manager cannot trigger web-researcher
+  - finance-tracker cannot trigger any other skill
+  - web-researcher cannot trigger shell-executor
+
+require_approval:
+  - send_email
+  - delete_file
+  - outbound_network_with_pii
+  - shell_command_with_sudo
+
+data_boundaries:
+  hipaa_zone:
+    skills: [ehr-connector, clinical-notes]
+    classification: phi
+    rules:
+      - phi_data cannot flow outside hipaa_zone
+      - phi_data cannot go to external APIs without BAA
+    on_violation: block_and_notify
+
+  financial_zone:
+    skills: [finance-tracker, accounting-tool]
+    classification: financial
+    rules:
+      - financial_data requires outbound false
+    on_violation: block_and_log

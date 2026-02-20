@@ -1,0 +1,29 @@
+{
+  "name": "agentward",
+  "version": "0.1.0",
+  "description": "Open-source permission control plane for AI agents. Scan, enforce, and audit every tool call.",
+  "bin": {
+    "agentward": "index.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "mcp",
+    "security",
+    "permissions",
+    "openclaw",
+    "clawdbot"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agentward-ai/agentward"
+  },
+  "homepage": "https://agentward.ai",
+  "engines": {
+    "node": ">=18"
+  }
+}

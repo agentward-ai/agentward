@@ -1,0 +1,10 @@
+{
+  "auth": {},
+  "channels": {},
+  "gateway": {
+    "port": 8080
+  },
+  "hooks": {},
+  "plugins": {},
+  "skills": {}
+}

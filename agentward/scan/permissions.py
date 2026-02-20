@@ -1,0 +1,565 @@
+"""Permission map builder and risk rating engine.
+
+Analyzes tool metadata (names, inputSchemas, annotations) to classify
+data access patterns and compute risk ratings for each tool.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from enum import Enum
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from agentward.scan.enumerator import (
+    EnumerationResult,
+    ServerCapabilities,
+    ToolAnnotations,
+    ToolInfo,
+)
+from agentward.scan.config import ServerConfig
+
+
+class RiskLevel(str, Enum):
+    """Risk rating for a tool or server."""
+
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+class DataAccessType(str, Enum):
+    """Category of data a tool can access."""
+
+    FILESYSTEM = "filesystem"
+    NETWORK = "network"
+    DATABASE = "database"
+    EMAIL = "email"
+    MESSAGING = "messaging"
+    CREDENTIALS = "credentials"
+    SHELL = "shell"
+    CODE = "code"
+    BROWSER = "browser"
+    UNKNOWN = "unknown"
+
+
+class DataAccess(BaseModel):
+    """A single data access classification for a tool."""
+
+    type: DataAccessType
+    read: bool = False
+    write: bool = False
+    reason: str  # why we classified this way
+
+
+class ToolPermission(BaseModel):
+    """Full permission analysis of a single tool."""
+
+    tool: ToolInfo
+    data_access: list[DataAccess] = Field(default_factory=list)
+    risk_level: RiskLevel = RiskLevel.LOW
+    risk_reasons: list[str] = Field(default_factory=list)
+    is_destructive: bool = False
+    is_read_only: bool = True
+
+
+class ServerPermissionMap(BaseModel):
+    """Permission analysis for all tools in a single server."""
+
+    server: ServerConfig
+    enumeration_method: str
+    capabilities: ServerCapabilities | None = None
+    tools: list[ToolPermission] = Field(default_factory=list)
+    overall_risk: RiskLevel = RiskLevel.LOW
+    warning: str | None = None
+
+
+class ScanResult(BaseModel):
+    """Complete result of an agentward scan."""
+
+    servers: list[ServerPermissionMap] = Field(default_factory=list)
+    config_sources: list[str] = Field(default_factory=list)
+    scan_timestamp: str = ""
+
+
+# --- Schema property name patterns for data access classification ---
+
+_SCHEMA_PATTERNS: dict[str, tuple[DataAccessType, bool, bool]] = {
+    # (property_name_substring, (access_type, is_read, is_write))
+    # Filesystem
+    "path": (DataAccessType.FILESYSTEM, True, False),
+    "file_path": (DataAccessType.FILESYSTEM, True, False),
+    "filepath": (DataAccessType.FILESYSTEM, True, False),
+    "file": (DataAccessType.FILESYSTEM, True, False),
+    "directory": (DataAccessType.FILESYSTEM, True, False),
+    "dir": (DataAccessType.FILESYSTEM, True, False),
+    "folder": (DataAccessType.FILESYSTEM, True, False),
+    # Network
+    "url": (DataAccessType.NETWORK, True, False),
+    "uri": (DataAccessType.NETWORK, True, False),
+    "endpoint": (DataAccessType.NETWORK, True, False),
+    "host": (DataAccessType.NETWORK, True, False),
+    # Database
+    "sql": (DataAccessType.DATABASE, True, False),
+    "query": (DataAccessType.DATABASE, True, False),
+    "table": (DataAccessType.DATABASE, True, False),
+    "table_name": (DataAccessType.DATABASE, True, False),
+    "database": (DataAccessType.DATABASE, True, False),
+    # Email
+    "subject": (DataAccessType.EMAIL, False, True),
+    "to": (DataAccessType.EMAIL, False, True),
+    "cc": (DataAccessType.EMAIL, False, True),
+    "bcc": (DataAccessType.EMAIL, False, True),
+    # Messaging
+    "channel_id": (DataAccessType.MESSAGING, False, True),
+    "channel": (DataAccessType.MESSAGING, False, True),
+    "thread_ts": (DataAccessType.MESSAGING, True, False),
+    "room_id": (DataAccessType.MESSAGING, False, True),
+    # Credentials
+    "token": (DataAccessType.CREDENTIALS, True, False),
+    "api_key": (DataAccessType.CREDENTIALS, True, False),
+    "password": (DataAccessType.CREDENTIALS, True, False),
+    "secret": (DataAccessType.CREDENTIALS, True, False),
+    "credentials": (DataAccessType.CREDENTIALS, True, False),
+    # Shell
+    "command": (DataAccessType.SHELL, False, True),
+    "cmd": (DataAccessType.SHELL, False, True),
+    "script": (DataAccessType.SHELL, False, True),
+    "shell": (DataAccessType.SHELL, False, True),
+}
+
+# --- Tool name verb patterns for mutability classification ---
+
+_READ_VERBS = frozenset({
+    "read", "get", "list", "search", "find", "fetch", "query",
+    "describe", "show", "view", "info", "status", "check", "inspect",
+    "browse", "lookup",
+})
+
+_WRITE_VERBS = frozenset({
+    "write", "create", "add", "insert", "put", "set", "update",
+    "modify", "edit", "patch", "post", "send", "push", "upload",
+    "save", "store", "draft", "reply", "comment", "merge", "fork",
+})
+
+_DELETE_VERBS = frozenset({
+    "delete", "remove", "drop", "purge", "destroy", "clear", "truncate",
+    "revoke", "unlink",
+})
+
+_EXECUTE_VERBS = frozenset({
+    "execute", "run", "exec", "invoke", "call", "spawn", "start",
+    "launch", "shell", "bash", "eval",
+})
+
+# --- Tool name resource patterns for data access type ---
+
+_RESOURCE_PATTERNS: dict[str, DataAccessType] = {
+    "file": DataAccessType.FILESYSTEM,
+    "directory": DataAccessType.FILESYSTEM,
+    "dir": DataAccessType.FILESYSTEM,
+    "folder": DataAccessType.FILESYSTEM,
+    "fs": DataAccessType.FILESYSTEM,
+    "path": DataAccessType.FILESYSTEM,
+    "email": DataAccessType.EMAIL,
+    "gmail": DataAccessType.EMAIL,
+    "mail": DataAccessType.EMAIL,
+    "message": DataAccessType.MESSAGING,
+    "slack": DataAccessType.MESSAGING,
+    "channel": DataAccessType.MESSAGING,
+    "chat": DataAccessType.MESSAGING,
+    "web": DataAccessType.NETWORK,
+    "http": DataAccessType.NETWORK,
+    "fetch": DataAccessType.NETWORK,
+    "download": DataAccessType.NETWORK,
+    "url": DataAccessType.NETWORK,
+    "browser": DataAccessType.BROWSER,
+    "page": DataAccessType.BROWSER,
+    "navigate": DataAccessType.BROWSER,
+    "sql": DataAccessType.DATABASE,
+    "query": DataAccessType.DATABASE,
+    "postgres": DataAccessType.DATABASE,
+    "mysql": DataAccessType.DATABASE,
+    "sqlite": DataAccessType.DATABASE,
+    "db": DataAccessType.DATABASE,
+    "table": DataAccessType.DATABASE,
+    "record": DataAccessType.DATABASE,
+    "shell": DataAccessType.SHELL,
+    "bash": DataAccessType.SHELL,
+    "terminal": DataAccessType.SHELL,
+    "cmd": DataAccessType.SHELL,
+    "command": DataAccessType.SHELL,
+    "exec": DataAccessType.SHELL,
+    "code": DataAccessType.CODE,
+    "git": DataAccessType.CODE,
+    "repo": DataAccessType.CODE,
+    "commit": DataAccessType.CODE,
+    "branch": DataAccessType.CODE,
+    "pull_request": DataAccessType.CODE,
+    "issue": DataAccessType.CODE,
+}
+
+
+def build_permission_map(results: list[EnumerationResult]) -> ScanResult:
+    """Build a complete permission map from enumeration results.
+
+    Args:
+        results: The enumeration results from all scanned servers.
+
+    Returns:
+        A ScanResult with per-tool permission analysis and risk ratings.
+    """
+    servers: list[ServerPermissionMap] = []
+    config_sources: set[str] = set()
+
+    for result in results:
+        config_sources.add(str(result.server.source_file))
+
+        tool_perms = [analyze_tool(tool) for tool in result.tools]
+
+        # Overall risk is the highest risk among all tools
+        overall_risk = RiskLevel.LOW
+        if tool_perms:
+            risk_order = [RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL]
+            overall_risk = max(
+                (tp.risk_level for tp in tool_perms),
+                key=lambda r: risk_order.index(r),
+            )
+
+        warning = result.error if result.enumeration_method in ("static_inference", "failed") else None
+
+        servers.append(
+            ServerPermissionMap(
+                server=result.server,
+                enumeration_method=result.enumeration_method,
+                capabilities=result.capabilities,
+                tools=tool_perms,
+                overall_risk=overall_risk,
+                warning=warning,
+            )
+        )
+
+    return ScanResult(
+        servers=servers,
+        config_sources=sorted(config_sources),
+        scan_timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def analyze_tool(tool: ToolInfo) -> ToolPermission:
+    """Analyze a single tool's data access patterns and risk level.
+
+    Uses three signal sources (in order of reliability):
+      1. Annotations (readOnlyHint, destructiveHint) — most reliable
+      2. inputSchema property names — structural signal
+      3. Tool name analysis — heuristic
+
+    Args:
+        tool: The tool metadata from tools/list.
+
+    Returns:
+        A ToolPermission with data access classifications and risk rating.
+    """
+    data_access: list[DataAccess] = []
+    seen_types: set[DataAccessType] = set()
+
+    # Signal 1: Analyze inputSchema property names
+    schema_accesses = _analyze_schema(tool.input_schema)
+    for access in schema_accesses:
+        if access.type not in seen_types:
+            data_access.append(access)
+            seen_types.add(access.type)
+
+    # Signal 2: Analyze tool name for resource type and verb
+    name_accesses = _analyze_tool_name(tool.name)
+    for access in name_accesses:
+        if access.type not in seen_types:
+            data_access.append(access)
+            seen_types.add(access.type)
+
+    # Determine read-only / destructive from annotations and name analysis
+    verb = _extract_verb(tool.name)
+    is_read_only = verb in _READ_VERBS if verb else True
+    is_destructive = verb in _DELETE_VERBS if verb else False
+
+    # Annotations override heuristics when present
+    if tool.annotations is not None:
+        if tool.annotations.read_only_hint is True:
+            is_read_only = True
+            is_destructive = False
+        elif tool.annotations.read_only_hint is False:
+            is_read_only = False
+        if tool.annotations.destructive_hint is True:
+            is_destructive = True
+
+    # Update data access read/write flags based on verb analysis
+    for access in data_access:
+        if is_read_only:
+            access.read = True
+            access.write = False
+        elif is_destructive or verb in _DELETE_VERBS:
+            access.write = True
+        elif verb in _WRITE_VERBS or verb in _EXECUTE_VERBS:
+            access.write = True
+
+    # Compute risk
+    risk_level, risk_reasons = compute_risk(
+        tool.name, data_access, tool.annotations, is_destructive
+    )
+
+    # If no data access was detected, mark as unknown
+    if not data_access:
+        data_access.append(
+            DataAccess(
+                type=DataAccessType.UNKNOWN,
+                read=True,
+                write=not is_read_only,
+                reason="No data access pattern detected from tool name or schema.",
+            )
+        )
+
+    return ToolPermission(
+        tool=tool,
+        data_access=data_access,
+        risk_level=risk_level,
+        risk_reasons=risk_reasons,
+        is_destructive=is_destructive,
+        is_read_only=is_read_only,
+    )
+
+
+def compute_risk(
+    tool_name: str,
+    data_access: list[DataAccess],
+    annotations: ToolAnnotations | None,
+    is_destructive: bool,
+) -> tuple[RiskLevel, list[str]]:
+    """Compute risk level for a tool based on all available signals.
+
+    Risk scoring:
+      - Read-only tools → LOW
+      - Write tools → MEDIUM
+      - Delete/destructive tools → HIGH
+      - Shell/execute tools → CRITICAL
+      - Network + credentials → CRITICAL
+      - Annotations can bump up (destructiveHint) or down (readOnlyHint)
+
+    Args:
+        tool_name: The tool name.
+        data_access: Detected data access patterns.
+        annotations: Tool annotations (may be None).
+        is_destructive: Whether the tool is destructive.
+
+    Returns:
+        Tuple of (risk_level, list of human-readable risk reasons).
+    """
+    risk = RiskLevel.LOW
+    reasons: list[str] = []
+
+    access_types = {a.type for a in data_access}
+    has_writes = any(a.write for a in data_access)
+
+    # Annotation-based assessment
+    if annotations is not None:
+        if annotations.read_only_hint is True:
+            reasons.append("Annotations confirm read-only")
+        elif annotations.destructive_hint is True:
+            risk = _max_risk(risk, RiskLevel.HIGH)
+            reasons.append("Annotations flag as destructive")
+        elif annotations.read_only_hint is False:
+            risk = _max_risk(risk, RiskLevel.MEDIUM)
+            reasons.append("Annotations confirm non-read-only")
+
+    # Shell/execute → CRITICAL
+    if DataAccessType.SHELL in access_types:
+        risk = _max_risk(risk, RiskLevel.CRITICAL)
+        reasons.append("Can execute shell commands")
+
+    # Credentials access → at least HIGH
+    if DataAccessType.CREDENTIALS in access_types:
+        risk = _max_risk(risk, RiskLevel.HIGH)
+        reasons.append("Accesses credentials/secrets")
+
+    # Network + credentials together → CRITICAL (exfiltration risk)
+    if DataAccessType.NETWORK in access_types and DataAccessType.CREDENTIALS in access_types:
+        risk = _max_risk(risk, RiskLevel.CRITICAL)
+        reasons.append("Network access combined with credentials — exfiltration risk")
+
+    # Destructive tools → at least HIGH
+    if is_destructive:
+        risk = _max_risk(risk, RiskLevel.HIGH)
+        if "Annotations flag as destructive" not in reasons:
+            reasons.append("Tool name indicates destructive operation")
+
+    # Write tools → at least MEDIUM
+    if has_writes and risk == RiskLevel.LOW:
+        risk = _max_risk(risk, RiskLevel.MEDIUM)
+        reasons.append("Tool can modify data")
+
+    # Browser → MEDIUM (prompt injection surface)
+    if DataAccessType.BROWSER in access_types:
+        risk = _max_risk(risk, RiskLevel.MEDIUM)
+        reasons.append("Browser access — prompt injection surface via web content")
+
+    # Database write → HIGH
+    if DataAccessType.DATABASE in access_types and has_writes:
+        risk = _max_risk(risk, RiskLevel.HIGH)
+        reasons.append("Can modify database data")
+
+    # Filesystem write → MEDIUM
+    if DataAccessType.FILESYSTEM in access_types and has_writes:
+        risk = _max_risk(risk, RiskLevel.MEDIUM)
+        reasons.append("Can modify files on disk")
+
+    # If nothing specific was found
+    if not reasons:
+        verb = _extract_verb(tool_name)
+        if verb and verb in _READ_VERBS:
+            reasons.append("Read-only operation")
+        else:
+            reasons.append("No specific risk signals detected")
+
+    return risk, reasons
+
+
+def _analyze_schema(schema: dict[str, Any]) -> list[DataAccess]:
+    """Analyze a tool's inputSchema to detect data access patterns.
+
+    Checks property names against known patterns.
+
+    Args:
+        schema: The tool's JSON Schema inputSchema.
+
+    Returns:
+        A list of detected DataAccess patterns.
+    """
+    properties = schema.get("properties", {})
+    if not isinstance(properties, dict):
+        return []
+
+    results: list[DataAccess] = []
+    seen: set[DataAccessType] = set()
+
+    for prop_name in properties:
+        prop_lower = prop_name.lower()
+
+        # Check exact matches first, then substring matches
+        for pattern, (access_type, is_read, is_write) in _SCHEMA_PATTERNS.items():
+            if prop_lower == pattern or (len(pattern) > 3 and pattern in prop_lower):
+                if access_type not in seen:
+                    results.append(
+                        DataAccess(
+                            type=access_type,
+                            read=is_read,
+                            write=is_write,
+                            reason=f"Schema property '{prop_name}' suggests {access_type.value} access",
+                        )
+                    )
+                    seen.add(access_type)
+                break
+
+    return results
+
+
+def _analyze_tool_name(name: str) -> list[DataAccess]:
+    """Analyze a tool name to detect data access patterns.
+
+    Splits the name by separators and checks each part against
+    known resource patterns.
+
+    Args:
+        name: The tool name (e.g., "read_file", "slack_post_message").
+
+    Returns:
+        A list of detected DataAccess patterns.
+    """
+    parts = _split_tool_name(name)
+    results: list[DataAccess] = []
+    seen: set[DataAccessType] = set()
+
+    for part in parts:
+        part_lower = part.lower()
+        if part_lower in _RESOURCE_PATTERNS:
+            access_type = _RESOURCE_PATTERNS[part_lower]
+            if access_type not in seen:
+                results.append(
+                    DataAccess(
+                        type=access_type,
+                        read=True,
+                        write=False,
+                        reason=f"Tool name part '{part}' suggests {access_type.value} access",
+                    )
+                )
+                seen.add(access_type)
+
+    return results
+
+
+def _extract_verb(name: str) -> str | None:
+    """Extract the verb (action) from a tool name.
+
+    Tries the first part of the name after splitting by separators.
+    E.g., "read_file" → "read", "slack_post_message" → "slack" (not a verb),
+    then tries "post" (second part).
+
+    Args:
+        name: The tool name.
+
+    Returns:
+        The detected verb, or None if no verb found.
+    """
+    parts = _split_tool_name(name)
+    all_verbs = _READ_VERBS | _WRITE_VERBS | _DELETE_VERBS | _EXECUTE_VERBS
+
+    for part in parts:
+        if part.lower() in all_verbs:
+            return part.lower()
+
+    return None
+
+
+def _split_tool_name(name: str) -> list[str]:
+    """Split a tool name into parts by common separators.
+
+    Handles underscore, hyphen, dot, and camelCase.
+
+    Args:
+        name: The tool name.
+
+    Returns:
+        A list of name parts.
+    """
+    # Replace separators with space, then split
+    normalized = name
+    for sep in ("_", "-", "."):
+        normalized = normalized.replace(sep, " ")
+
+    # Handle camelCase: insert space before uppercase letters
+    camel_parts: list[str] = []
+    current: list[str] = []
+    for char in normalized:
+        if char.isupper() and current and not current[-1].isupper():
+            camel_parts.append("".join(current))
+            current = [char]
+        else:
+            current.append(char)
+    if current:
+        camel_parts.append("".join(current))
+
+    # Flatten and filter
+    result: list[str] = []
+    for part in " ".join(camel_parts).split():
+        stripped = part.strip()
+        if stripped:
+            result.append(stripped)
+
+    return result
+
+
+def _max_risk(current: RiskLevel, candidate: RiskLevel) -> RiskLevel:
+    """Return the higher of two risk levels."""
+    order = [RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL]
+    return max(current, candidate, key=lambda r: order.index(r))

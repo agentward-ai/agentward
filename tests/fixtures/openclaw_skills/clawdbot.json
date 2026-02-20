@@ -1,0 +1,39 @@
+{
+  "auth": {
+    "anthropic": {
+      "type": "api_key"
+    },
+    "github": {
+      "type": "oauth"
+    }
+  },
+  "channels": {
+    "whatsapp": {
+      "type": "whatsapp",
+      "allowList": ["+1234567890"]
+    },
+    "telegram": {
+      "type": "telegram"
+    }
+  },
+  "gateway": {
+    "port": 18789,
+    "auth": "test-token-redacted"
+  },
+  "hooks": {
+    "session-memory": {
+      "enabled": true
+    },
+    "command-logger": {
+      "enabled": true
+    }
+  },
+  "plugins": {
+    "auto-reply": {
+      "enabled": true
+    }
+  },
+  "skills": {
+    "dirs": ["~/clawd/skills"]
+  }
+}

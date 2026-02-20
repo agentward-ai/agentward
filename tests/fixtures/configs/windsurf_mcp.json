@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "slack-bot": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-slack"],
+      "env": {
+        "SLACK_BOT_TOKEN": "xoxb-xxxx",
+        "SLACK_TEAM_ID": "T12345"
+      }
+    },
+    "remote-db": {
+      "serverUrl": "https://db-proxy.internal.example.com/mcp",
+      "headers": {
+        "X-API-Key": "internal-key-456"
+      }
+    }
+  }
+}
