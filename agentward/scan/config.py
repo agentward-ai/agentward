@@ -95,7 +95,7 @@ def parse_config_file(path: Path) -> list[ServerConfig]:
             f"without arguments to auto-discover config files."
         )
 
-    raw_text = path.read_text(encoding="utf-8")
+    raw_text = path.read_text(encoding="utf-8-sig")  # utf-8-sig strips BOM if present
 
     try:
         data = json.loads(raw_text)

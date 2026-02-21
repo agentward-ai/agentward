@@ -9,6 +9,7 @@ Supports undo via embedded markers.
 from __future__ import annotations
 
 import json
+import platform
 import plistlib
 import shutil
 from pathlib import Path
@@ -237,10 +238,16 @@ def write_config(config_path: Path, config: dict[str, Any], backup: bool = True)
         backup_path = config_path.with_suffix(config_path.suffix + BACKUP_SUFFIX)
         shutil.copy2(config_path, backup_path)
 
-    config_path.write_text(
-        json.dumps(config, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
+    try:
+        config_path.write_text(
+            json.dumps(config, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    except PermissionError:
+        raise PermissionError(
+            f"Permission denied writing to {config_path}. "
+            f"Check file permissions or run with appropriate privileges."
+        ) from None
 
     return backup_path
 
@@ -432,6 +439,16 @@ def wrap_clawdbot_gateway(
     if plist_path is not None:
         _patch_plist_port(plist_path, backend_port)
         sidecar_data["plist_path"] = str(plist_path)
+    elif platform.system() == "Darwin":
+        from rich.console import Console as _Console
+        _warn_console = _Console(stderr=True)
+        _warn_console.print(
+            f"[bold #ffcc00]Warning:[/bold #ffcc00] LaunchAgent plist not found at "
+            f"~/Library/LaunchAgents/{_LAUNCHAGENT_PLIST_NAME}\n"
+            f"If OpenClaw uses a LaunchAgent, the gateway may ignore the port change.\n"
+            f"Verify with: openclaw gateway restart && lsof -i :{backend_port}",
+            highlight=False,
+        )
 
     sidecar.write_text(
         json.dumps(sidecar_data, indent=2) + "\n", encoding="utf-8"

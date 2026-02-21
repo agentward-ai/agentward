@@ -523,8 +523,13 @@ def scan_directory(
         try:
             tools = scan_python_file(py_file)
             all_tools.extend(tools)
-        except (SyntaxError, UnicodeDecodeError):
-            # Skip files that can't be parsed
+        except (SyntaxError, UnicodeDecodeError) as e:
+            from rich.console import Console as _Console
+            _warn_console = _Console(stderr=True)
+            _warn_console.print(
+                f"  [#ffcc00]⚠[/#ffcc00] Skipping {py_file}: {e}",
+                highlight=False,
+            )
             continue
 
     return all_tools

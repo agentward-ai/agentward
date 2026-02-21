@@ -36,15 +36,10 @@ dim()  { echo -e "${DIM}$*${NC}"; }
 
 # ── Step 1: Check prerequisites ───────────────────────────────────
 if ! command -v agentward &>/dev/null; then
-    # Check if agentward exists in common pip --user bin locations but isn't on PATH
-    USER_BIN_CANDIDATES=(
-        "${HOME}/Library/Python/3.13/bin"
-        "${HOME}/Library/Python/3.12/bin"
-        "${HOME}/Library/Python/3.11/bin"
-        "${HOME}/.local/bin"
-    )
+    # Check if agentward exists in pip --user bin locations but isn't on PATH.
+    # Use a glob to catch any Python version (3.11, 3.12, 3.13, 3.14, ...).
     FOUND_AT=""
-    for candidate in "${USER_BIN_CANDIDATES[@]}"; do
+    for candidate in "${HOME}"/Library/Python/*/bin "${HOME}/.local/bin"; do
         if [ -f "${candidate}/agentward" ]; then
             FOUND_AT="${candidate}"
             break
@@ -70,13 +65,27 @@ info "Found ${AGENTWARD_VERSION}"
 [ -f "${TEMPLATE_SRC}" ] || err "MCP template not found: ${TEMPLATE_SRC}"
 
 # ── Step 3: Validate the policy loads correctly ───────────────────
+# Use `agentward` itself (not bare python3) to avoid Python version mismatch.
 dim "Validating policy..."
-python3 -c "
+agentward configure --dry-run 2>/dev/null && dim "  Policy syntax OK" || {
+    # Fallback: validate via the same Python that agentward uses
+    AGENTWARD_PYTHON="$(head -1 "$(command -v agentward)" | sed 's/^#!//')"
+    if [ -x "${AGENTWARD_PYTHON}" ]; then
+        "${AGENTWARD_PYTHON}" -c "
 from pathlib import Path
 from agentward.policy.loader import load_policy
 p = load_policy(Path('${POLICY_SRC}'))
 print(f'  {len(p.skills)} skill(s), {len(p.skill_chaining)} chain rule(s), {len(p.require_approval)} approval gate(s)')
 " || err "Policy validation failed. Fix ${POLICY_SRC} and re-run."
+    else
+        python3 -c "
+from pathlib import Path
+from agentward.policy.loader import load_policy
+p = load_policy(Path('${POLICY_SRC}'))
+print(f'  {len(p.skills)} skill(s), {len(p.skill_chaining)} chain rule(s), {len(p.require_approval)} approval gate(s)')
+" || err "Policy validation failed. Fix ${POLICY_SRC} and re-run."
+    fi
+}
 
 # ── Step 4: Detect MCP host ──────────────────────────────────────
 echo ""
@@ -112,17 +121,18 @@ if [ -d "${CURSOR_DIR}" ]; then
     HOST_DIRS+=("${CURSOR_DIR}")
 fi
 
-# Claude Code (project-level — always available)
-HOSTS+=("Claude Code (current directory)")
-HOST_PATHS+=("$(pwd)/.mcp.json")
-HOST_DIRS+=("$(pwd)")
-
-if [ ${#HOSTS[@]} -eq 0 ]; then
-    err "No MCP hosts detected.\n\n  Install one of:\n    - Claude Desktop: https://claude.ai/download\n    - Cursor: https://cursor.com\n    - Claude Code: npm install -g @anthropic-ai/claude-code"
+# Claude Code (project-level — only if claude binary is installed)
+if command -v claude &>/dev/null; then
+    HOSTS+=("Claude Code (current directory)")
+    HOST_PATHS+=("$(pwd)/.mcp.json")
+    HOST_DIRS+=("$(pwd)")
 fi
 
-# If only one real host detected (besides Claude Code fallback), use it.
-# Otherwise ask the user.
+if [ ${#HOSTS[@]} -eq 0 ]; then
+    err "No MCP hosts detected.\n\n  Install one of:\n    - Claude Desktop: https://claude.ai/download\n    - Cursor: https://cursor.com\n    - Claude Code: npm install -g @anthropic-ai/claude-code\n\n  Then re-run this script."
+fi
+
+# If only one host detected, use it. Otherwise ask.
 CHOSEN_INDEX=0
 if [ ${#HOSTS[@]} -gt 1 ]; then
     echo ""
@@ -160,7 +170,9 @@ cp "${POLICY_SRC}" "${POLICY_DEST}"
 info "  Copied policy → ${POLICY_DEST}"
 
 # ── Step 6: Generate MCP config from template ────────────────────
-# Replace __HOME__ and __POLICY_PATH__ placeholders with real paths
+# Replace __HOME__ and __POLICY_PATH__ placeholders with real paths.
+# Env var tokens (GITHUB_TOKEN, etc.) are left as empty strings —
+# the user fills them in after install.
 MCP_CONFIG_CONTENT="$(sed \
     -e "s|__HOME__|${HOME}|g" \
     -e "s|__POLICY_PATH__|${POLICY_DEST}|g" \
@@ -178,16 +190,39 @@ info "  Wrote MCP config → ${CHOSEN_CONFIG}"
 echo ""
 info "Scanning your tools..."
 echo ""
-agentward scan "${CHOSEN_CONFIG}" 2>&1 || true
+agentward scan "${CHOSEN_CONFIG}" 2>&1
+SCAN_EXIT=$?
+if [ ${SCAN_EXIT} -ne 0 ]; then
+    warn "Scan exited with warnings (this is normal if MCP servers are not running yet)."
+fi
 
 # ── Done ──────────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}${GREEN}Done.${NC} AgentWard is now protecting your ${CHOSEN_HOST} MCP servers."
+echo -e "${BOLD}${GREEN}Done.${NC} Config written for ${CHOSEN_HOST}."
 echo ""
-echo -e "  Every tool call from ${CHOSEN_HOST} now routes through AgentWard."
 echo -e "  Policy: ${BOLD}${POLICY_DEST}${NC}"
 echo -e "  Config: ${BOLD}${CHOSEN_CONFIG}${NC}"
 echo ""
-echo -e "  ${DIM}Edit the policy:   ${NC}${BOLD}vim ${POLICY_DEST}${NC}"
-echo -e "  ${DIM}Rescan:            ${NC}${BOLD}agentward scan ${CHOSEN_CONFIG}${NC}"
-echo -e "  ${DIM}View permissions:  ${NC}${BOLD}agentward map ${CHOSEN_CONFIG} --policy ${POLICY_DEST}${NC}"
+
+# Restart reminder — the MCP host must be restarted to pick up the new config
+case "${CHOSEN_HOST}" in
+    "Claude Desktop")
+        echo -e "  ${YELLOW}⚠ Restart Claude Desktop to activate the new config.${NC}"
+        echo -e "  ${DIM}Quit Claude Desktop and reopen it, or use Cmd+Q → relaunch.${NC}"
+        ;;
+    "Cursor")
+        echo -e "  ${YELLOW}⚠ Restart Cursor to activate the new config.${NC}"
+        echo -e "  ${DIM}Cmd+Shift+P → \"Reload Window\" or quit and reopen Cursor.${NC}"
+        ;;
+    "Claude Code"*)
+        echo -e "  ${DIM}Start a new Claude Code session to use the config.${NC}"
+        ;;
+esac
+
+echo ""
+echo -e "  ${DIM}Some servers need API keys. Edit the config to add them:${NC}"
+echo -e "    ${BOLD}vim \"${CHOSEN_CONFIG}\"${NC}"
+echo -e "    ${DIM}Look for GITHUB_TOKEN, SLACK_BOT_TOKEN, BRAVE_API_KEY${NC}"
+echo ""
+echo -e "  ${DIM}Edit the policy:   ${NC}${BOLD}vim \"${POLICY_DEST}\"${NC}"
+echo -e "  ${DIM}Rescan:            ${NC}${BOLD}agentward scan \"${CHOSEN_CONFIG}\"${NC}"

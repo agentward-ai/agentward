@@ -129,7 +129,26 @@ class HttpProxy:
                 loop.add_signal_handler(sig, _signal_handler)
 
         try:
-            await site.start()
+            try:
+                await site.start()
+            except OSError as e:
+                if e.errno == 48 or "address already in use" in str(e).lower():
+                    _console.print(
+                        f"[bold red]Error:[/bold red] Port {self._listen_port} is already in use.\n\n"
+                        f"This usually means another process is listening on that port.\n"
+                        f"Check with: lsof -i :{self._listen_port}\n\n"
+                        f"If the OpenClaw gateway is still on the old port, restart it:\n"
+                        f"  openclaw gateway restart",
+                        highlight=False,
+                    )
+                else:
+                    _console.print(
+                        f"[bold red]Error:[/bold red] Failed to bind to "
+                        f"{self._listen_host}:{self._listen_port}: {e}",
+                        highlight=False,
+                    )
+                return
+
             _console.print(
                 f"[bold #00ff88]Listening on http://{self._listen_host}:{self._listen_port}[/bold #00ff88]",
             )

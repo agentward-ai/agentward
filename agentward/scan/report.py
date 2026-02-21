@@ -93,6 +93,23 @@ def print_scan_report(
     # Unified scan table (all tools in one table, like the website)
     if total_tools > 0:
         _print_unified_table(scan, console)
+    elif total_servers > 0:
+        # We found servers but got 0 tools from all of them — tell the user
+        console.print(
+            f"[{_CLR_MEDIUM}]⚠ Found {total_servers} server(s) but could not enumerate any tools.[/{_CLR_MEDIUM}]",
+        )
+        # Show any server-level warnings (e.g., from static inference)
+        for server_map in scan.servers:
+            if server_map.warning:
+                console.print(
+                    f"  [{_CLR_DIM}]{server_map.server.name}: {server_map.warning}[/{_CLR_DIM}]",
+                )
+        console.print(
+            f"\n[{_CLR_DIM}]This usually means the MCP server(s) are not currently running.[/{_CLR_DIM}]",
+        )
+        console.print(
+            f"[{_CLR_DIM}]Try: agentward scan --timeout 30  (give servers more time to start)[/{_CLR_DIM}]",
+        )
 
     # Skill chain analysis
     if chains is None:

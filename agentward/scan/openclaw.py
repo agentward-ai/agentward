@@ -341,8 +341,13 @@ def scan_skill_directory(directory: Path) -> list[SkillDefinition]:
             try:
                 skill = parse_skill_md(skill_md)
                 skills.append(skill)
-            except (ValueError, UnicodeDecodeError):
-                # Skip skills with malformed frontmatter
+            except (ValueError, UnicodeDecodeError) as e:
+                from rich.console import Console as _Console
+                _warn_console = _Console(stderr=True)
+                _warn_console.print(
+                    f"  [#ffcc00]⚠[/#ffcc00] Skipping {skill_md}: {e}",
+                    highlight=False,
+                )
                 continue
 
     return skills

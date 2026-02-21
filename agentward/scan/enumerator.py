@@ -97,7 +97,8 @@ async def enumerate_server(
                 return result
         except asyncio.TimeoutError:
             _console.print(
-                f"  [#ffcc00]⏱ {server.name}:[/#ffcc00] Timed out after {timeout}s",
+                f"  [#ffcc00]⏱ {server.name}:[/#ffcc00] Timed out after {timeout}s — "
+                f"falling back to static inference (use --timeout to increase)",
                 highlight=False,
             )
         except Exception as e:
@@ -114,7 +115,8 @@ async def enumerate_server(
                 return result
         except asyncio.TimeoutError:
             _console.print(
-                f"  [#ffcc00]⏱ {server.name}:[/#ffcc00] HTTP timed out after {timeout}s",
+                f"  [#ffcc00]⏱ {server.name}:[/#ffcc00] HTTP timed out after {timeout}s — "
+                f"falling back to static inference (use --timeout to increase)",
                 highlight=False,
             )
         except Exception as e:
@@ -187,8 +189,13 @@ async def _enumerate_stdio(server: ServerConfig) -> EnumerationResult:
             error=f"Permission denied: {server.command}",
         )
 
-    assert process.stdin is not None
-    assert process.stdout is not None
+    if process.stdin is None or process.stdout is None:
+        process.terminate()
+        return EnumerationResult(
+            server=server,
+            enumeration_method="failed",
+            error="Failed to open stdin/stdout pipes for subprocess.",
+        )
 
     try:
         # Step 1: Send initialize request
@@ -241,7 +248,7 @@ async def _enumerate_stdio(server: ServerConfig) -> EnumerationResult:
 
         # Read tools/list response (may need to skip notifications)
         tools: list[ToolInfo] = []
-        for _ in range(10):  # read up to 10 lines looking for the response
+        for _ in range(50):  # read up to 50 lines looking for the response
             line = await process.stdout.readline()
             if not line:
                 break

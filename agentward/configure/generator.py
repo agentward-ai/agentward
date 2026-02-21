@@ -131,8 +131,12 @@ def write_policy(policy: AgentWardPolicy, path: Path) -> None:
     Args:
         policy: The policy to write.
         path: Output file path.
+
+    Raises:
+        PermissionError: If the path is not writable.
     """
     content = serialize_policy(policy)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
 
 

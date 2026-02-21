@@ -117,13 +117,18 @@ class StdioProxy:
                 env=env,
             )
         except FileNotFoundError:
+            cmd = self._server_command[0]
             _console.print(
-                f"[bold red]Error:[/bold red] Command not found: {self._server_command[0]}\n"
-                f"Make sure the MCP server command is installed and in your PATH.",
+                f"[bold red]Error:[/bold red] Command not found: {cmd}\n\n"
+                f"Make sure the MCP server command is installed and in your PATH.\n"
+                f"Common fixes:\n"
+                f"  • If using npx: npm install -g npx\n"
+                f"  • If using a local binary: use the absolute path instead of '{cmd}'\n"
+                f"  • Check your PATH: which {cmd}",
                 highlight=False,
             )
             self._audit_logger.log_shutdown(
-                f"Server command not found: {self._server_command[0]}"
+                f"Server command not found: {cmd}"
             )
             return
         except PermissionError:

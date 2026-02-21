@@ -40,6 +40,18 @@ The gap: **No tool-level permission enforcement that actually runs in code, outs
 
 AgentWard fills this gap. It's a proxy that sits between agents and tools, evaluating every `tools/call` against a declarative policy — in code, at runtime, where prompt injection can't reach.
 
+## Prerequisites
+
+AgentWard scans and enforces policies on your existing AI agent tools. You need **at least one** of:
+
+- **[Cursor](https://cursor.com)** with MCP servers configured
+- **[Claude Desktop](https://claude.ai/download)** with MCP servers configured
+- **[VS Code](https://code.visualstudio.com/)** with MCP servers (Copilot or extensions)
+- **[Windsurf](https://codeium.com/windsurf)** with MCP servers configured
+- **[OpenClaw](https://github.com/openclaw)** with skills installed
+
+No MCP servers yet? AgentWard can also scan Python tool definitions (OpenAI, LangChain, CrewAI) in any project directory.
+
 ## Quick Start
 
 ```bash
@@ -52,7 +64,7 @@ pip install agentward
 agentward scan
 ```
 
-Auto-discovers MCP configs (Claude Desktop, Cursor, Windsurf, VS Code), Python tool definitions (OpenAI, LangChain, CrewAI), and ClawdBot/OpenClaw skills. Outputs a permission map with risk ratings and security recommendations.
+Auto-discovers MCP configs (Claude Desktop, Cursor, Windsurf, VS Code), Python tool definitions (OpenAI, LangChain, CrewAI), and OpenClaw skills. Outputs a permission map with risk ratings and security recommendations.
 
 ```
  Server          Tool                 Risk    Data Access
@@ -91,11 +103,11 @@ require_approval:
 # MCP servers (Claude Desktop, Cursor, etc.)
 agentward setup --policy agentward.yaml
 
-# Or for ClawdBot gateway
-agentward setup --gateway clawdbot
+# Or for OpenClaw gateway
+agentward setup --gateway openclaw
 ```
 
-Rewrites your MCP configs so every tool call routes through the AgentWard proxy. For ClawdBot, swaps the gateway port so AgentWard sits as an HTTP reverse proxy.
+Rewrites your MCP configs so every tool call routes through the AgentWard proxy. For OpenClaw, swaps the gateway port so AgentWard sits as an HTTP reverse proxy.
 
 ### 4. Enforce at runtime
 
@@ -104,7 +116,7 @@ Rewrites your MCP configs so every tool call routes through the AgentWard proxy.
 agentward inspect --policy agentward.yaml -- npx @modelcontextprotocol/server-filesystem /tmp
 
 # HTTP gateway proxy
-agentward inspect --gateway clawdbot --policy agentward.yaml
+agentward inspect --gateway openclaw --policy agentward.yaml
 ```
 
 Every tool call is now intercepted, evaluated against your policy, and either allowed, blocked, or flagged for approval. Full audit trail logged.
@@ -137,7 +149,7 @@ Agent Host                    AgentWard                     Tool Server
 | Mode | Transport | Intercepts | Use Case |
 |------|-----------|------------|----------|
 | **Stdio** | JSON-RPC 2.0 over stdio | `tools/call` | MCP servers (Claude Desktop, Cursor, Windsurf, VS Code) |
-| **HTTP** | HTTP reverse proxy + WebSocket | `POST /tools-invoke` | ClawdBot gateway, HTTP-based tools |
+| **HTTP** | HTTP reverse proxy + WebSocket | `POST /tools-invoke` | OpenClaw gateway, HTTP-based tools |
 
 ## CLI Commands
 
@@ -177,7 +189,7 @@ Agent Host                    AgentWard                     Tool Server
 - Any MCP-compatible client
 
 **HTTP Gateways:**
-- ClawdBot (with WebSocket passthrough for UI)
+- OpenClaw (with WebSocket passthrough for UI)
 - Extensible to other HTTP-based tool gateways
 
 **Python Tool Scanning:**
