@@ -1,0 +1,103 @@
+# AgentWard Policy — Hardened MCP Profile
+#
+# Security-first policy for 6 popular MCP servers.
+# Pairs with the mcp.json.template in this directory.
+#
+# What this policy does:
+#   - filesystem: read allowed, write requires approval
+#   - github: read/create allowed, merge/delete blocked
+#   - slack: read/send allowed, delete blocked
+#   - memory: unrestricted (local knowledge graph, low risk)
+#   - brave-search: unrestricted (read-only web search, low risk)
+#   - puppeteer/bird: browsing allowed, file/email access denied
+#
+# Install: ./setup.sh
+# Scan:    agentward scan
+
+version: "1.0"
+
+skills:
+  # --- Filesystem ---
+  filesystem:
+    files:
+      read: true
+      write: false          # write requires human approval (see below)
+      delete: false
+
+  # --- GitHub ---
+  github:
+    issues:
+      read: true
+      create: true
+      modify: true
+      delete: false
+    pull_requests:
+      read: true
+      create: true
+      merge: false          # merges require human review
+      delete: false
+    actions:
+      read: true
+      trigger: false
+    repos:
+      read: true
+      create: false
+      delete: false
+
+  # --- Slack ---
+  slack:
+    messages:
+      read: true
+      send: true
+      edit: true
+      delete: false
+    reactions:
+      read: true
+      add: true
+      remove: true
+    pins:
+      read: true
+      add: true
+      remove: false
+
+  # --- Memory (knowledge graph) ---
+  # Low risk — local storage only, no network, no sensitive data
+  memory:
+    entities:
+      read: true
+      create: true
+      delete: true
+    relations:
+      read: true
+      create: true
+      delete: true
+
+  # --- Brave Search ---
+  # Low risk — read-only web search
+  brave-search:
+    search:
+      read: true
+
+  # --- Puppeteer (browsing) ---
+  bird:
+    browser:
+      read: true
+      navigate: true
+    filesystem:
+      denied: true          # browser cannot access local files
+    email:
+      denied: true          # browser cannot access email
+
+# Human-in-the-loop gates — these tools always pause for confirmation
+require_approval:
+  - filesystem              # file writes need human sign-off
+  - slack                   # sending messages to channels
+
+# Cross-skill chaining restrictions
+skill_chaining:
+  # Browser content must not leak into messaging
+  - bird cannot trigger slack
+  # File content must not be sent to external services without approval
+  - filesystem cannot trigger slack
+  # GitHub operations must not be triggered by browser content
+  - bird cannot trigger github

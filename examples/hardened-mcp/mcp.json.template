@@ -4,18 +4,18 @@
       "command": "agentward",
       "args": [
         "inspect",
-        "--policy", "./agentward.yaml",
+        "--policy", "__POLICY_PATH__",
         "--skill-context", "filesystem",
         "--",
         "npx", "-y", "@modelcontextprotocol/server-filesystem",
-        "/Users/you/Documents", "/Users/you/Downloads"
+        "__HOME__/Documents", "__HOME__/Downloads"
       ]
     },
     "github": {
       "command": "agentward",
       "args": [
         "inspect",
-        "--policy", "./agentward.yaml",
+        "--policy", "__POLICY_PATH__",
         "--skill-context", "github",
         "--",
         "npx", "-y", "@modelcontextprotocol/server-github"
@@ -28,7 +28,7 @@
       "command": "agentward",
       "args": [
         "inspect",
-        "--policy", "./agentward.yaml",
+        "--policy", "__POLICY_PATH__",
         "--skill-context", "slack",
         "--",
         "npx", "-y", "@modelcontextprotocol/server-slack"
@@ -42,7 +42,7 @@
       "command": "agentward",
       "args": [
         "inspect",
-        "--policy", "./agentward.yaml",
+        "--policy", "__POLICY_PATH__",
         "--",
         "npx", "-y", "@modelcontextprotocol/server-memory"
       ]
@@ -51,7 +51,7 @@
       "command": "agentward",
       "args": [
         "inspect",
-        "--policy", "./agentward.yaml",
+        "--policy", "__POLICY_PATH__",
         "--",
         "npx", "-y", "@modelcontextprotocol/server-brave-search"
       ],
@@ -63,7 +63,7 @@
       "command": "agentward",
       "args": [
         "inspect",
-        "--policy", "./agentward.yaml",
+        "--policy", "__POLICY_PATH__",
         "--skill-context", "bird",
         "--",
         "npx", "-y", "@modelcontextprotocol/server-puppeteer"

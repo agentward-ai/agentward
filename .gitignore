@@ -4,7 +4,7 @@ BRIEF.md
 .claude/
 
 # Local config files
-agentward.yaml
+/agentward.yaml
 sample_mcp_config.json
 
 # Python
