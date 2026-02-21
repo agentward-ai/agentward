@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 
 from rich.console import Console
+from rich.padding import Padding
 from rich.panel import Panel
 
 from agentward.scan.chains import ChainDetection, ChainRisk
@@ -406,6 +407,9 @@ def _print_recommendations(
             tool_lookup[key] = (tool_perm, server_map)
             tool_lookup[tool_perm.tool.name] = (tool_perm, server_map)
 
+    panels_shown = 0
+    max_panels = 2  # limit attack scenario panels to reduce visual clutter
+
     for i, rec in enumerate(recommendations, 1):
         severity_style = _severity_style(rec.severity)
         console.print(
@@ -418,11 +422,12 @@ def _print_recommendations(
             for line in rec.suggested_policy.split("\n"):
                 console.print(f"       [{_CLR_GREEN}]{line}[/{_CLR_GREEN}]")
 
-        # Show attack scenario for CRITICAL and WARNING recommendations
-        if rec.severity in (RecommendationSeverity.CRITICAL, RecommendationSeverity.WARNING):
+        # Show attack scenario panel for the first few CRITICAL recommendations
+        if panels_shown < max_panels and rec.severity == RecommendationSeverity.CRITICAL:
             explanation = _find_explanation(rec.target, tool_lookup)
             if explanation is not None:
                 _print_explanation_panel(explanation, console)
+                panels_shown += 1
 
         console.print()
 
@@ -475,15 +480,19 @@ def _print_explanation_panel(
         f"[{_CLR_GREEN}]Fix:[/{_CLR_GREEN}] {explanation.mitigation}",
     ]
     content = "\n".join(lines)
+    # Constrain panel width so it doesn't span the full terminal
+    panel_width = min(console.width - 10, 100)
     panel = Panel(
         content,
         title="Attack Scenario",
         title_align="left",
         border_style=_CLR_HIGH,
         padding=(0, 1),
+        width=panel_width,
+        expand=False,
     )
-    console.print(f"     ", end="")  # indent to align with recommendation
-    console.print(panel)
+    # Use Padding to indent the panel under the recommendation text
+    console.print(Padding(panel, (0, 0, 0, 5)))
 
 
 # ---------------------------------------------------------------------------

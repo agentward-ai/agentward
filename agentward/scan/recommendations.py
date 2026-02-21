@@ -60,6 +60,17 @@ def generate_recommendations(scan: ScanResult) -> list[Recommendation]:
 
     recs.extend(_check_cross_server_chaining(scan.servers))
 
+    # Deduplicate by (severity, target) — same server pair can trigger
+    # multiple rules but the user only needs one recommendation per pair
+    seen: set[tuple[str, str]] = set()
+    unique_recs: list[Recommendation] = []
+    for rec in recs:
+        key = (rec.severity.value, rec.target)
+        if key not in seen:
+            seen.add(key)
+            unique_recs.append(rec)
+    recs = unique_recs
+
     # Sort: CRITICAL first, then WARNING, then INFO
     severity_order = {
         RecommendationSeverity.CRITICAL: 0,
@@ -219,9 +230,12 @@ def _check_cross_server_chaining(
                 has_shell = True
         server_caps.append((s.server.name, types, has_shell))
 
-    # Check pairs
+    # Check pairs (skip self-referencing — same server name can appear
+    # multiple times when e.g. OpenClaw groups all skills under one server)
     for i, (name_a, types_a, shell_a) in enumerate(server_caps):
         for name_b, types_b, shell_b in server_caps[i + 1:]:
+            if name_a == name_b:
+                continue
             # Email + browser = chaining risk
             if (
                 DataAccessType.EMAIL in types_a

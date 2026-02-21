@@ -36,6 +36,119 @@ from agentward.proxy.chaining import ChainTracker
 
 _console = Console(stderr=True)
 
+
+def _pid_file_path(port: int) -> Path:
+    """Return the path to the PID file for a given listen port."""
+    return Path.home() / ".agentward" / f"proxy-{port}.pid"
+
+
+def _cleanup_stale_proxy(port: int) -> bool:
+    """Kill a stale agentward proxy from a previous run on the given port.
+
+    Reads the PID file, checks if the process is still alive, and kills it
+    if so. Returns True if a stale process was found and killed.
+    """
+    import os
+
+    pid_path = _pid_file_path(port)
+    if not pid_path.exists():
+        return False
+
+    try:
+        stale_pid = int(pid_path.read_text().strip())
+    except (ValueError, OSError):
+        pid_path.unlink(missing_ok=True)
+        return False
+
+    # Check if the process is still alive
+    try:
+        os.kill(stale_pid, 0)  # signal 0 = just check, don't kill
+    except ProcessNotFoundError:
+        # Process already gone — clean up PID file
+        pid_path.unlink(missing_ok=True)
+        return False
+    except PermissionError:
+        # Process exists but we can't signal it — don't touch it
+        return False
+
+    # Process is alive — kill it
+    try:
+        _console.print(
+            f"  [#ffcc00]Killing stale proxy[/#ffcc00] (PID {stale_pid}) on port {port}",
+            highlight=False,
+        )
+        os.kill(stale_pid, signal.SIGTERM)
+        # Give it a moment to release the port
+        import time
+        time.sleep(0.5)
+        # Verify it's gone
+        try:
+            os.kill(stale_pid, 0)
+            # Still alive after SIGTERM — force kill
+            os.kill(stale_pid, signal.SIGKILL)
+            time.sleep(0.3)
+        except ProcessNotFoundError:
+            pass
+        pid_path.unlink(missing_ok=True)
+        return True
+    except (ProcessNotFoundError, PermissionError):
+        pid_path.unlink(missing_ok=True)
+        return False
+
+
+def _write_pid_file(port: int) -> None:
+    """Write the current process PID to the PID file."""
+    import os
+
+    pid_path = _pid_file_path(port)
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text(str(os.getpid()))
+
+
+def _remove_pid_file(port: int) -> None:
+    """Remove the PID file on clean shutdown."""
+    _pid_file_path(port).unlink(missing_ok=True)
+
+
+def _identify_port_blocker(port: int) -> str | None:
+    """Try to identify the process blocking a port using lsof.
+
+    Returns a human-readable description like "Python (PID 12345) — likely a
+    stale agentward inspect", or None if detection fails.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["lsof", "-i", f":{port}", "-sTCP:LISTEN", "-t"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+
+        pid = result.stdout.strip().split("\n")[0]
+
+        # Get process name
+        ps_result = subprocess.run(
+            ["ps", "-p", pid, "-o", "comm="],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        proc_name = ps_result.stdout.strip() if ps_result.returncode == 0 else "unknown"
+
+        desc = f"{proc_name} (PID {pid})"
+        if "python" in proc_name.lower() or "Python" in proc_name:
+            desc += " — likely a stale agentward inspect"
+        elif "node" in proc_name.lower():
+            desc += " — likely OpenClaw gateway (needs restart?)"
+        return desc
+    except Exception:
+        return None
+
+
 # Headers that must not be forwarded on regular HTTP requests (hop-by-hop).
 # Note: 'upgrade' and 'connection' are intentionally excluded here — they
 # ARE forwarded for WebSocket upgrade requests (handled separately).
@@ -100,6 +213,9 @@ class HttpProxy:
 
     async def run(self) -> None:
         """Start the HTTP proxy server and block until shutdown."""
+        # Kill any stale proxy from a previous run that didn't exit cleanly
+        _cleanup_stale_proxy(self._listen_port)
+
         self._audit_logger.log_http_startup(
             self._listen_port,
             self._backend_url,
@@ -133,14 +249,20 @@ class HttpProxy:
                 await site.start()
             except OSError as e:
                 if e.errno == 48 or "address already in use" in str(e).lower():
-                    _console.print(
-                        f"[bold red]Error:[/bold red] Port {self._listen_port} is already in use.\n\n"
-                        f"This usually means another process is listening on that port.\n"
-                        f"Check with: lsof -i :{self._listen_port}\n\n"
-                        f"If the OpenClaw gateway is still on the old port, restart it:\n"
-                        f"  openclaw gateway restart",
-                        highlight=False,
+                    # Try to identify what's on the port
+                    blocker = _identify_port_blocker(self._listen_port)
+                    msg = (
+                        f"[bold red]Error:[/bold red] Port {self._listen_port} is already in use.\n"
                     )
+                    if blocker:
+                        msg += f"\n  Blocked by: {blocker}\n"
+                    msg += (
+                        f"\nPossible fixes:\n"
+                        f"  1. Kill the stale process:  kill $(lsof -ti :{self._listen_port})\n"
+                        f"  2. If OpenClaw is on the wrong port:  openclaw gateway restart\n"
+                        f"  3. Check what's there:  lsof -i :{self._listen_port}"
+                    )
+                    _console.print(msg, highlight=False)
                 else:
                     _console.print(
                         f"[bold red]Error:[/bold red] Failed to bind to "
@@ -148,6 +270,9 @@ class HttpProxy:
                         highlight=False,
                     )
                 return
+
+            # Record our PID so the next run can clean us up if we don't exit
+            _write_pid_file(self._listen_port)
 
             _console.print(
                 f"[bold #00ff88]Listening on http://{self._listen_host}:{self._listen_port}[/bold #00ff88]",
@@ -159,6 +284,7 @@ class HttpProxy:
 
             await shutdown_event.wait()
         finally:
+            _remove_pid_file(self._listen_port)
             if self._session is not None:
                 await self._session.close()
             await runner.cleanup()
