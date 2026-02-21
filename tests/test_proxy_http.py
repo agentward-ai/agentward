@@ -15,9 +15,11 @@ from agentward.audit.logger import AuditLogger
 from agentward.policy.engine import PolicyEngine
 from agentward.policy.schema import (
     AgentWardPolicy,
+    ChainingMode,
     ChainingRule,
     ResourcePermissions,
 )
+from agentward.proxy.chaining import ChainTracker
 from agentward.proxy.http import HttpProxy
 
 
@@ -121,6 +123,7 @@ async def _start_proxy(
     backend_url: str,
     audit_logger: AuditLogger,
     policy_engine: PolicyEngine | None = None,
+    chain_tracker: ChainTracker | None = None,
 ) -> tuple[HttpProxy, int, asyncio.Task[None]]:
     """Start the HTTP proxy on a free port and return (proxy, port, task)."""
     # Find a free port
@@ -135,6 +138,7 @@ async def _start_proxy(
         listen_port=port,
         policy_engine=policy_engine,
         audit_logger=audit_logger,
+        chain_tracker=chain_tracker,
     )
 
     # Run proxy in background task
@@ -449,3 +453,424 @@ class TestHttpProxyEdgeCases:
         allowed = tool_calls[1]
         assert allowed["tool"] == "allowed-tool"
         assert allowed["decision"] == "ALLOW"
+
+
+# ---------------------------------------------------------------------------
+# Mock backend that returns URLs in responses (for chain testing)
+# ---------------------------------------------------------------------------
+
+
+def _create_chain_backend() -> web.Application:
+    """Backend that returns tool responses containing extractable content."""
+    app = web.Application()
+    app["requests"] = []
+
+    async def handle_tools_invoke(request: web.Request) -> web.Response:
+        body = await request.json()
+        app["requests"].append(body)
+        tool = body.get("tool", "")
+
+        # Email tools return responses with URLs
+        if tool.startswith("gmail"):
+            return web.json_response({
+                "ok": True,
+                "result": {
+                    "content": [
+                        {"text": "From: attacker@evil.com\nBody: Click https://evil.com/payload"}
+                    ]
+                },
+            })
+
+        return web.json_response({"ok": True, "result": {"status": "done"}})
+
+    app.router.add_post("/tools-invoke", handle_tools_invoke)
+    return app
+
+
+def _make_chain_policy(
+    mode: ChainingMode = ChainingMode.BLANKET,
+) -> AgentWardPolicy:
+    """Create a policy with email→browser chaining rule and skill→resource mappings."""
+    return AgentWardPolicy(
+        version="1.0",
+        skills={
+            "email-mgr": {
+                "gmail": ResourcePermissions.model_construct(
+                    denied=False, actions={"read": True, "send": True}, filters={},
+                ),
+            },
+            "web-browser": {
+                "browser": ResourcePermissions.model_construct(
+                    denied=False, actions={"navigate": True}, filters={},
+                ),
+            },
+        },
+        skill_chaining=[
+            ChainingRule(source_skill="email-mgr", target_skill="web-browser"),
+        ],
+        chaining_mode=mode,
+        require_approval=[],
+        data_boundaries={},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Chain enforcement integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestHttpProxyChaining:
+    """Integration tests for chain enforcement through the HTTP proxy."""
+
+    @pytest.mark.asyncio
+    async def test_chain_block_blanket_mode(
+        self, audit_logger: AuditLogger,
+    ) -> None:
+        """Blanket mode: call email tool, then browser tool → blocked."""
+        # Start chain backend
+        chain_app = _create_chain_backend()
+        runner = web.AppRunner(chain_app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        backend_port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+        backend_url = f"http://127.0.0.1:{backend_port}"
+
+        try:
+            policy = _make_chain_policy(mode=ChainingMode.BLANKET)
+            engine = PolicyEngine(policy)
+            tracker = ChainTracker(engine, mode=ChainingMode.BLANKET)
+
+            proxy, port, task = await _start_proxy(
+                backend_url, audit_logger, engine, tracker,
+            )
+
+            try:
+                import aiohttp
+
+                async with aiohttp.ClientSession() as session:
+                    # First: call email tool — should be allowed
+                    async with session.post(
+                        f"http://127.0.0.1:{port}/tools-invoke",
+                        json={"tool": "gmail_read", "arguments": {"query": "inbox"}},
+                    ) as resp:
+                        assert resp.status == 200
+
+                    # Second: call browser tool — should be chain-blocked
+                    async with session.post(
+                        f"http://127.0.0.1:{port}/tools-invoke",
+                        json={"tool": "browser_navigate", "arguments": {"url": "https://safe.com"}},
+                    ) as resp:
+                        assert resp.status == 403
+                        data = await resp.json()
+                        assert data["error"]["type"] == "chain_blocked"
+            finally:
+                await _stop_proxy(proxy, task)
+        finally:
+            await runner.cleanup()
+
+    @pytest.mark.asyncio
+    async def test_chain_allow_content_mode_no_match(
+        self, audit_logger: AuditLogger,
+    ) -> None:
+        """Content mode: email response URL doesn't match browser args → allowed."""
+        chain_app = _create_chain_backend()
+        runner = web.AppRunner(chain_app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        backend_port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+        backend_url = f"http://127.0.0.1:{backend_port}"
+
+        try:
+            policy = _make_chain_policy(mode=ChainingMode.CONTENT)
+            engine = PolicyEngine(policy)
+            tracker = ChainTracker(engine, mode=ChainingMode.CONTENT)
+
+            proxy, port, task = await _start_proxy(
+                backend_url, audit_logger, engine, tracker,
+            )
+
+            try:
+                import aiohttp
+
+                async with aiohttp.ClientSession() as session:
+                    # First: call email tool
+                    async with session.post(
+                        f"http://127.0.0.1:{port}/tools-invoke",
+                        json={"tool": "gmail_read", "arguments": {"query": "inbox"}},
+                    ) as resp:
+                        assert resp.status == 200
+
+                    # Second: call browser with DIFFERENT URL → content doesn't match → allowed
+                    async with session.post(
+                        f"http://127.0.0.1:{port}/tools-invoke",
+                        json={"tool": "browser_navigate", "arguments": {"url": "https://totally-safe.com"}},
+                    ) as resp:
+                        assert resp.status == 200
+            finally:
+                await _stop_proxy(proxy, task)
+        finally:
+            await runner.cleanup()
+
+    @pytest.mark.asyncio
+    async def test_chain_block_content_mode_url_match(
+        self, audit_logger: AuditLogger,
+    ) -> None:
+        """Content mode: email response URL flows into browser args → blocked."""
+        chain_app = _create_chain_backend()
+        runner = web.AppRunner(chain_app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        backend_port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+        backend_url = f"http://127.0.0.1:{backend_port}"
+
+        try:
+            policy = _make_chain_policy(mode=ChainingMode.CONTENT)
+            engine = PolicyEngine(policy)
+            tracker = ChainTracker(engine, mode=ChainingMode.CONTENT)
+
+            proxy, port, task = await _start_proxy(
+                backend_url, audit_logger, engine, tracker,
+            )
+
+            try:
+                import aiohttp
+
+                async with aiohttp.ClientSession() as session:
+                    # First: call email tool (response contains https://evil.com/payload)
+                    async with session.post(
+                        f"http://127.0.0.1:{port}/tools-invoke",
+                        json={"tool": "gmail_read", "arguments": {"query": "inbox"}},
+                    ) as resp:
+                        assert resp.status == 200
+
+                    # Second: call browser with the SAME URL from email response → blocked
+                    async with session.post(
+                        f"http://127.0.0.1:{port}/tools-invoke",
+                        json={"tool": "browser_navigate", "arguments": {"url": "https://evil.com/payload"}},
+                    ) as resp:
+                        assert resp.status == 403
+                        data = await resp.json()
+                        assert data["error"]["type"] == "chain_blocked"
+            finally:
+                await _stop_proxy(proxy, task)
+        finally:
+            await runner.cleanup()
+
+
+class TestHttpProxyAuditSingleLog:
+    """Verify that chain-blocked calls produce exactly ONE audit log entry.
+
+    Before the fix, the proxy logged the policy result (ALLOW) before checking
+    chaining rules, then logged again (BLOCK) if chaining blocked — producing
+    two entries per call. The fix defers logging until after all checks pass.
+    """
+
+    @pytest.mark.asyncio
+    async def test_chain_blocked_produces_single_log_entry(
+        self, audit_logger: AuditLogger, tmp_path: Path,
+    ) -> None:
+        """Call email tool, then browser tool (chain-blocked) → exactly one log per call."""
+        chain_app = _create_chain_backend()
+        runner = web.AppRunner(chain_app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        backend_port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+        backend_url = f"http://127.0.0.1:{backend_port}"
+
+        try:
+            policy = _make_chain_policy(mode=ChainingMode.BLANKET)
+            engine = PolicyEngine(policy)
+            tracker = ChainTracker(engine, mode=ChainingMode.BLANKET)
+
+            proxy, port, task = await _start_proxy(
+                backend_url, audit_logger, engine, tracker,
+            )
+
+            try:
+                import aiohttp
+
+                async with aiohttp.ClientSession() as session:
+                    # First: call email tool — allowed
+                    async with session.post(
+                        f"http://127.0.0.1:{port}/tools-invoke",
+                        json={"tool": "gmail_read", "arguments": {"query": "inbox"}},
+                    ) as resp:
+                        assert resp.status == 200
+
+                    # Second: call browser tool — chain-blocked
+                    async with session.post(
+                        f"http://127.0.0.1:{port}/tools-invoke",
+                        json={"tool": "browser_navigate", "arguments": {"url": "https://x.com"}},
+                    ) as resp:
+                        assert resp.status == 403
+            finally:
+                await _stop_proxy(proxy, task)
+        finally:
+            await runner.cleanup()
+
+        # Read audit log and count tool_call events
+        log_path = tmp_path / "audit.jsonl"
+        lines = log_path.read_text().strip().split("\n")
+        events = [json.loads(line) for line in lines]
+        tool_calls = [e for e in events if e.get("event") == "tool_call"]
+
+        # Exactly 2 entries: one ALLOW for gmail_read, one BLOCK for browser_navigate
+        assert len(tool_calls) == 2, f"Expected 2 tool_call entries, got {len(tool_calls)}: {tool_calls}"
+
+        gmail_entry = tool_calls[0]
+        assert gmail_entry["tool"] == "gmail_read"
+        assert gmail_entry["decision"] == "ALLOW"
+        assert gmail_entry.get("chain_violation") is not True
+
+        browser_entry = tool_calls[1]
+        assert browser_entry["tool"] == "browser_navigate"
+        assert browser_entry["decision"] == "BLOCK"
+        assert browser_entry["chain_violation"] is True
+
+
+class TestWebSocketDetection:
+    """Tests for WebSocket upgrade header detection.
+
+    The proxy should detect WebSocket upgrade requests even when the
+    Connection header contains multiple comma-separated tokens (e.g.,
+    'Connection: Upgrade, keep-alive').
+    """
+
+    @pytest.mark.asyncio
+    async def test_multi_value_connection_header_triggers_ws_handler(
+        self, backend: tuple, audit_logger: AuditLogger,
+    ) -> None:
+        """Request with 'Connection: Upgrade, keep-alive' goes to the WS handler.
+
+        The WS handler will try to connect to the backend which doesn't support
+        WS, so it will fail. But the proxy should have accepted the WS upgrade
+        from the client before that failure — proving the detection logic works.
+        """
+        app, backend_url = backend
+        proxy, port, task = await _start_proxy(backend_url, audit_logger)
+
+        try:
+            import aiohttp
+
+            # Send a WS upgrade with multi-value Connection header.
+            # The proxy should accept the WS upgrade (proving detection works),
+            # then fail when connecting to the non-WS backend.
+            ws_accepted = False
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.ws_connect(
+                        f"http://127.0.0.1:{port}/ws-test",
+                        timeout=aiohttp.ClientWSTimeout(ws_close=1.0),
+                    ) as ws:
+                        ws_accepted = True
+            except Exception:
+                # The proxy accepted the WS upgrade from the client (good!)
+                # but failed to connect to the backend (expected).
+                # aiohttp may raise before ws_connect fully completes.
+                pass
+
+            # The backend should have received a request at /ws-test — this is
+            # the proxy's WS handler trying to open a WS connection to the
+            # backend. The key proof: it was a GET (WS handshake), not a
+            # forwarded POST or regular HTTP request.
+            ws_reqs = [r for r in app["requests"] if r.get("path") == "/ws-test"]
+            assert len(ws_reqs) == 1
+            assert ws_reqs[0]["method"] == "GET"  # WS handshake is always GET
+        finally:
+            await _stop_proxy(proxy, task)
+
+
+class TestInvalidToolInvokeBody:
+    """Verify /tools-invoke rejects malformed bodies instead of forwarding them."""
+
+    @pytest.mark.asyncio
+    async def test_non_json_body_returns_400(
+        self, backend: tuple, audit_logger: AuditLogger,
+    ) -> None:
+        """Non-JSON body to /tools-invoke should return 400, not forward."""
+        app, backend_url = backend
+        proxy, port, task = await _start_proxy(backend_url, audit_logger)
+
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"http://127.0.0.1:{port}/tools-invoke",
+                    data=b"not json at all",
+                    headers={"Content-Type": "application/json"},
+                ) as resp:
+                    assert resp.status == 400
+                    data = await resp.json()
+                    assert data["error"]["type"] == "bad_request"
+
+            # Backend should NOT have received this request
+            tool_reqs = [r for r in app["requests"] if r.get("path") == "/tools-invoke"]
+            assert len(tool_reqs) == 0
+        finally:
+            await _stop_proxy(proxy, task)
+
+    @pytest.mark.asyncio
+    async def test_missing_tool_field_returns_400(
+        self, backend: tuple, audit_logger: AuditLogger,
+    ) -> None:
+        """JSON body without 'tool' field should return 400, not forward."""
+        app, backend_url = backend
+        proxy, port, task = await _start_proxy(backend_url, audit_logger)
+
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"http://127.0.0.1:{port}/tools-invoke",
+                    json={"some_key": "some_value"},
+                ) as resp:
+                    assert resp.status == 400
+                    data = await resp.json()
+                    assert data["error"]["type"] == "bad_request"
+
+            # Backend should NOT have received this request
+            tool_reqs = [r for r in app["requests"] if r.get("path") == "/tools-invoke"]
+            assert len(tool_reqs) == 0
+        finally:
+            await _stop_proxy(proxy, task)
+
+
+class TestAuditLogWriteFailure:
+    """Verify the proxy survives audit log write failures."""
+
+    @pytest.mark.asyncio
+    async def test_proxy_continues_after_log_write_failure(
+        self, backend: tuple, tmp_path: Path,
+    ) -> None:
+        """Make the log file unwritable, then send a tool call — proxy must not crash."""
+        app, backend_url = backend
+
+        # Create a logger that will fail on write
+        log_path = tmp_path / "audit.jsonl"
+        logger = AuditLogger(log_path=log_path)
+        # Force-close the file handle to simulate I/O failure
+        assert logger._log_file is not None
+        logger._log_file.close()
+
+        proxy, port, task = await _start_proxy(backend_url, logger)
+
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession() as session:
+                # This call triggers log_tool_call → _write_entry on a closed file.
+                # Before the fix, this would raise ValueError and crash the proxy.
+                async with session.post(
+                    f"http://127.0.0.1:{port}/tools-invoke",
+                    json={"tool": "test-tool", "arguments": {}},
+                ) as resp:
+                    # Proxy should still function — the tool call goes through
+                    assert resp.status == 200
+        finally:
+            await _stop_proxy(proxy, task)

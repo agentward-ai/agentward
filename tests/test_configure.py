@@ -224,9 +224,14 @@ class TestNetworkCredentials:
         scan = _scan(_server("risky-server", tools, RiskLevel.HIGH))
         policy = generate_policy(scan)
         assert "risky-server" in policy.skills
-        assert "network" in policy.skills["risky-server"]
-        network_perms = policy.skills["risky-server"]["network"]
-        assert network_perms.actions.get("outbound") is False
+        # Resource key is derived from the tool name ("fetch_url" → "url")
+        # so the engine can match tool calls to this rule
+        resources = policy.skills["risky-server"]
+        outbound_blocked = any(
+            perms.actions.get("outbound") is False
+            for perms in resources.values()
+        )
+        assert outbound_blocked, f"Expected outbound=False in some resource, got: {resources}"
 
     def test_network_without_credentials_no_block(self) -> None:
         tool = _perm(
@@ -236,9 +241,13 @@ class TestNetworkCredentials:
         )
         scan = _scan(_server("net-server", [tool], RiskLevel.MEDIUM))
         policy = generate_policy(scan)
-        # Should not have network outbound block
+        # Should not have any outbound block without credentials
         if "net-server" in policy.skills:
-            assert "network" not in policy.skills["net-server"]
+            outbound_blocked = any(
+                perms.actions.get("outbound") is False
+                for perms in policy.skills["net-server"].values()
+            )
+            assert not outbound_blocked
 
 
 # ---------------------------------------------------------------------------

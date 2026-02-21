@@ -18,8 +18,10 @@ request/response (including WebSocket traffic) passes through transparently.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json as _json
 import signal
+from sys import platform as _platform
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +32,7 @@ from rich.console import Console
 from agentward.audit.logger import AuditLogger
 from agentward.policy.engine import EvaluationResult, PolicyEngine
 from agentward.policy.schema import PolicyDecision
+from agentward.proxy.chaining import ChainTracker
 
 _console = Console(stderr=True)
 
@@ -67,6 +70,7 @@ class HttpProxy:
         policy_engine: Policy engine for tool call evaluation. None = passthrough.
         audit_logger: Structured audit logger.
         policy_path: Path to the loaded policy file (for logging only).
+        chain_tracker: Optional chain tracker for runtime skill chaining enforcement.
     """
 
     def __init__(
@@ -77,6 +81,7 @@ class HttpProxy:
         policy_engine: PolicyEngine | None,
         audit_logger: AuditLogger,
         policy_path: Path | None = None,
+        chain_tracker: ChainTracker | None = None,
     ) -> None:
         self._backend_url = backend_url.rstrip("/")
         self._listen_host = listen_host
@@ -84,7 +89,10 @@ class HttpProxy:
         self._policy_engine = policy_engine
         self._audit_logger = audit_logger
         self._policy_path = policy_path
+        self._chain_tracker = chain_tracker
         self._session: ClientSession | None = None
+        # Monotonic counter for synthetic request IDs (HTTP has no JSON-RPC ids)
+        self._request_counter = itertools.count(1)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -109,19 +117,21 @@ class HttpProxy:
         site = web.TCPSite(runner, self._listen_host, self._listen_port)
 
         # Graceful shutdown on signals
+        # add_signal_handler is not supported on Windows
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
 
         def _signal_handler() -> None:
             shutdown_event.set()
 
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, _signal_handler)
+        if _platform != "win32":
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(sig, _signal_handler)
 
         try:
             await site.start()
             _console.print(
-                f"[bold green]Listening on http://{self._listen_host}:{self._listen_port}[/bold green]",
+                f"[bold #00ff88]Listening on http://{self._listen_host}:{self._listen_port}[/bold #00ff88]",
             )
             _console.print(
                 f"[dim]Forwarding to {self._backend_url}[/dim]",
@@ -153,9 +163,14 @@ class HttpProxy:
         - Everything else → transparent HTTP forward
         """
         # WebSocket upgrade detection
+        # Connection header may contain multiple tokens (e.g., "Upgrade, keep-alive")
+        connection_tokens = {
+            t.strip()
+            for t in request.headers.get("Connection", "").lower().split(",")
+        }
         if (
             request.headers.get("Upgrade", "").lower() == "websocket"
-            and request.headers.get("Connection", "").lower() == "upgrade"
+            and "upgrade" in connection_tokens
         ):
             return await self._handle_websocket(request)
 
@@ -269,16 +284,35 @@ class HttpProxy:
         # Read raw body once — we'll need it for both parsing and forwarding
         raw_body = await request.read()
 
-        # Try to parse JSON body for policy evaluation
+        # Parse JSON body for policy evaluation.
+        # If the body is unparseable or doesn't look like a tool invocation,
+        # reject it — forwarding would let the backend accept a format this
+        # proxy doesn't understand, bypassing policy enforcement.
         try:
             body = _json.loads(raw_body)
         except Exception:
-            # Can't parse — forward as-is, let backend handle it
-            return await self._forward_request(request, raw_body=raw_body)
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": {
+                        "type": "bad_request",
+                        "message": "AgentWard: /tools-invoke body must be valid JSON.",
+                    },
+                },
+                status=400,
+            )
 
         if not isinstance(body, dict) or "tool" not in body:
-            # Not a valid tool invocation — forward as-is
-            return await self._forward_request(request, raw_body=raw_body)
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": {
+                        "type": "bad_request",
+                        "message": "AgentWard: /tools-invoke body must be a JSON object with a 'tool' field.",
+                    },
+                },
+                status=400,
+            )
 
         tool_name = str(body["tool"])
         arguments = body.get("arguments", {})
@@ -287,9 +321,9 @@ class HttpProxy:
 
         # Evaluate policy
         result = self._evaluate_tool_call(tool_name, arguments)
-        self._audit_logger.log_tool_call(tool_name, arguments, result)
 
         if result.decision == PolicyDecision.BLOCK:
+            self._audit_logger.log_tool_call(tool_name, arguments, result)
             return web.json_response(
                 {
                     "ok": False,
@@ -302,6 +336,7 @@ class HttpProxy:
             )
 
         if result.decision == PolicyDecision.APPROVE:
+            self._audit_logger.log_tool_call(tool_name, arguments, result)
             return web.json_response(
                 {
                     "ok": False,
@@ -313,8 +348,48 @@ class HttpProxy:
                 status=403,
             )
 
-        # ALLOW or LOG — forward to backend
-        return await self._forward_request(request, raw_body=raw_body)
+        # ALLOW or LOG — check chaining rules before forwarding
+        request_id: int | None = None
+        if self._chain_tracker is not None:
+            chain_result = self._chain_tracker.check_before_call(
+                tool_name, arguments,
+            )
+            if chain_result is not None and chain_result.decision == PolicyDecision.BLOCK:
+                self._audit_logger.log_tool_call(
+                    tool_name, arguments, chain_result, chain_violation=True,
+                )
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": {
+                            "type": "chain_blocked",
+                            "message": f"AgentWard: {chain_result.reason}",
+                        },
+                    },
+                    status=403,
+                )
+            request_id = next(self._request_counter)
+            self._chain_tracker.record_call(
+                tool_name, arguments, request_id=request_id,
+            )
+
+        # Log ALLOW/LOG only after passing all checks (policy + chaining)
+        self._audit_logger.log_tool_call(tool_name, arguments, result)
+
+        # Forward to backend and capture response for chain tracking
+        response = await self._forward_request(request, raw_body=raw_body)
+
+        # Record response content for chaining detection
+        if self._chain_tracker is not None and isinstance(response, web.Response):
+            try:
+                response_json = _json.loads(response.body)
+                self._chain_tracker.record_response(
+                    tool_name, response_json, request_id=request_id,
+                )
+            except Exception:
+                pass  # Can't parse — skip chain recording
+
+        return response
 
     # ------------------------------------------------------------------
     # HTTP forwarding

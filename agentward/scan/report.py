@@ -1,7 +1,15 @@
 """Rich CLI output for scan results.
 
 Renders permission maps, risk trees, and recommendations as beautiful
-terminal output using the rich library.
+terminal output using the rich library. Visual style matches agentward.ai.
+
+Color palette (website parity):
+  - Neon green (#00ff88): LOW risk, success indicators
+  - Cyan (#5eead4): found/discovered items, info
+  - Yellow (#ffcc00): MEDIUM risk, warnings
+  - Orange (#ff6b35): HIGH risk
+  - Hot pink (#ff3366): CRITICAL risk
+  - Dim (#555555): borders, secondary text
 """
 
 from __future__ import annotations
@@ -10,12 +18,9 @@ import json
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
-from rich.tree import Tree
 
+from agentward.scan.chains import ChainDetection, ChainRisk
 from agentward.scan.permissions import (
-    DataAccess,
     DataAccessType,
     RiskLevel,
     ScanResult,
@@ -27,6 +32,19 @@ from agentward.scan.recommendations import (
     Recommendation,
     RecommendationSeverity,
 )
+
+
+# ---------------------------------------------------------------------------
+# Color palette — matches agentward.ai
+# ---------------------------------------------------------------------------
+
+_CLR_LOW = "#00ff88"
+_CLR_MEDIUM = "#ffcc00"
+_CLR_HIGH = "#ff6b35"
+_CLR_CRITICAL = "#ff3366"
+_CLR_CYAN = "#5eead4"
+_CLR_DIM = "#555555"
+_CLR_GREEN = "#00ff88"
 
 
 # Data access type → display icon
@@ -43,11 +61,20 @@ _ACCESS_ICONS: dict[DataAccessType, str] = {
     DataAccessType.UNKNOWN: "\u2753",           # ❓
 }
 
+# Risk level → (emoji badge, rich style)
+_RISK_BADGES: dict[RiskLevel, tuple[str, str]] = {
+    RiskLevel.CRITICAL: ("\U0001f534", f"bold {_CLR_CRITICAL}"),  # 🔴
+    RiskLevel.HIGH: ("\u26a0", f"{_CLR_HIGH}"),                    # ⚠
+    RiskLevel.MEDIUM: ("\u26a0", f"{_CLR_MEDIUM}"),                # ⚠
+    RiskLevel.LOW: ("\u2713", f"{_CLR_LOW}"),                      # ✓
+}
+
 
 def print_scan_report(
     scan: ScanResult,
     recommendations: list[Recommendation],
     console: Console,
+    chains: list[ChainDetection] | None = None,
 ) -> None:
     """Render the full scan report to the console.
 
@@ -55,46 +82,33 @@ def print_scan_report(
         scan: The complete scan result.
         recommendations: Generated recommendations.
         console: Rich console to print to (should be stderr).
+        chains: Detected skill chains (optional, computed if not provided).
     """
-    # Header
     console.print()
-    console.print(
-        Panel.fit(
-            "[bold white]AgentWard Scan Report[/bold white]",
-            border_style="blue",
-        )
-    )
-
-    # Config sources
-    if scan.config_sources:
-        console.print(f"\n[dim]Config sources:[/dim]")
-        for source in scan.config_sources:
-            console.print(f"  [dim]{source}[/dim]")
 
     # Count totals
     total_servers = len(scan.servers)
     total_tools = sum(len(s.tools) for s in scan.servers)
-    console.print(
-        f"\n[bold]Found {total_servers} server(s) with {total_tools} tool(s)[/bold]\n"
-    )
 
-    # Per-server permission tables
-    for server_map in scan.servers:
-        _print_server_table(server_map, console)
-
-    # Risk summary tree
+    # Unified scan table (all tools in one table, like the website)
     if total_tools > 0:
-        _print_risk_tree(scan, console)
+        _print_unified_table(scan, console)
+
+    # Skill chain analysis
+    if chains is None:
+        from agentward.scan.chains import detect_chains
+
+        chains = detect_chains(scan)
+    if chains:
+        _print_chain_analysis(chains, console)
+
+    # Risk summary footer (compact, website-style)
+    _print_risk_footer(scan, chains, console)
 
     # Recommendations (with risk explanations)
     if recommendations:
         _print_recommendations(recommendations, scan, console)
 
-    # Footer — overall risk with summary + mitigation
-    console.print()
-    overall = _overall_risk(scan)
-    footer = _risk_summary(scan, overall, recommendations)
-    console.print(Panel(footer, border_style=_risk_border(overall)))
     console.print()
 
 
@@ -109,118 +123,248 @@ def print_scan_json(scan: ScanResult, console: Console) -> None:
     console.print_json(json.dumps(data, indent=2))
 
 
-def _print_server_table(
-    server_map: ServerPermissionMap, console: Console
+# ---------------------------------------------------------------------------
+# Unified scan table
+# ---------------------------------------------------------------------------
+
+
+def _source_badge(server_map: ServerPermissionMap) -> str:
+    """Classify a server into a source badge: MCP, Skill, or SDK."""
+    transport = server_map.server.transport.value
+    if transport == "openclaw":
+        return "Skill"
+    if transport == "python":
+        return "SDK"
+    return "MCP"
+
+
+def _capabilities_label(tool_perm: ToolPermission) -> str:
+    """Build a compact capabilities string from data access info."""
+    parts: list[str] = []
+    for access in tool_perm.data_access:
+        verb = "read" if access.read and not access.write else ""
+        if access.write:
+            verb = "write" if not access.read else "read,write"
+        if tool_perm.is_destructive:
+            verb += ",del" if verb else "del"
+        if verb:
+            parts.append(verb)
+        else:
+            parts.append(access.type.value)
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for p in parts:
+        if p not in seen:
+            unique.append(p)
+            seen.add(p)
+    return ",".join(unique) if unique else "unknown"
+
+
+def _display_width(text: str) -> int:
+    """Compute the terminal display width of a string.
+
+    Accounts for wide characters (CJK, emoji) that occupy 2 columns
+    but have ``len()`` of 1.
+
+    Args:
+        text: The plain text string (no rich markup).
+
+    Returns:
+        The number of terminal columns the text occupies.
+    """
+    import unicodedata
+
+    width = 0
+    for ch in text:
+        eaw = unicodedata.east_asian_width(ch)
+        width += 2 if eaw in ("W", "F") else 1
+    return width
+
+
+def _risk_color(level: RiskLevel) -> str:
+    """Return the hex color for a risk level."""
+    return {
+        RiskLevel.LOW: _CLR_LOW,
+        RiskLevel.MEDIUM: _CLR_MEDIUM,
+        RiskLevel.HIGH: _CLR_HIGH,
+        RiskLevel.CRITICAL: _CLR_CRITICAL,
+    }.get(level, "white")
+
+
+def _print_colored_table(
+    headers: tuple[str, ...],
+    rows: list[tuple[str, ...]],  # last element of each tuple is the color
+    console: Console,
 ) -> None:
-    """Print a permission table for a single server."""
-    server = server_map.server
-    risk_style = _risk_style(server_map.overall_risk)
+    """Print a table where each row's borders and text share the row's color.
 
-    # Server header
-    title = f"{server.name}"
-    subtitle_parts: list[str] = []
-    if server.transport.value == "python":
-        subtitle_parts.append(str(server.source_file))
-        framework = server.client.replace("python:", "")
-        subtitle_parts.append(f"framework: {framework}")
-    elif server.transport.value == "openclaw":
-        subtitle_parts.append(str(server.source_file))
-        source_type = server.client.replace("openclaw:", "")
-        subtitle_parts.append(f"source: {source_type}")
-    else:
-        if server.transport.value != "stdio":
-            subtitle_parts.append(f"transport: {server.transport.value}")
-        if server.command:
-            cmd_display = " ".join([server.command, *server.args[:3]])
-            if len(server.args) > 3:
-                cmd_display += " ..."
-            subtitle_parts.append(cmd_display)
-        elif server.url:
-            subtitle_parts.append(server.url)
-        subtitle_parts.append(f"client: {server.client}")
+    Rich's Table doesn't support per-row border colors, so this renders
+    manually with box-drawing characters. Each row tuple should contain
+    N cell values followed by the color string as the last element.
 
-    subtitle = " | ".join(subtitle_parts)
+    Args:
+        headers: Column header labels (N columns).
+        rows: List of (col1, col2, ..., colN, color) tuples.
+        console: Rich console for output.
+    """
+    n_cols = len(headers)
 
-    if server_map.warning:
-        console.print(f"  [yellow]⚠ {server_map.warning}[/yellow]")
+    # Compute column widths using display width (handles wide emoji)
+    widths: list[int] = [_display_width(h) for h in headers]
+    for row in rows:
+        for i in range(n_cols):
+            widths[i] = max(widths[i], _display_width(row[i]))
 
-    if not server_map.tools:
-        console.print(
-            f"  [dim]No tools discovered for {server.name} "
-            f"({server_map.enumeration_method})[/dim]\n"
-        )
+    # Add padding (1 space each side)
+    padded = [w + 2 for w in widths]
+
+    def _hline(left: str, mid: str, right: str, fill: str, clr: str) -> str:
+        """Build a horizontal border line with the given color."""
+        parts = [f"[{clr}]{left}[/{clr}]"]
+        for i, pw in enumerate(padded):
+            parts.append(f"[{clr}]{fill * pw}[/{clr}]")
+            if i < n_cols - 1:
+                parts.append(f"[{clr}]{mid}[/{clr}]")
+        parts.append(f"[{clr}]{right}[/{clr}]")
+        return "".join(parts)
+
+    def _row_line(cells: tuple[str, ...], clr: str) -> str:
+        """Build a data row with colored borders and text."""
+        parts = [f"[{clr}]\u2502[/{clr}]"]
+        for i, cell in enumerate(cells):
+            pad_right = widths[i] - _display_width(cell)
+            parts.append(f"[{clr}] {cell}{' ' * pad_right} [/{clr}]")
+            if i < n_cols - 1:
+                parts.append(f"[{clr}]\u2502[/{clr}]")
+        parts.append(f"[{clr}]\u2502[/{clr}]")
+        return "".join(parts)
+
+    # Top border (dim)
+    console.print(_hline("\u250c", "\u252c", "\u2510", "\u2500", _CLR_DIM))
+    # Header row (dim)
+    console.print(_row_line(headers, _CLR_DIM))
+    # Header separator (dim)
+    console.print(_hline("\u251c", "\u253c", "\u2524", "\u2500", _CLR_DIM))
+    # Data rows (each in its own color)
+    for row in rows:
+        cells = row[:n_cols]
+        clr = row[n_cols]  # color is the last element
+        console.print(_row_line(cells, clr))
+    # Bottom border (dim)
+    console.print(_hline("\u2514", "\u2534", "\u2518", "\u2500", _CLR_DIM))
+    console.print()
+
+
+def _print_unified_table(scan: ScanResult, console: Console) -> None:
+    """Print a single unified table with all tools across all servers.
+
+    Matches the website layout: entire row colored by risk level,
+    including border characters. Uses manual box-drawing since Rich's
+    Table doesn't support per-row border colors.
+    """
+    # Collect rows: (source, tool_label, risk_label, color)
+    rows: list[tuple[str, str, str, str]] = []
+    for server_map in scan.servers:
+        source = _source_badge(server_map)
+        for tool_perm in server_map.tools:
+            caps = _capabilities_label(tool_perm)
+            tool_label = f"{tool_perm.tool.name}  {caps}"
+            emoji, _ = _RISK_BADGES[tool_perm.risk_level]
+            risk_label = f"{emoji} {tool_perm.risk_level.value}"
+            rows.append((source, tool_label, risk_label, _risk_color(tool_perm.risk_level)))
+
+    if not rows:
         return
 
-    # Build table
-    table = Table(
-        title=title,
-        caption=f"[dim]{subtitle}[/dim]",
-        title_style="bold",
-        show_header=True,
-        header_style="bold",
-        border_style="dim",
-        padding=(0, 1),
+    _print_colored_table(
+        headers=("Source", "Tool/Skill", "Risk"),
+        rows=rows,
+        console=console,
     )
 
-    table.add_column("Tool", style="bold", min_width=20)
-    table.add_column("Access", min_width=10)
-    table.add_column("Risk", min_width=8, justify="center")
-    table.add_column("Notes", min_width=30)
 
-    for tool_perm in server_map.tools:
-        tool_name = tool_perm.tool.name
+# ---------------------------------------------------------------------------
+# Chain analysis
+# ---------------------------------------------------------------------------
 
-        # Access icons
-        access_str = _access_icons(tool_perm.data_access)
 
-        # Risk badge
-        risk_text = Text(
-            tool_perm.risk_level.value,
-            style=_risk_style(tool_perm.risk_level),
+def _print_chain_analysis(
+    chains: list[ChainDetection],
+    console: Console,
+) -> None:
+    """Print the skill chain analysis section.
+
+    Matches the website format:
+        ⚠ Skill chain detected: email-mgr → web-browser
+          Email content could leak via browsing
+
+    Args:
+        chains: Detected skill chains.
+        console: Rich console.
+    """
+    for chain in chains:
+        risk_clr = _CLR_CRITICAL if chain.risk == ChainRisk.CRITICAL else _CLR_HIGH
+        console.print(
+            f"\u26a0 Skill chain detected: {chain.label}",
+            style=risk_clr,
         )
-
-        # Notes: first risk reason
-        notes = tool_perm.risk_reasons[0] if tool_perm.risk_reasons else ""
-
-        # Add R/W indicators
-        rw_parts: list[str] = []
-        if tool_perm.is_read_only:
-            rw_parts.append("R")
-        else:
-            rw_parts.append("RW")
-        if tool_perm.is_destructive:
-            rw_parts.append("D")
-        rw_str = "/".join(rw_parts)
-        tool_display = f"{tool_name} [{rw_str}]"
-
-        table.add_row(tool_display, access_str, risk_text, notes)
-
-    console.print(table)
-    console.print()
+        console.print(f"  {chain.description}", style=_CLR_DIM)
+        console.print()
 
 
-def _print_risk_tree(scan: ScanResult, console: Console) -> None:
-    """Print a risk summary tree grouping tools by risk level."""
-    tree = Tree("[bold]Risk Summary[/bold]")
+# ---------------------------------------------------------------------------
+# Risk footer (compact summary)
+# ---------------------------------------------------------------------------
 
+
+def _print_risk_footer(
+    scan: ScanResult,
+    chains: list[ChainDetection] | None,
+    console: Console,
+) -> None:
+    """Print a compact risk summary footer matching the website.
+
+    Format: 3 critical · 4 high · 1 medium · 1 low
+            → Run `agentward configure` to generate policies
+    """
+    counts: dict[RiskLevel, int] = {
+        RiskLevel.CRITICAL: 0,
+        RiskLevel.HIGH: 0,
+        RiskLevel.MEDIUM: 0,
+        RiskLevel.LOW: 0,
+    }
+    for server_map in scan.servers:
+        for tool_perm in server_map.tools:
+            counts[tool_perm.risk_level] += 1
+
+    # Build count line with risk-appropriate colors
+    count_parts: list[str] = []
+    level_colors = {
+        RiskLevel.CRITICAL: _CLR_CRITICAL,
+        RiskLevel.HIGH: _CLR_HIGH,
+        RiskLevel.MEDIUM: _CLR_MEDIUM,
+        RiskLevel.LOW: _CLR_LOW,
+    }
     for level in (RiskLevel.CRITICAL, RiskLevel.HIGH, RiskLevel.MEDIUM, RiskLevel.LOW):
-        tools_at_level: list[tuple[str, str]] = []
+        if counts[level] > 0:
+            clr = level_colors[level]
+            count_parts.append(f"[{clr}]{counts[level]} {level.value.lower()}[/{clr}]")
+    if chains:
+        count_parts.append(f"[{_CLR_HIGH}]{len(chains)} chain(s)[/{_CLR_HIGH}]")
 
-        for server_map in scan.servers:
-            for tool_perm in server_map.tools:
-                if tool_perm.risk_level == level:
-                    tools_at_level.append(
-                        (server_map.server.name, tool_perm.tool.name)
-                    )
-
-        if tools_at_level:
-            style = _risk_style(level)
-            branch = tree.add(f"[{style}]{level.value}[/{style}] ({len(tools_at_level)})")
-            for server_name, tool_name in tools_at_level:
-                branch.add(f"[dim]{server_name}/[/dim]{tool_name}")
-
-    console.print(tree)
+    summary = " \u00b7 ".join(count_parts)
+    console.print(summary)
+    console.print(
+        f"[{_CLR_GREEN}]\u2192[/{_CLR_GREEN}] Run "
+        f"[bold {_CLR_GREEN}]agentward configure[/bold {_CLR_GREEN}] to generate policies"
+    )
     console.print()
+
+
+# ---------------------------------------------------------------------------
+# Recommendations
+# ---------------------------------------------------------------------------
 
 
 def _print_recommendations(
@@ -229,9 +373,6 @@ def _print_recommendations(
     console: Console,
 ) -> None:
     """Print recommendations section with risk explanations.
-
-    For CRITICAL and WARNING severity recommendations, renders an
-    attack scenario panel explaining the risk in plain language.
 
     Args:
         recommendations: Generated recommendations.
@@ -246,20 +387,19 @@ def _print_recommendations(
         for tool_perm in server_map.tools:
             key = f"{server_map.server.name}/{tool_perm.tool.name}"
             tool_lookup[key] = (tool_perm, server_map)
-            # Also store by tool name alone for simpler targets
             tool_lookup[tool_perm.tool.name] = (tool_perm, server_map)
 
     for i, rec in enumerate(recommendations, 1):
         severity_style = _severity_style(rec.severity)
         console.print(
             f"  {i}. [{severity_style}]{rec.severity.value}[/{severity_style}] "
-            f"[dim]({rec.target})[/dim]"
+            f"[{_CLR_DIM}]({rec.target})[/{_CLR_DIM}]"
         )
         console.print(f"     {rec.message}")
         if rec.suggested_policy:
-            console.print(f"     [dim]Suggested policy:[/dim]")
+            console.print(f"     [{_CLR_DIM}]Suggested policy:[/{_CLR_DIM}]")
             for line in rec.suggested_policy.split("\n"):
-                console.print(f"       [green]{line}[/green]")
+                console.print(f"       [{_CLR_GREEN}]{line}[/{_CLR_GREEN}]")
 
         # Show attack scenario for CRITICAL and WARNING recommendations
         if rec.severity in (RecommendationSeverity.CRITICAL, RecommendationSeverity.WARNING):
@@ -314,184 +454,30 @@ def _print_explanation_panel(
         "",
         f"[italic]Example:[/italic] {explanation.example}",
         "",
-        f"[red]Impact:[/red] {explanation.impact}",
-        f"[green]Fix:[/green] {explanation.mitigation}",
+        f"[{_CLR_CRITICAL}]Impact:[/{_CLR_CRITICAL}] {explanation.impact}",
+        f"[{_CLR_GREEN}]Fix:[/{_CLR_GREEN}] {explanation.mitigation}",
     ]
     content = "\n".join(lines)
     panel = Panel(
         content,
         title="Attack Scenario",
         title_align="left",
-        border_style="yellow",
+        border_style=_CLR_HIGH,
         padding=(0, 1),
     )
     console.print(f"     ", end="")  # indent to align with recommendation
     console.print(panel)
 
 
-def _access_icons(accesses: list[DataAccess]) -> str:
-    """Map data access list to emoji indicators."""
-    icons: list[str] = []
-    seen: set[DataAccessType] = set()
-    for access in accesses:
-        if access.type not in seen:
-            icon = _ACCESS_ICONS.get(access.type, "\u2753")
-            icons.append(icon)
-            seen.add(access.type)
-    return " ".join(icons) if icons else "\u2753"
-
-
-def _risk_style(level: RiskLevel) -> str:
-    """Map risk level to rich style string."""
-    return {
-        RiskLevel.LOW: "green",
-        RiskLevel.MEDIUM: "yellow",
-        RiskLevel.HIGH: "red",
-        RiskLevel.CRITICAL: "bold red",
-    }.get(level, "white")
-
-
-def _risk_border(level: RiskLevel) -> str:
-    """Map risk level to panel border style."""
-    return {
-        RiskLevel.LOW: "green",
-        RiskLevel.MEDIUM: "yellow",
-        RiskLevel.HIGH: "red",
-        RiskLevel.CRITICAL: "red",
-    }.get(level, "white")
+# ---------------------------------------------------------------------------
+# Shared style helpers
+# ---------------------------------------------------------------------------
 
 
 def _severity_style(severity: RecommendationSeverity) -> str:
     """Map recommendation severity to rich style."""
     return {
-        RecommendationSeverity.INFO: "blue",
-        RecommendationSeverity.WARNING: "yellow",
-        RecommendationSeverity.CRITICAL: "bold red",
+        RecommendationSeverity.INFO: _CLR_CYAN,
+        RecommendationSeverity.WARNING: _CLR_HIGH,
+        RecommendationSeverity.CRITICAL: f"bold {_CLR_CRITICAL}",
     }.get(severity, "white")
-
-
-def _overall_risk(scan: ScanResult) -> RiskLevel:
-    """Compute the overall risk from a scan result."""
-    if not scan.servers:
-        return RiskLevel.LOW
-
-    risk_order = [RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL]
-    highest = RiskLevel.LOW
-    for server in scan.servers:
-        if risk_order.index(server.overall_risk) > risk_order.index(highest):
-            highest = server.overall_risk
-    return highest
-
-
-def _risk_summary(
-    scan: ScanResult,
-    overall: RiskLevel,
-    recommendations: list[Recommendation],
-) -> str:
-    """Generate a rich-markup summary with drivers, mitigation, and config.
-
-    Args:
-        scan: The complete scan result.
-        overall: The computed overall risk level.
-        recommendations: Generated recommendations (for YAML snippets).
-
-    Returns:
-        A rich-markup string for rendering in a Panel.
-    """
-    if not scan.servers:
-        return "[dim]No tools found.[/dim]"
-
-    style = _risk_style(overall)
-
-    # Count tools by risk level
-    counts: dict[RiskLevel, int] = {
-        RiskLevel.CRITICAL: 0,
-        RiskLevel.HIGH: 0,
-        RiskLevel.MEDIUM: 0,
-        RiskLevel.LOW: 0,
-    }
-
-    # Collect driver data: (label, reason, ToolPermission, ServerPermissionMap)
-    drivers: list[tuple[str, str, ToolPermission, ServerPermissionMap]] = []
-    seen_tools: set[str] = set()
-
-    for server_map in scan.servers:
-        source = _format_source(server_map.server.client)
-        for tool_perm in server_map.tools:
-            counts[tool_perm.risk_level] += 1
-            if tool_perm.risk_level == overall and tool_perm.risk_reasons:
-                tool_key = f"{server_map.server.name}/{tool_perm.tool.name}"
-                if tool_key not in seen_tools:
-                    label = f"{source} {tool_perm.tool.name}"
-                    drivers.append((label, tool_perm.risk_reasons[0], tool_perm, server_map))
-                    seen_tools.add(tool_key)
-
-    # Build recommendation lookup: target → suggested_policy
-    rec_lookup: dict[str, str] = {}
-    for rec in recommendations:
-        if rec.suggested_policy:
-            rec_lookup[rec.target] = rec.suggested_policy
-
-    # Header line
-    lines: list[str] = [f"[{style}]Overall Risk: {overall.value}[/{style}]", ""]
-
-    # Count summary
-    count_parts: list[str] = []
-    for level in (RiskLevel.CRITICAL, RiskLevel.HIGH, RiskLevel.MEDIUM, RiskLevel.LOW):
-        if counts[level] > 0:
-            count_parts.append(f"{counts[level]} {level.value}")
-    lines.append("[dim]" + " \u00b7 ".join(count_parts) + "[/dim]")
-
-    # Driver entries (up to 3)
-    for label, reason, tool_perm, server_map in drivers[:3]:
-        lines.append("")
-        lines.append(f'Driven by: "{label}", "{reason}"')
-
-        # Mitigation: the config snippet that fixes this
-        tool_name = tool_perm.tool.name
-        server_name = server_map.server.name
-        yaml_snippet = (
-            rec_lookup.get(f"{server_name}/{tool_name}")
-            or rec_lookup.get(tool_name)
-        )
-        if yaml_snippet:
-            lines.append(
-                "  [green]Mitigation:[/green] "
-                "Run [bold]agentward configure[/bold] to generate a policy with:"
-            )
-            for yaml_line in yaml_snippet.strip().split("\n"):
-                lines.append(f"    [green]{yaml_line}[/green]")
-
-    return "\n".join(lines)
-
-
-def _format_source(client: str) -> str:
-    """Format a client string into a human-readable source label.
-
-    Extracts the source name from client identifiers like
-    ``"claude_desktop"``, ``"cursor"``, ``"openclaw:windsurf bundled"``,
-    ``"python:openai"``.
-
-    Args:
-        client: The server client identifier.
-
-    Returns:
-        A short parenthesized label, e.g. ``"(cursor)"``, ``"(clawdbot)"``.
-    """
-    # openclaw:xxx → clawdbot
-    if client.startswith("openclaw"):
-        return "(clawdbot)"
-    # python:framework → framework
-    if client.startswith("python:"):
-        framework = client.split(":", 1)[1]
-        return f"({framework})"
-    # Known MCP clients
-    _CLIENT_LABELS: dict[str, str] = {
-        "claude_desktop": "claude desktop",
-        "claude_code": "claude code",
-        "cursor": "cursor",
-        "windsurf": "windsurf",
-        "vscode": "vscode",
-    }
-    label = _CLIENT_LABELS.get(client, client)
-    return f"({label})"

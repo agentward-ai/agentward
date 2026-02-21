@@ -54,7 +54,6 @@ def generate_recommendations(scan: ScanResult) -> list[Recommendation]:
             recs.extend(_check_write_without_read_only(server_map, tool_perm))
             recs.extend(_check_shell_execution(server_map, tool_perm))
             recs.extend(_check_destructive_without_approval(server_map, tool_perm))
-            recs.extend(_check_no_annotations(server_map, tool_perm))
 
         recs.extend(_check_network_with_sensitive(server_map))
         recs.extend(_check_dynamic_tools(server_map))
@@ -303,29 +302,6 @@ def _check_dynamic_tools(
                 f"Server '{server.server.name}' supports dynamic tool loading "
                 f"(listChanged: true). New tools could appear at runtime. "
                 f"Monitor closely and re-scan periodically."
-            ),
-        )
-    ]
-
-
-def _check_no_annotations(
-    server: ServerPermissionMap, tool: ToolPermission
-) -> list[Recommendation]:
-    """Flag tools with no annotations — risk assessment is heuristic only."""
-    if tool.tool.annotations is not None:
-        return []
-
-    # Only flag if the tool has non-trivial risk
-    if tool.risk_level in (RiskLevel.LOW,):
-        return []
-
-    return [
-        Recommendation(
-            severity=RecommendationSeverity.INFO,
-            target=f"{server.server.name}/{tool.tool.name}",
-            message=(
-                f"Tool '{tool.tool.name}' has no MCP annotations. "
-                f"Risk assessment is based on name/schema heuristics only."
             ),
         )
     ]

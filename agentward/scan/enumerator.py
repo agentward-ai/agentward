@@ -97,12 +97,12 @@ async def enumerate_server(
                 return result
         except asyncio.TimeoutError:
             _console.print(
-                f"  [yellow]⏱ {server.name}:[/yellow] Timed out after {timeout}s",
+                f"  [#ffcc00]⏱ {server.name}:[/#ffcc00] Timed out after {timeout}s",
                 highlight=False,
             )
         except Exception as e:
             _console.print(
-                f"  [yellow]⚠ {server.name}:[/yellow] Live enumeration failed: {e}",
+                f"  [#ffcc00]⚠ {server.name}:[/#ffcc00] Live enumeration failed: {e}",
                 highlight=False,
             )
     elif server.transport in (TransportType.HTTP, TransportType.SSE):
@@ -114,12 +114,12 @@ async def enumerate_server(
                 return result
         except asyncio.TimeoutError:
             _console.print(
-                f"  [yellow]⏱ {server.name}:[/yellow] HTTP timed out after {timeout}s",
+                f"  [#ffcc00]⏱ {server.name}:[/#ffcc00] HTTP timed out after {timeout}s",
                 highlight=False,
             )
         except Exception as e:
             _console.print(
-                f"  [yellow]⚠ {server.name}:[/yellow] HTTP enumeration failed: {e}",
+                f"  [#ffcc00]⚠ {server.name}:[/#ffcc00] HTTP enumeration failed: {e}",
                 highlight=False,
             )
 

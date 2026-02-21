@@ -11,6 +11,7 @@ from agentward.scan.openclaw import (
     ClawdBotConfig,
     SkillDefinition,
     SkillRequirements,
+    _BIN_RISK_SIGNALS,
     config_to_enumeration_result,
     parse_clawdbot_config,
     parse_skill_md,
@@ -195,6 +196,25 @@ class TestSkillToToolInfo:
         props = tool.input_schema.get("properties", {})
         shell_keys = [k for k in props if "shell" in k]
         assert len(shell_keys) > 0
+
+    def test_messaging_binaries_in_risk_map(self) -> None:
+        """imsg, wacli, bluebubbles, bird are classified as messaging."""
+        for binary in ("imsg", "wacli", "bluebubbles", "bird"):
+            assert binary in _BIN_RISK_SIGNALS, f"{binary} missing from risk map"
+            assert _BIN_RISK_SIGNALS[binary]["type"] == "messaging"
+
+    def test_messaging_skill_produces_signal(self) -> None:
+        """A skill requiring imsg produces messaging signal in tool schema."""
+        skill = SkillDefinition(
+            name="test-imsg",
+            description="Test iMessage skill",
+            source_file=Path("/fake/SKILL.md"),
+            requirements=SkillRequirements(bins=["imsg"]),
+        )
+        tool = _skill_to_tool_info(skill)
+        props = tool.input_schema.get("properties", {})
+        messaging_keys = [k for k in props if "messaging" in k]
+        assert len(messaging_keys) > 0, "Expected messaging signal in schema"
 
 
 # ---------------------------------------------------------------------------

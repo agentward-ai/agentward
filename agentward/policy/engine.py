@@ -45,8 +45,13 @@ class PolicyEngine:
     If no policy rule matches a tool, the default is ALLOW (passthrough).
     """
 
-    def __init__(self, policy: AgentWardPolicy) -> None:
+    def __init__(
+        self,
+        policy: AgentWardPolicy,
+        skill_context: str | None = None,
+    ) -> None:
         self._policy = policy
+        self._skill_context = skill_context
         # Pre-build a lookup: (skill_name, resource_name) → ResourcePermissions
         self._resource_lookup: dict[tuple[str, str], ResourcePermissions] = {}
         for skill_name, resources in policy.skills.items():
@@ -57,6 +62,24 @@ class PolicyEngine:
     def policy(self) -> AgentWardPolicy:
         """The loaded policy."""
         return self._policy
+
+    def resolve_skill(self, tool_name: str) -> str | None:
+        """Resolve a tool name to its skill (server) name.
+
+        Uses the policy's skill/resource hierarchy to map flat MCP tool
+        names back to the skill that owns them. This is the bridge between
+        tool-level proxy interception and skill-level chaining rules.
+
+        Args:
+            tool_name: The MCP tool name (e.g., "gmail_send", "read_file").
+
+        Returns:
+            The skill name if the tool matches a policy rule, None otherwise.
+        """
+        match = self._match_tool(tool_name)
+        if match is not None:
+            return match[0]  # skill_name
+        return None
 
     def evaluate(self, tool_name: str, arguments: dict[str, Any] | None = None) -> EvaluationResult:
         """Evaluate a tool call against the policy.
@@ -77,7 +100,7 @@ class PolicyEngine:
             )
 
         # Try to match tool name against skill/resource/action hierarchy
-        match = self._match_tool(tool_name)
+        match = self._match_tool(tool_name, skill_filter=self._skill_context)
         if match is not None:
             skill_name, resource_name, action, permissions = match
             return self._evaluate_permissions(
@@ -119,15 +142,27 @@ class PolicyEngine:
         )
 
     def _match_tool(
-        self, tool_name: str
+        self,
+        tool_name: str,
+        skill_filter: str | None = None,
     ) -> tuple[str, str, str | None, ResourcePermissions] | None:
         """Match a flat MCP tool name to a skill/resource/action in the policy.
 
-        Matching strategy:
-          1. Check if tool_name starts with resource_name + separator ("_" or "-")
-             → extract the remainder as the action
-          2. Check if tool_name exactly equals resource_name
+        Matching strategy (longest resource name wins across all strategies):
+          1. Exact match: tool_name equals resource_name
              → action is None (resource-level check only)
+          2. Prefix match: tool_name starts with resource_name + separator
+             → remainder is the action (e.g., "gmail_send" → action "send")
+          3. Suffix match: tool_name ends with separator + resource_name
+             → prefix is the action (e.g., "read_file" → action "read")
+
+        Separators: "_", "-", "."
+
+        Args:
+            tool_name: The MCP tool name to match.
+            skill_filter: When set, only match resources belonging to this
+                          skill. Used to disambiguate when multiple skills
+                          define the same resource name.
 
         Returns:
             Tuple of (skill_name, resource_name, action_or_none, permissions),
@@ -137,6 +172,9 @@ class PolicyEngine:
         best_resource_len = 0
 
         for (skill_name, resource_name), permissions in self._resource_lookup.items():
+            # When skill_filter is set, only match resources from that skill
+            if skill_filter is not None and skill_name != skill_filter:
+                continue
             # Exact match: tool name IS the resource name
             if tool_name == resource_name:
                 if len(resource_name) > best_resource_len:
@@ -149,6 +187,15 @@ class PolicyEngine:
                 prefix = resource_name + sep
                 if tool_name.startswith(prefix):
                     action = tool_name[len(prefix):]
+                    if action and len(resource_name) > best_resource_len:
+                        best_match = (skill_name, resource_name, action, permissions)
+                        best_resource_len = len(resource_name)
+
+            # Suffix match with separator: "read_file" matches resource "file"
+            for sep in ("_", "-", "."):
+                suffix = sep + resource_name
+                if tool_name.endswith(suffix):
+                    action = tool_name[: len(tool_name) - len(suffix)]
                     if action and len(resource_name) > best_resource_len:
                         best_match = (skill_name, resource_name, action, permissions)
                         best_resource_len = len(resource_name)
@@ -212,8 +259,23 @@ class PolicyEngine:
                 )
             # allowed is None — action not mentioned in policy, fall through
 
-        # Resource matched but no specific action rule — ALLOW by default
-        # (resource exists in policy but this particular action isn't listed)
+        # Resource matched but no specific action rule.
+        # If the resource has ONLY deny rules (no allow rules), block:
+        # this covers generated rules like `url: {outbound: false}` where
+        # the action token extracted from the tool name ("fetch") will never
+        # match the permission key ("outbound").
+        if permissions.actions and not any(permissions.actions.values()):
+            return EvaluationResult(
+                decision=PolicyDecision.BLOCK,
+                reason=(
+                    f"Resource '{resource_name}' is restricted for skill '{skill_name}' "
+                    f"(all listed actions are denied). Tool '{tool_name}' blocked."
+                ),
+                skill=skill_name,
+                resource=resource_name,
+            )
+
+        # Resource has some allow rules but this action isn't listed — ALLOW
         return EvaluationResult(
             decision=PolicyDecision.ALLOW,
             reason=(

@@ -12,6 +12,7 @@ from agentward.proxy.protocol import (
     ProtocolError,
     extract_tool_info,
     is_tool_call,
+    is_tool_call_notification,
     make_error_response,
     parse_message,
     serialize_message,
@@ -182,6 +183,30 @@ class TestIsToolCall:
     def test_response(self) -> None:
         msg = parse_message(TOOLS_CALL_RESPONSE_SUCCESS)
         assert is_tool_call(msg) is False
+
+
+class TestIsToolCallNotification:
+    """Tests for the is_tool_call_notification helper."""
+
+    def test_tools_call_notification_detected(self) -> None:
+        """A tools/call notification (no id) is detected."""
+        line = b'{"jsonrpc":"2.0","method":"tools/call","params":{"name":"evil","arguments":{}}}\n'
+        msg = parse_message(line)
+        assert is_tool_call_notification(msg) is True
+        # And is NOT a regular tool call (it's a notification, no id)
+        assert is_tool_call(msg) is False
+
+    def test_regular_notification_not_flagged(self) -> None:
+        msg = parse_message(INITIALIZED_NOTIFICATION)
+        assert is_tool_call_notification(msg) is False
+
+    def test_regular_tool_call_not_flagged(self) -> None:
+        msg = parse_message(TOOLS_CALL_READ)
+        assert is_tool_call_notification(msg) is False
+
+    def test_response_not_flagged(self) -> None:
+        msg = parse_message(TOOLS_CALL_RESPONSE_SUCCESS)
+        assert is_tool_call_notification(msg) is False
 
 
 class TestExtractToolInfo:

@@ -53,6 +53,7 @@ class AuditLogger:
         tool_name: str,
         arguments: dict[str, Any],
         result: EvaluationResult,
+        chain_violation: bool = False,
     ) -> None:
         """Log a tool call and its policy decision.
 
@@ -60,6 +61,7 @@ class AuditLogger:
             tool_name: The MCP tool name.
             arguments: The tool call arguments.
             result: The evaluation result from the policy engine.
+            chain_violation: Whether this was blocked due to a chaining rule.
         """
         entry = {
             "timestamp": _now_iso(),
@@ -70,15 +72,24 @@ class AuditLogger:
             "skill": result.skill,
             "resource": result.resource,
         }
+        if chain_violation:
+            entry["chain_violation"] = True
         self._write_entry(entry)
 
         # Human-readable stderr output
-        decision_style = _decision_style(result.decision)
-        _console.print(
-            f"[bold]{result.decision.value}[/bold] {tool_name}",
-            style=decision_style,
-            highlight=False,
-        )
+        if chain_violation and result.decision == PolicyDecision.BLOCK:
+            _console.print(
+                f"[bold]CHAIN BLOCK[/bold] {tool_name}",
+                style="bold red",
+                highlight=False,
+            )
+        else:
+            decision_style = _decision_style(result.decision)
+            _console.print(
+                f"[bold]{result.decision.value}[/bold] {tool_name}",
+                style=decision_style,
+                highlight=False,
+            )
         if result.decision != PolicyDecision.ALLOW:
             _console.print(f"  {result.reason}", style="dim")
 
@@ -122,12 +133,12 @@ class AuditLogger:
         }
         self._write_entry(entry)
 
-        _console.print("[bold green]AgentWard proxy started[/bold green]")
+        _console.print("[bold #00ff88]AgentWard proxy started[/bold #00ff88]")
         _console.print(f"  Server: {' '.join(server_command)}")
         if policy_path:
             _console.print(f"  Policy: {policy_path}")
         else:
-            _console.print("  Mode: [yellow]passthrough[/yellow] (no policy loaded)")
+            _console.print("  Mode: [#ffcc00]passthrough[/#ffcc00] (no policy loaded)")
 
     def log_http_startup(
         self,
@@ -152,12 +163,12 @@ class AuditLogger:
         }
         self._write_entry(entry)
 
-        _console.print("[bold green]AgentWard HTTP proxy started[/bold green]")
+        _console.print("[bold #00ff88]AgentWard HTTP proxy started[/bold #00ff88]")
         _console.print(f"  Backend: {backend_url}")
         if policy_path:
             _console.print(f"  Policy:  {policy_path}")
         else:
-            _console.print("  Mode: [yellow]passthrough[/yellow] (no policy loaded)")
+            _console.print("  Mode: [#ffcc00]passthrough[/#ffcc00] (no policy loaded)")
 
     def log_shutdown(self, reason: str) -> None:
         """Log proxy shutdown.
@@ -176,12 +187,30 @@ class AuditLogger:
     def _write_entry(self, entry: dict[str, Any]) -> None:
         """Write a structured JSON entry to the log file.
 
+        If the write fails (disk full, permission error, etc.), logs the
+        failure to stderr and continues — the proxy must not crash due to
+        audit I/O errors.
+
         Args:
             entry: The log entry as a dictionary.
         """
         if self._log_file is not None:
-            self._log_file.write(json.dumps(entry, default=str) + "\n")
-            self._log_file.flush()
+            try:
+                self._log_file.write(json.dumps(entry, default=str) + "\n")
+                self._log_file.flush()
+            except (OSError, ValueError) as e:
+                # OSError: disk full, permission denied, etc.
+                # ValueError: I/O operation on closed file
+                _console.print(
+                    f"[bold red]Audit log write failed:[/bold red] {e}",
+                    highlight=False,
+                )
+                # Close the broken file handle to avoid repeated failures
+                try:
+                    self._log_file.close()
+                except (OSError, ValueError):
+                    pass
+                self._log_file = None
 
 
 def _now_iso() -> str:
@@ -192,10 +221,10 @@ def _now_iso() -> str:
 def _decision_style(decision: PolicyDecision) -> str:
     """Map a policy decision to a rich style for console output."""
     styles = {
-        PolicyDecision.ALLOW: "green",
+        PolicyDecision.ALLOW: "#00ff88",
         PolicyDecision.BLOCK: "bold red",
-        PolicyDecision.REDACT: "yellow",
-        PolicyDecision.APPROVE: "bold yellow",
-        PolicyDecision.LOG: "blue",
+        PolicyDecision.REDACT: "#ffcc00",
+        PolicyDecision.APPROVE: "bold #ffcc00",
+        PolicyDecision.LOG: "#5eead4",
     }
     return styles.get(decision, "white")

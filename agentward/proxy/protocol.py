@@ -195,6 +195,24 @@ def is_tool_call(msg: JSONRPCMessage) -> bool:
     return isinstance(msg, JSONRPCRequest) and msg.method == "tools/call"
 
 
+def is_tool_call_notification(msg: JSONRPCMessage) -> bool:
+    """Check if a message is a tools/call notification (no id).
+
+    MCP does not define tools/call as a notification method, so a
+    well-behaved client should never send one. If we see one, it's
+    likely a protocol violation or an attempt to bypass policy
+    enforcement (since notifications have no id to send an error
+    response to).
+
+    Args:
+        msg: The parsed JSON-RPC message.
+
+    Returns:
+        True if this is a notification with method "tools/call".
+    """
+    return isinstance(msg, JSONRPCNotification) and msg.method == "tools/call"
+
+
 def extract_tool_info(msg: JSONRPCRequest) -> tuple[str, dict[str, Any]]:
     """Extract tool name and arguments from a tools/call request.
 

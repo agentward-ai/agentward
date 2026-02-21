@@ -1,0 +1,73 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "agentward",
+      "args": [
+        "inspect",
+        "--policy", "./agentward.yaml",
+        "--skill-context", "filesystem",
+        "--",
+        "npx", "-y", "@modelcontextprotocol/server-filesystem",
+        "/Users/you/Documents", "/Users/you/Downloads"
+      ]
+    },
+    "github": {
+      "command": "agentward",
+      "args": [
+        "inspect",
+        "--policy", "./agentward.yaml",
+        "--skill-context", "github",
+        "--",
+        "npx", "-y", "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+      }
+    },
+    "slack": {
+      "command": "agentward",
+      "args": [
+        "inspect",
+        "--policy", "./agentward.yaml",
+        "--skill-context", "slack",
+        "--",
+        "npx", "-y", "@modelcontextprotocol/server-slack"
+      ],
+      "env": {
+        "SLACK_BOT_TOKEN": "${SLACK_BOT_TOKEN}",
+        "SLACK_TEAM_ID": "${SLACK_TEAM_ID}"
+      }
+    },
+    "memory": {
+      "command": "agentward",
+      "args": [
+        "inspect",
+        "--policy", "./agentward.yaml",
+        "--",
+        "npx", "-y", "@modelcontextprotocol/server-memory"
+      ]
+    },
+    "brave-search": {
+      "command": "agentward",
+      "args": [
+        "inspect",
+        "--policy", "./agentward.yaml",
+        "--",
+        "npx", "-y", "@modelcontextprotocol/server-brave-search"
+      ],
+      "env": {
+        "BRAVE_API_KEY": "${BRAVE_API_KEY}"
+      }
+    },
+    "puppeteer": {
+      "command": "agentward",
+      "args": [
+        "inspect",
+        "--policy", "./agentward.yaml",
+        "--skill-context", "bird",
+        "--",
+        "npx", "-y", "@modelcontextprotocol/server-puppeteer"
+      ]
+    }
+  }
+}

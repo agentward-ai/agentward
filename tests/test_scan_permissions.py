@@ -287,3 +287,46 @@ class TestToolNameSplitting:
     def test_dot_separated(self) -> None:
         perm = analyze_tool(_make_tool("fs.read"))
         assert perm.is_read_only is True
+
+
+class TestSchemaWordBoundaryMatching:
+    """Tests for word-boundary matching in schema property analysis.
+
+    Substring matching like 'file' in 'profile' produces false positives.
+    Word-boundary matching prevents this.
+    """
+
+    def test_file_does_not_match_profile(self) -> None:
+        """'profile' should NOT trigger filesystem detection."""
+        tool = _make_tool("update_profile", schema_props={"profile": {"type": "string"}})
+        perm = analyze_tool(tool)
+        access_types = {a.type for a in perm.data_access}
+        assert DataAccessType.FILESYSTEM not in access_types
+
+    def test_file_matches_file_path(self) -> None:
+        """'file_path' should still trigger filesystem detection."""
+        tool = _make_tool("upload_tool", schema_props={"file_path": {"type": "string"}})
+        perm = analyze_tool(tool)
+        access_types = {a.type for a in perm.data_access}
+        assert DataAccessType.FILESYSTEM in access_types
+
+    def test_host_does_not_match_ghost(self) -> None:
+        """'ghost' should NOT trigger network detection."""
+        tool = _make_tool("ghost_tool", schema_props={"ghost": {"type": "string"}})
+        perm = analyze_tool(tool)
+        access_types = {a.type for a in perm.data_access}
+        assert DataAccessType.NETWORK not in access_types
+
+    def test_host_matches_host_name(self) -> None:
+        """'host_name' should trigger network detection."""
+        tool = _make_tool("connect_tool", schema_props={"host_name": {"type": "string"}})
+        perm = analyze_tool(tool)
+        access_types = {a.type for a in perm.data_access}
+        assert DataAccessType.NETWORK in access_types
+
+    def test_exact_match_still_works(self) -> None:
+        """Exact property name matches should still work."""
+        tool = _make_tool("my_tool", schema_props={"file": {"type": "string"}})
+        perm = analyze_tool(tool)
+        access_types = {a.type for a in perm.data_access}
+        assert DataAccessType.FILESYSTEM in access_types

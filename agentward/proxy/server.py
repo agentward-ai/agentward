@@ -23,6 +23,8 @@ import asyncio
 import os
 import signal
 import sys
+from sys import platform as _platform
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
@@ -30,6 +32,7 @@ from rich.console import Console
 from agentward.audit.logger import AuditLogger
 from agentward.policy.engine import EvaluationResult, PolicyEngine
 from agentward.policy.schema import PolicyDecision
+from agentward.proxy.chaining import ChainTracker
 from agentward.proxy.protocol import (
     APPROVAL_REQUIRED,
     POLICY_BLOCKED,
@@ -37,6 +40,7 @@ from agentward.proxy.protocol import (
     ProtocolError,
     extract_tool_info,
     is_tool_call,
+    is_tool_call_notification,
     make_error_response,
     parse_message,
     serialize_message,
@@ -62,6 +66,7 @@ class StdioProxy:
                        If None, operates in passthrough mode (all calls forwarded).
         audit_logger: The audit logger for structured event logging.
         server_env: Optional environment variables to pass to the subprocess.
+        chain_tracker: Optional chain tracker for runtime skill chaining enforcement.
     """
 
     def __init__(
@@ -70,11 +75,15 @@ class StdioProxy:
         policy_engine: PolicyEngine | None,
         audit_logger: AuditLogger,
         server_env: dict[str, str] | None = None,
+        chain_tracker: ChainTracker | None = None,
+        policy_path: Path | None = None,
     ) -> None:
         self._server_command = server_command
         self._policy_engine = policy_engine
         self._audit_logger = audit_logger
         self._server_env = server_env
+        self._chain_tracker = chain_tracker
+        self._policy_path = policy_path
 
         self._process: asyncio.subprocess.Process | None = None
         self._shutting_down = False
@@ -91,7 +100,7 @@ class StdioProxy:
         """
         self._audit_logger.log_startup(
             self._server_command,
-            self._policy_engine.policy.version if self._policy_engine else None,  # type: ignore[arg-type]
+            self._policy_path,
         )
 
         # Build subprocess environment
@@ -129,9 +138,11 @@ class StdioProxy:
             return
 
         # Set up signal handlers for graceful shutdown
+        # add_signal_handler is not supported on Windows
         loop = asyncio.get_running_loop()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(self._handle_shutdown()))
+        if _platform != "win32":
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(sig, lambda: asyncio.create_task(self._handle_shutdown()))
 
         # Create the stdin reader for our own process
         client_reader = await _create_stdin_reader()
@@ -198,14 +209,31 @@ class StdioProxy:
                 # Client disconnected (EOF on stdin)
                 break
 
-            # Try to parse and evaluate, but always forward unparseable messages
-            # (don't break the protocol by swallowing messages we can't parse)
+            # Try to parse and evaluate.  For unparseable messages we normally
+            # forward raw bytes so as not to break the protocol — except when
+            # the raw line looks like a tools/call.  In that case, forwarding
+            # would let a malformed-but-server-accepted call bypass policy.
             try:
                 msg = parse_message(line)
             except ProtocolError:
-                # Can't parse — forward raw and move on
+                if b'"tools/call"' in line:
+                    _console.print(
+                        "[bold red]Dropped unparseable tools/call message "
+                        "(cannot enforce policy on malformed request)[/bold red]",
+                    )
+                    continue
+                # Non-tool-call messages: forward raw and move on
                 self._process.stdin.write(line)
                 await self._process.stdin.drain()
+                continue
+
+            if is_tool_call_notification(msg):
+                # tools/call as a notification (no id) is invalid per MCP spec
+                # and cannot be responded to. Drop it to prevent policy bypass.
+                _console.print(
+                    "[bold red]Dropped tools/call notification "
+                    "(no id — cannot enforce policy)[/bold red]",
+                )
                 continue
 
             if is_tool_call(msg):
@@ -219,10 +247,9 @@ class StdioProxy:
                     continue
 
                 result = self._evaluate_tool_call(tool_name, arguments)
-                self._audit_logger.log_tool_call(tool_name, arguments, result)
 
                 if result.decision == PolicyDecision.BLOCK:
-                    # Send error response back to client, don't forward to server
+                    self._audit_logger.log_tool_call(tool_name, arguments, result)
                     error_resp = make_error_response(
                         msg.id,
                         POLICY_BLOCKED,
@@ -232,7 +259,7 @@ class StdioProxy:
                     continue
 
                 if result.decision == PolicyDecision.APPROVE:
-                    # Send error response indicating approval is needed
+                    self._audit_logger.log_tool_call(tool_name, arguments, result)
                     error_resp = make_error_response(
                         msg.id,
                         APPROVAL_REQUIRED,
@@ -241,7 +268,28 @@ class StdioProxy:
                     _write_to_stdout(serialize_message(error_resp))
                     continue
 
-                # ALLOW or LOG — track and forward
+                # ALLOW or LOG — check chaining rules before forwarding
+                if self._chain_tracker is not None:
+                    chain_result = self._chain_tracker.check_before_call(
+                        tool_name, arguments
+                    )
+                    if chain_result is not None and chain_result.decision == PolicyDecision.BLOCK:
+                        self._audit_logger.log_tool_call(
+                            tool_name, arguments, chain_result, chain_violation=True,
+                        )
+                        error_resp = make_error_response(
+                            msg.id,
+                            POLICY_BLOCKED,
+                            f"AgentWard chain blocked: {chain_result.reason}",
+                        )
+                        _write_to_stdout(serialize_message(error_resp))
+                        continue
+                    self._chain_tracker.record_call(
+                        tool_name, arguments, request_id=msg.id
+                    )
+
+                # Log ALLOW/LOG only after passing all checks (policy + chaining)
+                self._audit_logger.log_tool_call(tool_name, arguments, result)
                 self._pending_tool_calls[msg.id] = tool_name
 
             # Forward message to server
@@ -269,9 +317,16 @@ class StdioProxy:
                 if hasattr(msg, "id") and msg.id in self._pending_tool_calls:  # type: ignore[union-attr]
                     tool_name = self._pending_tool_calls.pop(msg.id)  # type: ignore[union-attr]
                     from agentward.proxy.protocol import JSONRPCError as _JSONRPCError
+                    from agentward.proxy.protocol import JSONRPCResponse as _JSONRPCResponse
 
                     is_error = isinstance(msg, _JSONRPCError)
                     self._audit_logger.log_tool_result(tool_name, msg.id, is_error)  # type: ignore[union-attr]
+
+                    # Record response content for chaining detection
+                    if self._chain_tracker is not None and isinstance(msg, _JSONRPCResponse):
+                        self._chain_tracker.record_response(
+                            tool_name, msg.result, request_id=msg.id
+                        )
             except ProtocolError:
                 pass  # Can't parse — that's fine, still forward it
 

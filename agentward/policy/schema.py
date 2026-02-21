@@ -22,6 +22,20 @@ class PolicyDecision(str, Enum):
     LOG = "LOG"
 
 
+class ChainingMode(str, Enum):
+    """Enforcement mode for skill chaining rules.
+
+    CONTENT: Inspect tool response content and block only when data
+             from a prior response appears in the current tool call's
+             arguments (proves actual data flow).
+    BLANKET: Block all calls to a target skill after the source skill
+             has been called, regardless of argument content.
+    """
+
+    CONTENT = "content"
+    BLANKET = "blanket"
+
+
 class ViolationAction(str, Enum):
     """Action to take when a data boundary violation occurs."""
 
@@ -207,5 +221,12 @@ class AgentWardPolicy(BaseModel):
     version: str
     skills: dict[str, dict[str, ResourcePermissions]] = Field(default_factory=dict)
     skill_chaining: list[ChainingRule] = Field(default_factory=list)
+    chaining_mode: ChainingMode = ChainingMode.CONTENT
+    skill_chain_depth: int | None = Field(
+        default=None,
+        description="Maximum number of consecutive skill-to-skill handoffs allowed "
+        "in a single agent turn. When set, any chain exceeding this depth is blocked "
+        "regardless of individual chaining rules. None means unlimited.",
+    )
     require_approval: list[str] = Field(default_factory=list)
     data_boundaries: dict[str, DataBoundary] = Field(default_factory=dict)

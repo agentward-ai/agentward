@@ -77,7 +77,24 @@ def inspect(
         typer.Option(
             "--gateway",
             "-g",
-            help="Gateway to proxy (e.g., 'clawdbot'). Runs as HTTP reverse proxy instead of stdio.",
+            help="Gateway to proxy (e.g., 'openclaw'). Runs as HTTP reverse proxy instead of stdio.",
+        ),
+    ] = None,
+    chaining_mode: Annotated[
+        Optional[str],
+        typer.Option(
+            "--chaining-mode",
+            help="Chaining enforcement mode: 'content' (default) or 'blanket'. "
+            "Overrides the chaining_mode in the policy YAML.",
+        ),
+    ] = None,
+    skill_context: Annotated[
+        Optional[str],
+        typer.Option(
+            "--skill-context",
+            help="Skill (server) name for policy disambiguation. When set, only policy "
+            "rules for this skill are matched. Useful when multiple skills define the "
+            "same resource name.",
         ),
     ] = None,
 ) -> None:
@@ -87,7 +104,7 @@ def inspect(
       agentward inspect --policy agentward.yaml -- npx -y @modelcontextprotocol/server-filesystem /tmp
 
     For gateways (HTTP), use --gateway:
-      agentward inspect --policy agentward.yaml --gateway clawdbot
+      agentward inspect --policy agentward.yaml --gateway openclaw
     """
     # Load policy if provided
     from agentward.policy.engine import PolicyEngine
@@ -98,7 +115,7 @@ def inspect(
     if policy is not None:
         try:
             loaded_policy = load_policy(policy)
-            policy_engine = PolicyEngine(loaded_policy)
+            policy_engine = PolicyEngine(loaded_policy, skill_context=skill_context)
         except FileNotFoundError as e:
             _console.print(f"[bold red]Error:[/bold red] {e}", highlight=False)
             raise typer.Exit(1) from None
@@ -111,9 +128,37 @@ def inspect(
 
     audit_logger = AuditLogger(log_path=log)
 
+    # Create chain tracker if policy has chaining rules
+    from agentward.policy.schema import ChainingMode
+    from agentward.proxy.chaining import ChainTracker
+
+    chain_tracker: ChainTracker | None = None
+    if policy_engine is not None and policy_engine.policy.skill_chaining:
+        # Resolve chaining mode: CLI flag → policy YAML → default (content)
+        if chaining_mode is not None:
+            mode_str = chaining_mode.lower()
+            if mode_str not in ("content", "blanket"):
+                _console.print(
+                    f"[bold red]Error:[/bold red] Invalid chaining mode: {chaining_mode!r}\n"
+                    "Valid options: 'content', 'blanket'",
+                    highlight=False,
+                )
+                raise typer.Exit(1)
+            mode = ChainingMode(mode_str)
+        else:
+            mode = policy_engine.policy.chaining_mode
+
+        chain_tracker = ChainTracker(policy_engine=policy_engine, mode=mode)
+        _console.print(
+            f"  Chaining: [bold]{mode.value}[/bold] mode "
+            f"({len(policy_engine.policy.skill_chaining)} rule(s))",
+            style="dim",
+            highlight=False,
+        )
+
     if gateway is not None:
         # HTTP reverse proxy mode
-        _run_gateway_proxy(gateway, policy_engine, audit_logger, policy_path)
+        _run_gateway_proxy(gateway, policy_engine, audit_logger, policy_path, chain_tracker)
     else:
         # Stdio proxy mode
         server_command = ctx.args
@@ -122,10 +167,10 @@ def inspect(
                 "[bold red]Error:[/bold red] No server command provided.\n\n"
                 "Usage:\n"
                 "  agentward inspect [OPTIONS] -- <server command>      (stdio)\n"
-                "  agentward inspect [OPTIONS] --gateway clawdbot       (HTTP)\n\n"
+                "  agentward inspect [OPTIONS] --gateway openclaw       (HTTP)\n\n"
                 "Example:\n"
                 "  agentward inspect --policy agentward.yaml -- npx server\n"
-                "  agentward inspect --policy agentward.yaml --gateway clawdbot",
+                "  agentward inspect --policy agentward.yaml --gateway openclaw",
                 highlight=False,
             )
             raise typer.Exit(1)
@@ -136,6 +181,8 @@ def inspect(
             server_command=server_command,
             policy_engine=policy_engine,
             audit_logger=audit_logger,
+            chain_tracker=chain_tracker,
+            policy_path=policy_path,
         )
 
         try:
@@ -149,19 +196,21 @@ def _run_gateway_proxy(
     policy_engine: object | None,
     audit_logger: object,
     policy_path: Path | None,
+    chain_tracker: object | None = None,
 ) -> None:
     """Start an HTTP reverse proxy for a gateway.
 
     Args:
-        gateway_type: Gateway identifier (currently only "clawdbot").
+        gateway_type: Gateway identifier ("openclaw" or "clawdbot").
         policy_engine: Loaded policy engine or None for passthrough.
         audit_logger: The audit logger instance.
         policy_path: Path to policy file (for logging).
+        chain_tracker: Optional chain tracker for chaining enforcement.
     """
-    if gateway_type != "clawdbot":
+    if gateway_type not in ("clawdbot", "openclaw"):
         _console.print(
             f"[bold red]Error:[/bold red] Unknown gateway type: {gateway_type!r}\n"
-            "Supported gateways: clawdbot",
+            "Supported gateways: openclaw",
             highlight=False,
         )
         raise typer.Exit(1)
@@ -170,12 +219,11 @@ def _run_gateway_proxy(
     from agentward.scan.openclaw import find_clawdbot_config
     from agentward.setup import get_clawdbot_gateway_ports
 
-    # Find clawdbot config
     config_path = find_clawdbot_config()
     if config_path is None:
         _console.print(
-            "[bold red]Error:[/bold red] ClawdBot config not found at ~/.clawdbot/clawdbot.json\n"
-            "Is ClawdBot installed?",
+            "[bold red]Error:[/bold red] OpenClaw config not found at ~/.clawdbot/clawdbot.json\n"
+            "Is OpenClaw installed?",
             highlight=False,
         )
         raise typer.Exit(1)
@@ -184,9 +232,9 @@ def _run_gateway_proxy(
     ports = get_clawdbot_gateway_ports(config_path)
     if ports is None:
         _console.print(
-            "[bold yellow]Warning:[/bold yellow] ClawdBot gateway port has not been swapped.\n"
-            "Run `agentward setup --gateway clawdbot` first to configure the port,\n"
-            "then restart ClawdBot.",
+            "[bold #ffcc00]Warning:[/bold #ffcc00] OpenClaw gateway port has not been swapped.\n"
+            "Run `agentward setup --gateway openclaw` first to configure the port,\n"
+            "then run `openclaw gateway restart`.",
             highlight=False,
         )
         raise typer.Exit(1)
@@ -201,6 +249,7 @@ def _run_gateway_proxy(
         policy_engine=policy_engine,  # type: ignore[arg-type]
         audit_logger=audit_logger,  # type: ignore[arg-type]
         policy_path=policy_path,
+        chain_tracker=chain_tracker,  # type: ignore[arg-type]
     )
 
     try:
@@ -223,8 +272,8 @@ def _run_scan(
     """Run the full scan pipeline and return results.
 
     Discovers and scans all tool sources (MCP configs, Python files,
-    OpenClaw skills), builds the permission map, and generates
-    recommendations.
+    OpenClaw skills), builds the permission map, generates
+    recommendations, and detects skill chains.
 
     Args:
         target: Path to scan (file, directory, or None for auto-discover).
@@ -232,7 +281,7 @@ def _run_scan(
         console: Rich console for progress output.
 
     Returns:
-        Tuple of (ScanResult, list[Recommendation], list[Path]).
+        Tuple of (ScanResult, list[Recommendation], list[Path], list[ChainDetection]).
         The third element is config_paths used as sources.
 
     Raises:
@@ -305,19 +354,19 @@ def _run_scan(
             servers = parse_config_file(config_path)
             all_servers.extend(servers)
             console.print(
-                f"  [green]\u2713[/green] Parsed {config_path} ({len(servers)} server(s))",
+                f"  [#00ff88]\u2713[/#00ff88] Parsed {config_path} ({len(servers)} server(s))",
                 highlight=False,
             )
         except (FileNotFoundError, ConfigParseError) as e:
             console.print(
-                f"  [yellow]\u26a0[/yellow] Skipping {config_path}: {e}",
+                f"  [#ff6b35]\u26a0[/#ff6b35] Skipping {config_path}: {e}",
                 highlight=False,
             )
 
     # Step 2: Enumerate tools from MCP servers
     results: list[EnumerationResult] = []
     if all_servers:
-        console.print(f"\n[bold]Enumerating tools from {len(all_servers)} server(s)...[/bold]")
+        console.print(f"\n[bold #5eead4]\u26a1 Enumerating tools from {len(all_servers)} server(s)...[/bold #5eead4]")
         results = asyncio.run(enumerate_all(all_servers, timeout=timeout))
 
     # Step 2b: Scan Python source files for tool definitions
@@ -325,13 +374,13 @@ def _run_scan(
     if target is not None and target.is_dir():
         from agentward.scan.skills import scan_directory, tools_to_enumeration_results
 
-        console.print(f"\n[bold]Scanning Python files for tool definitions...[/bold]")
+        console.print(f"\n[bold #5eead4]\u26a1 Scanning Python files for tool definitions...[/bold #5eead4]")
         py_tools = scan_directory(target)
         if py_tools:
             python_results = tools_to_enumeration_results(py_tools)
             frameworks = {t.framework.value for t in py_tools}
             console.print(
-                f"  [green]\u2713[/green] Found {len(py_tools)} tool(s) in "
+                f"  [#00ff88]\u2713[/#00ff88] Found {len(py_tools)} tool(s) in "
                 f"{len(python_results)} file(s) ({', '.join(sorted(frameworks))})",
                 highlight=False,
             )
@@ -341,17 +390,17 @@ def _run_scan(
                 highlight=False,
             )
 
-    # Step 2c: Scan OpenClaw/ClawdBot skills
+    # Step 2c: Scan OpenClaw skills
     openclaw_results: list[EnumerationResult] = []
     if target is not None and target.is_dir():
         from agentward.scan.openclaw import scan_openclaw_directory
 
-        console.print(f"\n[bold]Scanning for OpenClaw/ClawdBot skills...[/bold]")
+        console.print(f"\n[bold #5eead4]\u26a1 Scanning for OpenClaw skills...[/bold #5eead4]")
         openclaw_results = scan_openclaw_directory(target)
         if openclaw_results:
             total_skills = sum(len(r.tools) for r in openclaw_results)
             console.print(
-                f"  [green]\u2713[/green] Found {total_skills} skill(s)",
+                f"  [#00ff88]\u2713[/#00ff88] Found {total_skills} skill(s)",
                 highlight=False,
             )
         else:
@@ -363,7 +412,7 @@ def _run_scan(
         # Auto-discover: scan known OpenClaw locations
         from agentward.scan.openclaw import discover_skill_dirs, scan_openclaw
 
-        console.print(f"\n[bold]Scanning for OpenClaw/ClawdBot skills...[/bold]")
+        console.print(f"\n[bold #5eead4]\u26a1 Scanning for OpenClaw skills...[/bold #5eead4]")
         skill_dirs = discover_skill_dirs()
         if skill_dirs:
             for skill_dir, label in skill_dirs:
@@ -375,7 +424,7 @@ def _run_scan(
         if openclaw_results:
             total_skills = sum(len(r.tools) for r in openclaw_results)
             console.print(
-                f"  [green]\u2713[/green] Found {total_skills} skill(s) across "
+                f"  [#00ff88]\u2713[/#00ff88] Found {total_skills} skill(s) across "
                 f"{len(openclaw_results)} source(s)",
                 highlight=False,
             )
@@ -407,7 +456,12 @@ def _run_scan(
     # Step 4: Generate recommendations
     recommendations = generate_recommendations(scan_result)
 
-    return scan_result, recommendations, config_paths
+    # Step 5: Detect skill chains
+    from agentward.scan.chains import detect_chains
+
+    chains = detect_chains(scan_result)
+
+    return scan_result, recommendations, config_paths, chains
 
 
 # ---------------------------------------------------------------------------
@@ -442,7 +496,7 @@ def scan(
 ) -> None:
     """Scan MCP configs, Python codebases, and OpenClaw skills for tool definitions.
 
-    Discovers MCP servers, Python agent tool definitions, and ClawdBot/OpenClaw
+    Discovers MCP servers, Python agent tool definitions, and OpenClaw
     skills, enumerates their tools, and analyzes data access patterns and risk levels.
 
     Examples:
@@ -454,13 +508,13 @@ def scan(
     """
     from agentward.scan.report import print_scan_json, print_scan_report
 
-    scan_result, recommendations, _config_paths = _run_scan(target, timeout, _console)
+    scan_result, recommendations, _config_paths, chains = _run_scan(target, timeout, _console)
 
     if output_json:
         output_console = Console()
         print_scan_json(scan_result, output_console)
     else:
-        print_scan_report(scan_result, recommendations, _console)
+        print_scan_report(scan_result, recommendations, _console, chains=chains)
 
 
 # ---------------------------------------------------------------------------
@@ -508,7 +562,7 @@ def configure(
     from agentward.configure.generator import generate_policy, write_policy
 
     # Run the full scan pipeline
-    scan_result, _recommendations, _config_paths = _run_scan(target, timeout, _console)
+    scan_result, _recommendations, _config_paths, _chains = _run_scan(target, timeout, _console)
 
     # Generate policy
     policy = generate_policy(scan_result)
@@ -526,7 +580,7 @@ def configure(
 
     _console.print()
     _console.print(
-        f"[bold green]\u2713 Generated policy:[/bold green] {output_path}",
+        f"[bold #00ff88]\u2713 Generated policy:[/bold #00ff88] {output_path}",
         highlight=False,
     )
     _console.print(
@@ -545,6 +599,124 @@ def configure(
         highlight=False,
     )
     _console.print()
+
+
+@app.command(name="map")
+def map_command(
+    target: Annotated[
+        Optional[Path],
+        typer.Argument(
+            help="Path to MCP config file or directory to scan. "
+            "If omitted, auto-discovers from known locations.",
+        ),
+    ] = None,
+    policy: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--policy",
+            "-p",
+            help="Path to agentward.yaml policy file. "
+            "When loaded, shows ALLOW/BLOCK/APPROVE markers per tool.",
+        ),
+    ] = None,
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-f",
+            help="Output format: 'terminal' (rich CLI) or 'mermaid' (diagram).",
+        ),
+    ] = "terminal",
+    output: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--output",
+            "-o",
+            help="Output file path for mermaid format. If omitted, prints to stdout.",
+        ),
+    ] = None,
+    timeout: Annotated[
+        float,
+        typer.Option(
+            "--timeout",
+            "-t",
+            help="Timeout in seconds for each server enumeration.",
+        ),
+    ] = 15.0,
+    output_json: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Output graph data as JSON instead of visual rendering.",
+        ),
+    ] = False,
+) -> None:
+    """Visualize the permission and chaining graph.
+
+    Shows servers, tools, data access types, risk levels, and detected
+    skill chains as a terminal graph or Mermaid diagram.
+
+    Without --policy, shows what your agent has access to.
+    With --policy, overlays policy decisions (ALLOW/BLOCK/APPROVE).
+
+    Examples:
+      agentward map                                    # terminal visualization
+      agentward map --policy agentward.yaml            # with policy overlay
+      agentward map --format mermaid -o graph.md       # mermaid diagram to file
+      agentward map --json                             # machine-readable output
+    """
+    from agentward.map import build_map_data, render_json, render_mermaid, render_terminal
+
+    # Validate format
+    if fmt not in ("terminal", "mermaid"):
+        _console.print(
+            f"[bold red]Error:[/bold red] Unknown format: {fmt!r}\n"
+            "Valid options: 'terminal', 'mermaid'",
+            highlight=False,
+        )
+        raise typer.Exit(1)
+
+    # Run scan pipeline
+    scan_result, _recommendations, _config_paths, chains = _run_scan(target, timeout, _console)
+
+    # Load policy if provided
+    policy_engine = None
+    if policy is not None:
+        from agentward.policy.engine import PolicyEngine
+        from agentward.policy.loader import PolicyValidationError, load_policy
+
+        try:
+            loaded_policy = load_policy(policy)
+            policy_engine = PolicyEngine(loaded_policy)
+        except FileNotFoundError as e:
+            _console.print(f"[bold red]Error:[/bold red] {e}", highlight=False)
+            raise typer.Exit(1) from None
+        except PolicyValidationError as e:
+            _console.print(f"[bold red]Policy error:[/bold red] {e}", highlight=False)
+            raise typer.Exit(1) from None
+
+    # Build graph data
+    data = build_map_data(scan_result, chains, policy_engine)
+
+    # Render
+    if output_json:
+        output_console = Console()
+        output_console.print(render_json(data))
+    elif fmt == "mermaid":
+        mermaid_str = render_mermaid(data)
+        if output is not None:
+            content = f"```mermaid\n{mermaid_str}```\n"
+            output.write_text(content, encoding="utf-8")
+            _console.print(
+                f"[#00ff88]\u2713[/#00ff88] Mermaid diagram written to {output}",
+                highlight=False,
+            )
+        else:
+            # Print to stdout for piping
+            output_console = Console()
+            output_console.print(mermaid_str, end="")
+    else:
+        render_terminal(data, _console)
 
 
 @app.command()
@@ -615,7 +787,7 @@ def setup(
         typer.Option(
             "--gateway",
             "-g",
-            help="Gateway type to configure (e.g., 'clawdbot'). Swaps the gateway port for proxying.",
+            help="Gateway type to configure (e.g., 'openclaw'). Swaps the gateway port for proxying.",
         ),
     ] = None,
 ) -> None:
@@ -624,13 +796,13 @@ def setup(
     Rewrites MCP server commands to run through the AgentWard proxy,
     so every tool call is evaluated against your policy.
 
-    For ClawdBot gateway, use --gateway clawdbot to swap the gateway port.
+    For OpenClaw gateway, use --gateway openclaw to swap the gateway port.
 
     Examples:
       agentward setup --policy agentward.yaml
       agentward setup --config ~/.cursor/mcp.json --policy agentward.yaml
-      agentward setup --gateway clawdbot
-      agentward setup --gateway clawdbot --undo
+      agentward setup --gateway openclaw
+      agentward setup --gateway openclaw --undo
       agentward setup --dry-run --policy agentward.yaml
     """
     from agentward.setup import (
@@ -641,7 +813,7 @@ def setup(
         write_config,
     )
 
-    # Handle gateway mode (ClawdBot)
+    # Handle gateway mode (OpenClaw)
     if gateway is not None:
         _run_gateway_setup(gateway, undo, dry_run)
         return
@@ -670,6 +842,8 @@ def setup(
         )
         raise typer.Exit(1)
 
+    wrapped_any = False
+
     for cfg_path in config_paths:
         try:
             original = read_config(cfg_path)
@@ -693,12 +867,13 @@ def setup(
                 )
                 continue
 
+            wrapped_any = True
             if dry_run:
                 _console.print(f"[bold]Would unwrap {count} server(s) in {cfg_path}[/bold]")
             else:
                 write_config(cfg_path, restored, backup=True)
                 _console.print(
-                    f"[green]\u2713[/green] Restored {count} server(s) in {cfg_path}",
+                    f"[#00ff88]\u2713[/#00ff88] Restored {count} server(s) in {cfg_path}",
                     highlight=False,
                 )
         else:
@@ -717,6 +892,7 @@ def setup(
                 )
                 continue
 
+            wrapped_any = True
             diff = format_diff(original, wrapped)
             _console.print(f"\n[bold]{cfg_path}[/bold] — {count} server(s) to wrap:")
             _console.print(diff, highlight=False)
@@ -726,31 +902,39 @@ def setup(
             else:
                 backup = write_config(cfg_path, wrapped, backup=True)
                 _console.print(
-                    f"[green]\u2713[/green] Config updated. Backup: {backup}",
+                    f"[#00ff88]\u2713[/#00ff88] Config updated. Backup: {backup}",
                     highlight=False,
                 )
 
     if not dry_run and not undo:
-        _console.print(
-            "\n[bold]Next steps:[/bold]\n"
-            "  1. Restart your IDE to apply the changes\n"
-            "  2. Run `agentward setup --undo` to revert if needed",
-            highlight=False,
-        )
+        if wrapped_any:
+            _console.print(
+                "\n[bold]Next steps:[/bold]\n"
+                "  1. Restart your IDE to apply the changes\n"
+                "  2. Run `agentward setup --undo` to revert if needed",
+                highlight=False,
+            )
+        else:
+            _console.print(
+                "\n[bold]No MCP servers were wrapped.[/bold]\n"
+                "For OpenClaw skills, use the gateway mode instead:\n"
+                "  agentward setup --gateway openclaw --policy agentward.yaml",
+                highlight=False,
+            )
 
 
 def _run_gateway_setup(gateway_type: str, undo: bool, dry_run: bool) -> None:
     """Handle gateway port swapping for agentward setup --gateway.
 
     Args:
-        gateway_type: Gateway identifier (currently only "clawdbot").
+        gateway_type: Gateway identifier ("openclaw" or "clawdbot").
         undo: Whether to restore the original port.
         dry_run: Whether to preview changes without writing.
     """
-    if gateway_type != "clawdbot":
+    if gateway_type not in ("clawdbot", "openclaw"):
         _console.print(
             f"[bold red]Error:[/bold red] Unknown gateway type: {gateway_type!r}\n"
-            "Supported gateways: clawdbot",
+            "Supported gateways: openclaw",
             highlight=False,
         )
         raise typer.Exit(1)
@@ -766,8 +950,8 @@ def _run_gateway_setup(gateway_type: str, undo: bool, dry_run: bool) -> None:
     config_path = find_clawdbot_config()
     if config_path is None:
         _console.print(
-            "[bold red]Error:[/bold red] ClawdBot config not found at ~/.clawdbot/clawdbot.json\n"
-            "Is ClawdBot installed?",
+            "[bold red]Error:[/bold red] OpenClaw config not found at ~/.clawdbot/clawdbot.json\n"
+            "Is OpenClaw installed?",
             highlight=False,
         )
         raise typer.Exit(1)
@@ -787,7 +971,7 @@ def _run_gateway_setup(gateway_type: str, undo: bool, dry_run: bool) -> None:
 
         if not was_wrapped:
             _console.print(
-                "[dim]ClawdBot gateway port has not been modified by AgentWard — nothing to undo[/dim]",
+                "[dim]OpenClaw gateway port has not been modified by AgentWard — nothing to undo[/dim]",
                 highlight=False,
             )
             return
@@ -796,17 +980,17 @@ def _run_gateway_setup(gateway_type: str, undo: bool, dry_run: bool) -> None:
 
         if dry_run:
             _console.print(
-                f"[bold]Would restore ClawdBot gateway port to {restored_port}[/bold]",
+                f"[bold]Would restore OpenClaw gateway port to {restored_port}[/bold]",
             )
         else:
             write_config(config_path, restored, backup=True)
             _console.print(
-                f"[green]✓[/green] Restored ClawdBot gateway port to {restored_port}",
+                f"[#00ff88]✓[/#00ff88] Restored OpenClaw gateway port to {restored_port}",
                 highlight=False,
             )
             _console.print(
                 "\n[bold]Next steps:[/bold]\n"
-                "  1. Restart ClawdBot to apply the change\n"
+                "  1. Run `openclaw gateway restart` to apply the change\n"
                 "  2. Stop the AgentWard proxy if it's running",
                 highlight=False,
             )
@@ -819,8 +1003,8 @@ def _run_gateway_setup(gateway_type: str, undo: bool, dry_run: bool) -> None:
             _console.print(f"[bold red]Error:[/bold red] {e}", highlight=False)
             raise typer.Exit(1) from None
 
-        _console.print(f"[bold]ClawdBot gateway port swap:[/bold]")
-        _console.print(f"  ClawdBot gateway: {listen_port} → {backend_port}")
+        _console.print(f"[bold]OpenClaw gateway port swap:[/bold]")
+        _console.print(f"  OpenClaw gateway: {listen_port} → {backend_port}")
         _console.print(f"  AgentWard proxy will listen on: {listen_port}")
 
         if dry_run:
@@ -828,7 +1012,7 @@ def _run_gateway_setup(gateway_type: str, undo: bool, dry_run: bool) -> None:
         else:
             backup = write_config(config_path, wrapped, backup=True)
             _console.print(
-                f"\n[green]✓[/green] Updated {config_path}",
+                f"\n[#00ff88]✓[/#00ff88] Updated {config_path}",
                 highlight=False,
             )
             if backup:
@@ -836,8 +1020,8 @@ def _run_gateway_setup(gateway_type: str, undo: bool, dry_run: bool) -> None:
 
             _console.print(
                 "\n[bold]Next steps:[/bold]\n"
-                "  1. Restart ClawdBot (so it uses the new port)\n"
-                "  2. Run: agentward inspect --gateway clawdbot --policy agentward.yaml\n"
-                "  3. To undo: agentward setup --gateway clawdbot --undo",
+                "  1. Run `openclaw gateway restart` (so it uses the new port)\n"
+                "  2. Run: agentward inspect --gateway openclaw --policy agentward.yaml\n"
+                "  3. To undo: agentward setup --gateway openclaw --undo",
                 highlight=False,
             )

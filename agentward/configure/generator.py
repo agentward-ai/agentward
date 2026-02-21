@@ -201,9 +201,16 @@ def _apply_server_rules(
         for access in tool_perm.data_access:
             server_access.add(access.type)
 
-    # Network + credentials on same server → block outbound
+    # Network + credentials on same server → deny each network-capable tool.
+    # We emit restrictions keyed by resource names derived from the actual
+    # tool names so the policy engine can match them (instead of a generic
+    # "network" key that no tool name would ever match).
     if DataAccessType.NETWORK in server_access and DataAccessType.CREDENTIALS in server_access:
-        resources["network"] = _make_resource(outbound=False)
+        for tool_perm in server_map.tools:
+            tool_types = {a.type for a in tool_perm.data_access}
+            if DataAccessType.NETWORK in tool_types:
+                resource_key = _infer_resource_key(tool_perm.tool.name, tool_perm.tool.name)
+                resources[resource_key] = _make_resource(outbound=False)
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +383,14 @@ def _policy_to_dict(policy: AgentWardPolicy) -> dict:
     # Require approval
     if policy.require_approval:
         data["require_approval"] = list(policy.require_approval)
+
+    # Skill chain depth
+    if policy.skill_chain_depth is not None:
+        data["skill_chain_depth"] = policy.skill_chain_depth
+
+    # Chaining mode (include if chaining rules exist)
+    if policy.skill_chaining:
+        data["chaining_mode"] = policy.chaining_mode.value
 
     # Skill chaining
     if policy.skill_chaining:

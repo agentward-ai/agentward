@@ -88,7 +88,7 @@
   <!-- AgentWard title bar -->
   <rect x="30" y="210" width="1140" height="40" rx="6" fill="#00FF41" opacity="0.15"/>
   <rect x="30" y="244" width="1140" height="6" fill="#0d1a0d"/>
-  <text x="600" y="237" text-anchor="middle" fill="#00FF41" font-size="16" font-weight="bold" filter="url(#glow)">AGENTWARD — PERMISSION CONTROL PLANE</text>
+  <text x="600" y="237" text-anchor="middle" fill="#00FF41" font-size="16" font-weight="bold" filter="url(#glow)">AGENTWARD — PERMISSION ENFORCEMENT LAYER</text>
 
   <!-- Proxy boxes -->
   <!-- Stdio Proxy -->

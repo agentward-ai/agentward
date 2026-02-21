@@ -488,6 +488,10 @@ _BIN_RISK_SIGNALS: dict[str, dict[str, Any]] = {
     # Messaging
     "discord": {"type": "messaging"},
     "slack": {"type": "messaging"},
+    "imsg": {"type": "messaging"},
+    "wacli": {"type": "messaging"},
+    "bluebubbles": {"type": "messaging"},
+    "bird": {"type": "messaging"},  # X/Twitter CLI
     # Browser
     "chrome": {"type": "browser"},
     "chromium": {"type": "browser"},
