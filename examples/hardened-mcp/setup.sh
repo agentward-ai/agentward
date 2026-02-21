@@ -36,7 +36,26 @@ dim()  { echo -e "${DIM}$*${NC}"; }
 
 # ── Step 1: Check prerequisites ───────────────────────────────────
 if ! command -v agentward &>/dev/null; then
-    err "agentward is not installed.\n\n  Install:  pip install agentward\n  Docs:     https://agentward.ai"
+    # Check if agentward exists in common pip --user bin locations but isn't on PATH
+    USER_BIN_CANDIDATES=(
+        "${HOME}/Library/Python/3.13/bin"
+        "${HOME}/Library/Python/3.12/bin"
+        "${HOME}/Library/Python/3.11/bin"
+        "${HOME}/.local/bin"
+    )
+    FOUND_AT=""
+    for candidate in "${USER_BIN_CANDIDATES[@]}"; do
+        if [ -f "${candidate}/agentward" ]; then
+            FOUND_AT="${candidate}"
+            break
+        fi
+    done
+
+    if [ -n "${FOUND_AT}" ]; then
+        err "agentward is installed but not on your PATH.\n\n  Quick fix (run this first):\n    export PATH=\"${FOUND_AT}:\$PATH\"\n\n  To make it permanent, add that line to your ~/.zshrc or ~/.bash_profile"
+    else
+        err "agentward is not installed.\n\n  Install:  pip install agentward\n  Docs:     https://agentward.ai"
+    fi
 fi
 
 if ! command -v npx &>/dev/null; then
