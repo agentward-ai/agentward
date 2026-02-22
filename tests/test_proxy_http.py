@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, TestServer
@@ -20,7 +21,7 @@ from agentward.policy.schema import (
     ResourcePermissions,
 )
 from agentward.proxy.chaining import ChainTracker
-from agentward.proxy.http import HttpProxy
+from agentward.proxy.http import HttpProxy, _TOOL_LOG_RE
 
 
 # ---------------------------------------------------------------------------
@@ -874,3 +875,495 @@ class TestAuditLogWriteFailure:
                     assert resp.status == 200
         finally:
             await _stop_proxy(proxy, task)
+
+
+# ---------------------------------------------------------------------------
+# WebSocket mock backend
+# ---------------------------------------------------------------------------
+
+
+def _create_ws_backend() -> web.Application:
+    """Create a mock backend with WebSocket support for testing WS interception.
+
+    The backend accepts WebSocket connections on any path. For ``node.invoke``
+    request frames, it records the frame and replies with a success response.
+    """
+    app = web.Application()
+    app["ws_received"] = []  # type: ignore[assignment]
+
+    async def ws_handler(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+
+        async for msg in ws:
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                app["ws_received"].append(msg.data)
+                try:
+                    parsed = json.loads(msg.data)
+                    if isinstance(parsed, dict) and parsed.get("type") == "req":
+                        response = json.dumps({
+                            "type": "res",
+                            "id": parsed["id"],
+                            "ok": True,
+                            "payload": {"result": "executed"},
+                        })
+                        await ws.send_str(response)
+                except Exception:
+                    pass
+            elif msg.type == aiohttp.WSMsgType.BINARY:
+                app["ws_received"].append(msg.data)
+                await ws.send_bytes(msg.data)
+
+        return ws
+
+    app.router.add_get("/", ws_handler)
+    app.router.add_get("/{path_info:.*}", ws_handler)
+
+    return app
+
+
+def _make_node_invoke_frame(
+    tool_name: str,
+    arguments: dict[str, Any] | None = None,
+    request_id: str = "test-id-1",
+) -> str:
+    """Build a ClawdBot ``node.invoke`` request frame."""
+    return json.dumps({
+        "type": "req",
+        "id": request_id,
+        "method": "node.invoke",
+        "params": {
+            "nodeId": "test-node",
+            "command": tool_name,
+            "params": arguments or {},
+        },
+    })
+
+
+@pytest.fixture()
+async def ws_backend():
+    """Start a WebSocket mock backend and return (app, url)."""
+    app = _create_ws_backend()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+    url = f"http://127.0.0.1:{port}"
+    yield app, url
+    await runner.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# WebSocket interception tests
+# ---------------------------------------------------------------------------
+
+
+class TestWebSocketInterception:
+    """Tests for node.invoke interception over WebSocket."""
+
+    @pytest.mark.asyncio
+    async def test_ws_node_invoke_allowed_no_policy(
+        self, ws_backend: tuple, audit_logger: AuditLogger,
+    ) -> None:
+        """Passthrough mode: node.invoke forwarded to backend."""
+        app, backend_url = ws_backend
+        proxy, port, task = await _start_proxy(backend_url, audit_logger)
+
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(f"http://127.0.0.1:{port}/") as ws:
+                    frame = _make_node_invoke_frame("test-tool", {"key": "val"})
+                    await ws.send_str(frame)
+
+                    resp = await asyncio.wait_for(ws.receive_str(), timeout=2.0)
+                    data = json.loads(resp)
+                    assert data["ok"] is True
+                    assert data["id"] == "test-id-1"
+
+            # Backend should have received the frame
+            assert len(app["ws_received"]) == 1
+            received = json.loads(app["ws_received"][0])
+            assert received["method"] == "node.invoke"
+            assert received["params"]["command"] == "test-tool"
+        finally:
+            await _stop_proxy(proxy, task)
+
+    @pytest.mark.asyncio
+    async def test_ws_node_invoke_blocked_by_policy(
+        self, ws_backend: tuple, audit_logger: AuditLogger,
+    ) -> None:
+        """Policy blocks the tool — error frame sent back, backend NOT called."""
+        app, backend_url = ws_backend
+        policy = _make_policy(blocked_tools=["dangerous-tool"])
+        engine = PolicyEngine(policy)
+        proxy, port, task = await _start_proxy(backend_url, audit_logger, engine)
+
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(f"http://127.0.0.1:{port}/") as ws:
+                    frame = _make_node_invoke_frame("dangerous-tool", {}, "req-42")
+                    await ws.send_str(frame)
+
+                    resp = await asyncio.wait_for(ws.receive_str(), timeout=2.0)
+                    data = json.loads(resp)
+                    assert data["ok"] is False
+                    assert data["id"] == "req-42"
+                    assert data["payload"]["error"]["type"] == "policy_blocked"
+
+            # Backend should NOT have received the frame
+            assert len(app["ws_received"]) == 0
+        finally:
+            await _stop_proxy(proxy, task)
+
+    @pytest.mark.asyncio
+    async def test_ws_node_invoke_approval_required(
+        self, ws_backend: tuple, audit_logger: AuditLogger,
+    ) -> None:
+        """Tool in require_approval — error frame with approval_required."""
+        app, backend_url = ws_backend
+        policy = _make_policy(approval_tools=["risky-tool"])
+        engine = PolicyEngine(policy)
+        proxy, port, task = await _start_proxy(backend_url, audit_logger, engine)
+
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(f"http://127.0.0.1:{port}/") as ws:
+                    frame = _make_node_invoke_frame("risky-tool", {}, "req-99")
+                    await ws.send_str(frame)
+
+                    resp = await asyncio.wait_for(ws.receive_str(), timeout=2.0)
+                    data = json.loads(resp)
+                    assert data["ok"] is False
+                    assert data["id"] == "req-99"
+                    assert data["payload"]["error"]["type"] == "approval_required"
+
+            assert len(app["ws_received"]) == 0
+        finally:
+            await _stop_proxy(proxy, task)
+
+    @pytest.mark.asyncio
+    async def test_ws_non_tool_messages_pass_through(
+        self, ws_backend: tuple, audit_logger: AuditLogger,
+    ) -> None:
+        """Non-node.invoke messages forwarded unchanged."""
+        app, backend_url = ws_backend
+        policy = _make_policy(blocked_tools=["dangerous-tool"])
+        engine = PolicyEngine(policy)
+        proxy, port, task = await _start_proxy(backend_url, audit_logger, engine)
+
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(f"http://127.0.0.1:{port}/") as ws:
+                    # Send a chat message (not node.invoke)
+                    chat_msg = json.dumps({
+                        "type": "req",
+                        "id": "chat-1",
+                        "method": "chat.send",
+                        "params": {"text": "hello"},
+                    })
+                    await ws.send_str(chat_msg)
+
+                    # Backend should receive and respond
+                    resp = await asyncio.wait_for(ws.receive_str(), timeout=2.0)
+                    data = json.loads(resp)
+                    assert data["id"] == "chat-1"
+
+            # Backend received the message
+            assert len(app["ws_received"]) == 1
+        finally:
+            await _stop_proxy(proxy, task)
+
+    @pytest.mark.asyncio
+    async def test_ws_binary_messages_pass_through(
+        self, ws_backend: tuple, audit_logger: AuditLogger,
+    ) -> None:
+        """Binary messages forwarded unchanged."""
+        app, backend_url = ws_backend
+        proxy, port, task = await _start_proxy(backend_url, audit_logger)
+
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(f"http://127.0.0.1:{port}/") as ws:
+                    await ws.send_bytes(b"\x00\x01\x02\x03")
+
+                    resp = await asyncio.wait_for(ws.receive_bytes(), timeout=2.0)
+                    assert resp == b"\x00\x01\x02\x03"
+
+            assert len(app["ws_received"]) == 1
+        finally:
+            await _stop_proxy(proxy, task)
+
+    @pytest.mark.asyncio
+    async def test_ws_malformed_json_with_node_invoke_forwarded(
+        self, ws_backend: tuple, audit_logger: AuditLogger,
+    ) -> None:
+        """Malformed JSON containing 'node.invoke' is forwarded, not dropped."""
+        app, backend_url = ws_backend
+        proxy, port, task = await _start_proxy(backend_url, audit_logger)
+
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(f"http://127.0.0.1:{port}/") as ws:
+                    # Invalid JSON but contains the keyword
+                    await ws.send_str('{"node.invoke": broken json')
+
+                    # Give time for forwarding
+                    await asyncio.sleep(0.3)
+
+            # Backend should have received the raw message
+            assert len(app["ws_received"]) == 1
+            assert "node.invoke" in app["ws_received"][0]
+        finally:
+            await _stop_proxy(proxy, task)
+
+    @pytest.mark.asyncio
+    async def test_ws_node_invoke_missing_command_forwarded(
+        self, ws_backend: tuple, audit_logger: AuditLogger,
+    ) -> None:
+        """node.invoke frame without params.command is forwarded as-is."""
+        app, backend_url = ws_backend
+        policy = _make_policy(blocked_tools=["anything"])
+        engine = PolicyEngine(policy)
+        proxy, port, task = await _start_proxy(backend_url, audit_logger, engine)
+
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(f"http://127.0.0.1:{port}/") as ws:
+                    # Valid node.invoke but no command field
+                    frame = json.dumps({
+                        "type": "req",
+                        "id": "no-cmd",
+                        "method": "node.invoke",
+                        "params": {"nodeId": "test"},
+                    })
+                    await ws.send_str(frame)
+
+                    resp = await asyncio.wait_for(ws.receive_str(), timeout=2.0)
+                    data = json.loads(resp)
+                    assert data["id"] == "no-cmd"
+
+            # Backend should have received it (can't enforce without tool name)
+            assert len(app["ws_received"]) == 1
+        finally:
+            await _stop_proxy(proxy, task)
+
+    @pytest.mark.asyncio
+    async def test_ws_audit_log_written(
+        self, ws_backend: tuple, audit_logger: AuditLogger, tmp_path: Path,
+    ) -> None:
+        """Blocked WS tool call appears in audit log."""
+        app, backend_url = ws_backend
+        policy = _make_policy(blocked_tools=["bad-tool"])
+        engine = PolicyEngine(policy)
+        proxy, port, task = await _start_proxy(backend_url, audit_logger, engine)
+
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(f"http://127.0.0.1:{port}/") as ws:
+                    frame = _make_node_invoke_frame("bad-tool", {}, "audit-1")
+                    await ws.send_str(frame)
+                    await asyncio.wait_for(ws.receive_str(), timeout=2.0)
+        finally:
+            await _stop_proxy(proxy, task)
+
+        log_path = tmp_path / "audit.jsonl"
+        lines = log_path.read_text().strip().split("\n")
+        events = [json.loads(line) for line in lines]
+        tool_calls = [e for e in events if e.get("event") == "tool_call"]
+
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["tool"] == "bad-tool"
+        assert tool_calls[0]["decision"] == "BLOCK"
+
+    @pytest.mark.asyncio
+    async def test_ws_chain_block_blanket_mode(
+        self, audit_logger: AuditLogger,
+    ) -> None:
+        """Blanket mode over WS: email tool then browser tool → chain blocked."""
+        ws_app = _create_ws_backend()
+        runner = web.AppRunner(ws_app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        backend_port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+        backend_url = f"http://127.0.0.1:{backend_port}"
+
+        try:
+            policy = _make_chain_policy(mode=ChainingMode.BLANKET)
+            engine = PolicyEngine(policy)
+            tracker = ChainTracker(engine, mode=ChainingMode.BLANKET)
+
+            proxy, port, task = await _start_proxy(
+                backend_url, audit_logger, engine, tracker,
+            )
+
+            try:
+                import aiohttp
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.ws_connect(f"http://127.0.0.1:{port}/") as ws:
+                        # First: email tool — should be allowed
+                        frame1 = _make_node_invoke_frame("gmail_read", {"query": "inbox"}, "r1")
+                        await ws.send_str(frame1)
+                        resp1 = await asyncio.wait_for(ws.receive_str(), timeout=2.0)
+                        data1 = json.loads(resp1)
+                        assert data1["ok"] is True
+
+                        # Second: browser tool — should be chain-blocked
+                        frame2 = _make_node_invoke_frame("browser_navigate", {"url": "https://x.com"}, "r2")
+                        await ws.send_str(frame2)
+                        resp2 = await asyncio.wait_for(ws.receive_str(), timeout=2.0)
+                        data2 = json.loads(resp2)
+                        assert data2["ok"] is False
+                        assert data2["payload"]["error"]["type"] == "chain_blocked"
+
+                # Backend should only have received the first call
+                assert len(ws_app["ws_received"]) == 1
+            finally:
+                await _stop_proxy(proxy, task)
+        finally:
+            await runner.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# ClawdBot log tailer tests
+# ---------------------------------------------------------------------------
+
+
+class TestClawdBotLogTailer:
+    """Tests for the log file tailer that surfaces tool invocations."""
+
+    def test_tool_log_regex_matches_start(self) -> None:
+        """Regex extracts tool start events."""
+        line = "embedded run tool start: runId=af24974c-e854-444b-886f-2b41bfa6d7f9 tool=exec toolCallId=toolu_01PCFHQf9jsmqF9948TsRTL3"
+        match = _TOOL_LOG_RE.search(line)
+        assert match is not None
+        assert match.group("phase") == "start"
+        assert match.group("tool") == "exec"
+        assert match.group("runId") == "af24974c-e854-444b-886f-2b41bfa6d7f9"
+        assert match.group("toolCallId") == "toolu_01PCFHQf9jsmqF9948TsRTL3"
+
+    def test_tool_log_regex_matches_end(self) -> None:
+        """Regex extracts tool end events."""
+        line = "embedded run tool end: runId=30bc85ef-baab-45fb-87b6-ce5e5c5d577c tool=exec toolCallId=toolu_01FFMLFC2BtGc6YvFEtpwUAk"
+        match = _TOOL_LOG_RE.search(line)
+        assert match is not None
+        assert match.group("phase") == "end"
+        assert match.group("tool") == "exec"
+
+    def test_tool_log_regex_no_match_on_agent_start(self) -> None:
+        """Regex does not match non-tool log lines."""
+        line = "embedded run agent start: runId=30bc85ef-baab-45fb-87b6-ce5e5c5d577c"
+        match = _TOOL_LOG_RE.search(line)
+        assert match is None
+
+    @pytest.mark.asyncio
+    async def test_process_clawdbot_log_line_tool_start(
+        self, audit_logger: AuditLogger, tmp_path: Path,
+    ) -> None:
+        """Tool start log line produces audit log entry."""
+        proxy = HttpProxy(
+            backend_url="http://127.0.0.1:9999",
+            listen_host="127.0.0.1",
+            listen_port=0,
+            policy_engine=None,
+            audit_logger=audit_logger,
+        )
+
+        log_entry = json.dumps({
+            "0": '{"subsystem":"agent/embedded"}',
+            "1": "embedded run tool start: runId=af24974c-e854-444b-886f-2b41bfa6d7f9 tool=exec toolCallId=toolu_01PCFHQf9jsmqF9948TsRTL3",
+        })
+
+        proxy._process_clawdbot_log_line(log_entry)
+
+        # Check audit log was written
+        log_path = tmp_path / "audit.jsonl"
+        lines = log_path.read_text().strip().split("\n")
+        events = [json.loads(line) for line in lines if line.strip()]
+        tool_calls = [e for e in events if e.get("event") == "tool_call"]
+
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["tool"] == "exec"
+        assert tool_calls[0]["decision"] == "ALLOW"
+
+    @pytest.mark.asyncio
+    async def test_process_clawdbot_log_line_tool_end_no_audit(
+        self, audit_logger: AuditLogger, tmp_path: Path,
+    ) -> None:
+        """Tool end log line does NOT produce an audit log entry."""
+        proxy = HttpProxy(
+            backend_url="http://127.0.0.1:9999",
+            listen_host="127.0.0.1",
+            listen_port=0,
+            policy_engine=None,
+            audit_logger=audit_logger,
+        )
+
+        log_entry = json.dumps({
+            "0": '{"subsystem":"agent/embedded"}',
+            "1": "embedded run tool end: runId=af24974c tool=exec toolCallId=toolu_01PCFHQf",
+        })
+
+        proxy._process_clawdbot_log_line(log_entry)
+
+        # Tool end should NOT write to audit log
+        log_path = tmp_path / "audit.jsonl"
+        content = log_path.read_text().strip()
+        tool_calls = [
+            json.loads(line)
+            for line in content.split("\n")
+            if line.strip() and json.loads(line).get("event") == "tool_call"
+        ]
+        assert len(tool_calls) == 0
+
+    def test_process_clawdbot_log_line_invalid_json(
+        self, audit_logger: AuditLogger,
+    ) -> None:
+        """Invalid JSON lines are silently skipped."""
+        proxy = HttpProxy(
+            backend_url="http://127.0.0.1:9999",
+            listen_host="127.0.0.1",
+            listen_port=0,
+            policy_engine=None,
+            audit_logger=audit_logger,
+        )
+        # Should not raise
+        proxy._process_clawdbot_log_line("not json at all")
+        proxy._process_clawdbot_log_line("")
+
+    def test_process_clawdbot_log_line_non_tool_entry(
+        self, audit_logger: AuditLogger,
+    ) -> None:
+        """Non-tool log lines are silently skipped."""
+        proxy = HttpProxy(
+            backend_url="http://127.0.0.1:9999",
+            listen_host="127.0.0.1",
+            listen_port=0,
+            policy_engine=None,
+            audit_logger=audit_logger,
+        )
+
+        log_entry = json.dumps({
+            "0": '{"subsystem":"diagnostic"}',
+            "1": "session state: sessionId=abc prev=idle new=processing reason=run_started",
+        })
+        # Should not raise or log anything
+        proxy._process_clawdbot_log_line(log_entry)

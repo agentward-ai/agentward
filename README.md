@@ -189,7 +189,7 @@ Agent Host                    AgentWard                     Tool Server
 - Any MCP-compatible client
 
 **HTTP Gateways:**
-- OpenClaw (with WebSocket passthrough for UI)
+- OpenClaw (latest) and ClawdBot (legacy) — both supported
 - Extensible to other HTTP-based tool gateways
 
 **Python Tool Scanning:**
@@ -214,20 +214,89 @@ pytest
 ruff check agentward/
 ```
 
+## Current Status & What's Tested
+
+AgentWard is early-stage software. We're being upfront about what works well and what hasn't been battle-tested yet.
+
+**Tested end-to-end and working well:**
+- `agentward scan` — static analysis across MCP configs, Python tools, and OpenClaw skills (macOS)
+- `agentward configure` — policy YAML generation from scan results
+- `agentward setup --gateway openclaw` — OpenClaw gateway port swapping + LaunchAgent plist patching
+- `agentward inspect --gateway openclaw` — runtime enforcement of OpenClaw skill calls via LLM API interception (Anthropic provider, streaming mode). This is our most thoroughly tested path.
+
+**Built and unit-tested but not yet end-to-end verified:**
+- MCP stdio proxy (`agentward inspect -- npx server`) — the proxy, protocol parsing, and policy engine are tested in isolation with 550+ unit tests, but we haven't run a full session with Claude Desktop/Cursor through the proxy yet
+- OpenAI provider interception (Chat Completions + Responses API) — interceptors are unit-tested but no live OpenAI traffic has flowed through them
+- Skill chaining enforcement — the chain tracker and policy evaluation work in tests, but the real-world interaction patterns haven't been validated
+- `agentward setup` for MCP config wrapping (Claude Desktop, Cursor, Windsurf, VS Code) — config rewriting is tested, but we haven't verified the full setup → restart → use cycle for each host
+
+**Platform support:**
+- **macOS** — developed and tested here. This is the only platform we're confident about.
+- **Linux** — should work for MCP stdio proxy and static scanning. HTTP gateway mode is macOS-specific (LaunchAgent plist patching).
+- **Windows** — untested. Signal handling, path resolution, and process management may have issues.
+
+If you run into problems on any path we haven't tested, please [open an issue](https://github.com/agentward-ai/agentward/issues) — it helps us prioritize.
+
 ## Roadmap
 
 - [x] MCP stdio proxy with policy enforcement
 - [x] HTTP reverse proxy with WebSocket passthrough
+- [x] LLM API proxy with tool_use interception (Anthropic streaming)
 - [x] Static scanner (MCP configs, Python tools, OpenClaw skills)
 - [x] Smart-default policy generation
 - [x] MCP config wrapping (`agentward setup`)
 - [x] Audit logging (JSON Lines + rich stderr)
+- [ ] End-to-end testing: Claude Desktop, Cursor, Windsurf, VS Code
+- [ ] End-to-end testing: OpenAI provider paths
 - [ ] Skill chaining analysis and enforcement
 - [ ] Human-in-the-loop approval flow
 - [ ] Compliance frameworks (HIPAA, SOX, GDPR, PCI-DSS)
 - [ ] Data classifier (PII/PHI detection)
 - [ ] Data boundary enforcement
 - [ ] Skill Compliance Registry
+- [ ] Linux and Windows support
+
+## Troubleshooting
+
+### "Tool is blocked" after re-enabling it in the policy
+
+After you block a tool (e.g., `browser: denied: true`), the LLM receives a message like `[AgentWard: blocked tool 'browser']` in the conversation. If you then re-enable the tool by editing `agentward.yaml` and restarting the proxy, the LLM may still *choose not to use it* — because the block message is in its conversation history and it "remembers" the restriction.
+
+**This is not AgentWard blocking the tool.** It's the LLM avoiding a tool it previously saw fail. The fix: **start a new chat session** after changing your policy. A fresh conversation has no memory of the previous block.
+
+You can confirm by checking the proxy output — if you see `ALLOW` for the tool (or no `BLOCK` message), AgentWard is letting it through.
+
+### Port already in use (OSError Errno 48)
+
+If `agentward inspect` fails with "address already in use", either a previous proxy didn't exit cleanly or the gateway hasn't picked up its new port.
+
+```bash
+# Check what's using the ports
+lsof -i :18789 -i :18790
+
+# Kill stale proxy if needed, then restart
+agentward inspect --gateway openclaw --policy agentward.yaml
+```
+
+### OpenClaw gateway won't restart on new port
+
+`agentward setup --gateway openclaw` patches both the config JSON and the macOS LaunchAgent plist. If the gateway still binds to the old port after restart, verify both files were updated:
+
+```bash
+# Check config port (new OpenClaw path or legacy ClawdBot path)
+cat ~/.openclaw/openclaw.json | grep port     # new installs
+cat ~/.clawdbot/clawdbot.json | grep port     # legacy installs
+
+# Check plist port (name depends on version)
+plutil -p ~/Library/LaunchAgents/ai.openclaw.gateway.plist | grep -A1 port     # new
+plutil -p ~/Library/LaunchAgents/com.clawdbot.gateway.plist | grep -A1 port    # legacy
+```
+
+Then restart with: `openclaw gateway restart`
+
+### Compatibility: OpenClaw vs ClawdBot
+
+AgentWard auto-detects both the latest OpenClaw (`~/.openclaw/openclaw.json`, `ai.openclaw.gateway.plist`) and legacy ClawdBot (`~/.clawdbot/clawdbot.json`, `com.clawdbot.gateway.plist`). No configuration needed — it finds whichever you have installed.
 
 ## License
 

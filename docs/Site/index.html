@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iOCIgZmlsbD0iIzBhMGEwYSIvPgogIDxwYXRoIGQ9Ik0yNCA0TDYgMTJ2MTJjMCAxMS4xIDcuNyAyMS41IDE4IDI0IDEwLjMtMi41IDE4LTEyLjkgMTgtMjRWMTJMMjQgNHoiIGZpbGw9IiMxMTEiIHN0cm9rZT0iIzAwZmY4OCIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgPHBhdGggZD0iTTE4IDI0bDQgNCA4LTgiIHN0cm9rZT0iIzAwZmY4OCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgZmlsbD0ibm9uZSIvPgogIDxjaXJjbGUgY3g9IjI0IiBjeT0iMjQiIHI9IjEyIiBzdHJva2U9IiMwMGZmODgiIHN0cm9rZS13aWR0aD0iMSIgc3Ryb2tlLWRhc2hhcnJheT0iMyAzIiBvcGFjaXR5PSIwLjQiLz4KPC9zdmc+">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AgentWard — Permission Enforcement for AI Agents</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    @keyframes fadeIn { from { opacity:0; transform:translateY(3px) } to { opacity:1; transform:translateY(0) } }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { background:#0a0a0a; color:#e0e0e0; font-family:'Space Grotesk','Inter',system-ui,sans-serif; min-height:100vh; }
+    ::selection { background:#00ff8840; }
+    a { color:#00ff88; } a:hover { color:#00cc6a; }
+    .terminal-line { opacity:0; animation:fadeIn 0.25s ease forwards; white-space:pre; }
+    .blink { animation:blink 1s infinite; }
+    .faq-item { border:1px solid #1a1a1a; border-radius:10px; margin-bottom:8px; overflow:hidden; background:#0d0d0d; transition:border-color 0.2s; }
+    .faq-item:hover { border-color:#2a2a2a; }
+    .faq-item[open] { border-color:#00ff8830; }
+    .faq-item summary { list-style:none; padding:16px 20px; cursor:pointer; color:#ccc; font-size:14px; font-weight:500; display:flex; align-items:center; justify-content:space-between; gap:12px; user-select:none; }
+    .faq-item summary::-webkit-details-marker { display:none; }
+    .faq-item summary::after { content:'+'; color:#00ff88; font-size:20px; font-weight:300; flex-shrink:0; font-family:monospace; }
+    .faq-item[open] summary::after { content:'−'; }
+    .faq-item[open] summary { color:#fff; border-bottom:1px solid #1a1a1a; }
+    .faq-body { padding:16px 20px; font-size:13.5px; line-height:1.7; color:#888; }
+    .faq-body p { margin-bottom:6px; }
+    .faq-body code { font-family:'JetBrains Mono',monospace; font-size:12px; background:#111; border:1px solid #222; padding:1px 6px; border-radius:4px; color:#00ff88; }
+    .faq-body pre { font-family:'JetBrains Mono',monospace; font-size:12px; background:#111; border:1px solid #1a1a1a; border-radius:8px; padding:14px 16px; color:#00ff88; overflow-x:auto; line-height:1.8; margin-top:10px; white-space:pre; }
+    .faq-body ul { margin:8px 0 8px 16px; color:#888; line-height:1.8; }
+    .faq-body li { margin-bottom:4px; }
+  </style>
+</head>
+<body>
+
+  <!-- TOP BRAND -->
+  <div style="display:flex;align-items:center;justify-content:center;gap:14px;padding:32px 20px 0">
+    <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+      <path d="M24 4L6 12v12c0 11.1 7.7 21.5 18 24 10.3-2.5 18-12.9 18-24V12L24 4z" fill="#111" stroke="#00ff88" stroke-width="2"/>
+      <path d="M18 24l4 4 8-8" stroke="#00ff88" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <circle cx="24" cy="24" r="12" stroke="#00ff88" stroke-width="1" stroke-dasharray="3 3" opacity="0.4"/>
+    </svg>
+    <div>
+      <span style="font-size:28px;font-weight:700;color:#fff;letter-spacing:-0.5px">AgentWard</span>
+      <p style="font-size:13px;color:#888;margin-top:4px;font-family:'JetBrains Mono',monospace;letter-spacing:0.2px">Give your agents boundaries, not blindfolds.</p>
+    </div>
+  </div>
+
+  <!-- HERO -->
+  <div style="background:linear-gradient(135deg,#00ff8808 0%,transparent 50%);padding:72px 20px 56px;text-align:center;max-width:800px;margin:0 auto">
+    <div style="display:inline-block;padding:4px 14px;border-radius:20px;background:#00ff8812;border:1px solid #00ff8825;margin-bottom:24px">
+      <span style="font-size:12px;font-weight:600;color:#00ff88;font-family:'JetBrains Mono',monospace">OPEN SOURCE · APACHE 2.0</span>
+    </div>
+    <h1 style="font-size:clamp(28px,5vw,46px);font-weight:700;line-height:1.15;color:#fff;letter-spacing:-1px;max-width:700px;margin:0 auto 20px">
+      Know what your AI agent's tools <span style="color:#00ff88">can actually access</span>
+    </h1>
+    <p style="font-size:clamp(16px,2.5vw,18px);color:#777;line-height:1.65;max-width:600px;margin:0 auto 36px">
+      Scan MCP servers, OpenClaw skills, and Python SDK tools. Enforce policies at runtime — in code, outside the LLM context window.
+    </p>
+    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+      <button id="copyBtn" onclick="copyCmd()" style="display:flex;align-items:center;gap:10px;padding:14px 24px;border-radius:10px;background:#111;border:1px solid #222;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:15px;color:#00ff88;font-weight:500">
+        <span style="opacity:0.5">$</span> pip install agentward
+        <span id="copyIcon" style="font-size:12px;opacity:0.5;margin-left:4px">⎘</span>
+      </button>
+      <a href="https://github.com/agentward-ai/agentward" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:10px;padding:14px 24px;border-radius:10px;background:#00ff88;color:#0a0a0a;text-decoration:none;font-weight:600;font-size:15px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub Repo
+      </a>
+    </div>
+  </div>
+
+  <!-- THE PROBLEM -->
+  <section style="max-width:700px;margin:0 auto;padding:0 20px 48px;text-align:center">
+    <div style="background:#111;border:1px solid #222;border-radius:12px;padding:28px 32px">
+      <p style="font-size:13px;font-family:'JetBrains Mono',monospace;color:#00ff88;margin-bottom:12px;font-weight:600">THE PROBLEM</p>
+      <p style="font-size:16px;line-height:1.7;color:#ccc">
+        <strong style="color:#fff">26% of 31,000 AI agent skills contain vulnerabilities.</strong>
+        230+ malicious skills found on ClawHub. OpenClaw has 140K+ GitHub stars and gives agents full computer control — but zero permission governance. Every existing tool only scans before installation, then walks away.
+      </p>
+      <p style="font-size:16px;line-height:1.7;color:#ccc;margin-top:12px">
+        <strong style="color:#00ff88">AgentWard does all four — across MCP servers, OpenClaw skills, and Python SDK tools.</strong>
+      </p>
+    </div>
+  </section>
+
+  <!-- METAPHOR -->
+  <div style="max-width:600px;margin:0 auto;padding:24px 20px 0;text-align:center">
+    <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:10px;padding:16px 24px;font-style:italic;color:#888;font-size:14px;line-height:1.7">
+      "Telling an agent <span style="color:#ccc">'don't touch the stove'</span> is a natural-language guardrail that can be circumvented. AgentWard puts a
+      <span style="color:#00ff88;font-style:normal;font-weight:600">physical lock on the stove</span> — code-level enforcement that prompt injection can't override."
+    </div>
+  </div>
+
+  <!-- ARCHITECTURE DIAGRAM -->
+  <section style="max-width:860px;margin:0 auto;padding:0 20px 64px">
+    <div style="background:#0a0a0a;border-radius:12px;overflow:hidden">
+<svg style="width:100%;display:block" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" font-family="'SF Mono', 'Fira Code', 'Consolas', monospace">
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="glow-strong">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <marker id="arrow-green" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#00FF41"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#FF3333"/>
+    </marker>
+    <marker id="arrow-dim" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#555"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="800" fill="#0a0a0a"/>
+
+  <!-- Title -->
+  <text x="600" y="40" text-anchor="middle" fill="#00FF41" font-size="22" font-weight="bold" filter="url(#glow)">AgentWard — Architecture</text>
+
+  <!-- ==================== LAYER 1: Agent Hosts ==================== -->
+  <text x="50" y="85" fill="#666" font-size="11" letter-spacing="3">AGENT HOSTS</text>
+
+  <!-- Agent host boxes -->
+  <g>
+    <!-- Claude Desktop -->
+    <rect x="50" y="95" width="155" height="42" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text x="127" y="121" text-anchor="middle" fill="#aaa" font-size="12">Claude Desktop</text>
+
+    <!-- Claude Code -->
+    <rect x="225" y="95" width="140" height="42" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text x="295" y="121" text-anchor="middle" fill="#aaa" font-size="12">Claude Code</text>
+
+    <!-- Cursor -->
+    <rect x="385" y="95" width="110" height="42" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text x="440" y="121" text-anchor="middle" fill="#aaa" font-size="12">Cursor</text>
+
+    <!-- Windsurf -->
+    <rect x="515" y="95" width="120" height="42" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text x="575" y="121" text-anchor="middle" fill="#aaa" font-size="12">Windsurf</text>
+
+    <!-- VS Code -->
+    <rect x="655" y="95" width="130" height="42" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text x="720" y="121" text-anchor="middle" fill="#aaa" font-size="12">VS Code</text>
+
+    <!-- OpenClaw UI -->
+    <rect x="805" y="95" width="145" height="42" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text x="877" y="121" text-anchor="middle" fill="#aaa" font-size="12">OpenClaw UI</text>
+
+    <!-- API Clients -->
+    <rect x="970" y="95" width="145" height="42" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text x="1042" y="121" text-anchor="middle" fill="#aaa" font-size="12">API Clients</text>
+  </g>
+
+  <!-- Arrows from agents to AgentWard -->
+  <!-- MCP stdio arrows (left 5 boxes) -->
+  <line x1="127" y1="137" x2="127" y2="220" stroke="#555" stroke-width="1.5" marker-end="url(#arrow-dim)"/>
+  <line x1="295" y1="137" x2="295" y2="220" stroke="#555" stroke-width="1.5" marker-end="url(#arrow-dim)"/>
+  <line x1="440" y1="137" x2="440" y2="220" stroke="#555" stroke-width="1.5" marker-end="url(#arrow-dim)"/>
+  <line x1="575" y1="137" x2="575" y2="220" stroke="#555" stroke-width="1.5" marker-end="url(#arrow-dim)"/>
+  <line x1="720" y1="137" x2="720" y2="220" stroke="#555" stroke-width="1.5" marker-end="url(#arrow-dim)"/>
+
+  <!-- HTTP arrows (right 2 boxes) -->
+  <line x1="877" y1="137" x2="877" y2="220" stroke="#555" stroke-width="1.5" marker-end="url(#arrow-dim)"/>
+  <line x1="1042" y1="137" x2="1042" y2="220" stroke="#555" stroke-width="1.5" marker-end="url(#arrow-dim)"/>
+
+  <!-- Protocol labels -->
+  <text x="400" y="185" text-anchor="middle" fill="#00FF41" font-size="10" opacity="0.7">JSON-RPC tools/call</text>
+  <text x="950" y="185" text-anchor="middle" fill="#00FF41" font-size="10" opacity="0.7">POST /tools-invoke</text>
+
+  <!-- ==================== LAYER 2: AgentWard ==================== -->
+  <!-- Main green border box -->
+  <rect x="30" y="210" width="1140" height="310" rx="6" fill="#0d1a0d" stroke="#00FF41" stroke-width="2" filter="url(#glow-strong)"/>
+
+  <!-- AgentWard title bar -->
+  <rect x="30" y="210" width="1140" height="40" rx="6" fill="#00FF41" opacity="0.15"/>
+  <rect x="30" y="244" width="1140" height="6" fill="#0d1a0d"/>
+  <text x="600" y="237" text-anchor="middle" fill="#00FF41" font-size="16" font-weight="bold" filter="url(#glow)">AGENTWARD — PERMISSION ENFORCEMENT LAYER</text>
+
+  <!-- Proxy boxes -->
+  <!-- Stdio Proxy -->
+  <rect x="70" y="270" width="340" height="70" rx="4" fill="#111" stroke="#00FF41" stroke-width="1" opacity="0.8"/>
+  <text x="240" y="295" text-anchor="middle" fill="#00FF41" font-size="14" font-weight="bold">Stdio Proxy</text>
+  <text x="240" y="318" text-anchor="middle" fill="#668866" font-size="11">MCP JSON-RPC 2.0 over stdio</text>
+  <text x="240" y="332" text-anchor="middle" fill="#668866" font-size="11">Subprocess management</text>
+
+  <!-- HTTP Reverse Proxy -->
+  <rect x="460" y="270" width="340" height="70" rx="4" fill="#111" stroke="#00FF41" stroke-width="1" opacity="0.8"/>
+  <text x="630" y="295" text-anchor="middle" fill="#00FF41" font-size="14" font-weight="bold">HTTP Reverse Proxy</text>
+  <text x="630" y="318" text-anchor="middle" fill="#668866" font-size="11">Gateway interception + WebSocket</text>
+  <text x="630" y="332" text-anchor="middle" fill="#668866" font-size="11">passthrough for UI</text>
+
+  <!-- Policy YAML file icon -->
+  <rect x="860" y="270" width="270" height="70" rx="4" fill="#111" stroke="#444" stroke-width="1"/>
+  <!-- File icon -->
+  <polygon points="880,282 880,328 910,328 910,294 898,282" fill="none" stroke="#00FF41" stroke-width="1.5"/>
+  <polyline points="898,282 898,294 910,294" fill="none" stroke="#00FF41" stroke-width="1.5"/>
+  <text x="930" y="300" fill="#00FF41" font-size="13" font-weight="bold">agentward.yaml</text>
+  <text x="930" y="318" fill="#668866" font-size="10">Declarative policy rules</text>
+
+  <!-- Connecting line from YAML to Policy Engine -->
+  <line x1="995" y1="340" x2="995" y2="370" stroke="#00FF41" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>
+
+  <!-- Policy Engine -->
+  <rect x="70" y="370" width="530" height="65" rx="4" fill="#111" stroke="#00FF41" stroke-width="1.5"/>
+  <text x="335" y="395" text-anchor="middle" fill="#00FF41" font-size="14" font-weight="bold">Policy Engine</text>
+
+  <!-- Decision badges -->
+  <rect x="105" y="408" width="80" height="22" rx="11" fill="#00FF41" opacity="0.2" stroke="#00FF41" stroke-width="1"/>
+  <text x="145" y="423" text-anchor="middle" fill="#00FF41" font-size="11" font-weight="bold">ALLOW</text>
+
+  <rect x="205" y="408" width="80" height="22" rx="11" fill="#FF3333" opacity="0.2" stroke="#FF3333" stroke-width="1"/>
+  <text x="245" y="423" text-anchor="middle" fill="#FF3333" font-size="11" font-weight="bold">BLOCK</text>
+
+  <rect x="305" y="408" width="90" height="22" rx="11" fill="#FFaa00" opacity="0.2" stroke="#FFaa00" stroke-width="1"/>
+  <text x="350" y="423" text-anchor="middle" fill="#FFaa00" font-size="11" font-weight="bold">APPROVE</text>
+
+  <rect x="415" y="408" width="65" height="22" rx="11" fill="#4488FF" opacity="0.2" stroke="#4488FF" stroke-width="1"/>
+  <text x="447" y="423" text-anchor="middle" fill="#4488FF" font-size="11" font-weight="bold">LOG</text>
+
+  <rect x="500" y="408" width="80" height="22" rx="11" fill="#aa44ff" opacity="0.2" stroke="#aa44ff" stroke-width="1"/>
+  <text x="540" y="423" text-anchor="middle" fill="#aa44ff" font-size="11" font-weight="bold">REDACT</text>
+
+  <!-- Connecting lines from proxies to engine -->
+  <line x1="240" y1="340" x2="240" y2="370" stroke="#00FF41" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>
+  <line x1="630" y1="340" x2="500" y2="370" stroke="#00FF41" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>
+
+  <!-- Audit Logger -->
+  <rect x="660" y="370" width="470" height="65" rx="4" fill="#111" stroke="#444" stroke-width="1"/>
+  <text x="895" y="395" text-anchor="middle" fill="#ccc" font-size="14" font-weight="bold">Audit Logger</text>
+  <text x="895" y="418" text-anchor="middle" fill="#668866" font-size="11">Structured JSON Lines  ·  Rich stderr output</text>
+  <text x="895" y="432" text-anchor="middle" fill="#668866" font-size="11">Every decision logged with full context</text>
+
+  <!-- Connecting line from engine to audit -->
+  <line x1="600" y1="402" x2="660" y2="402" stroke="#444" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- ==================== Decision Arrows ==================== -->
+
+  <!-- ALLOW path (green) — left side -->
+  <line x1="250" y1="520" x2="250" y2="600" stroke="#00FF41" stroke-width="2.5" marker-end="url(#arrow-green)" filter="url(#glow)"/>
+  <rect x="195" y="548" width="110" height="24" rx="12" fill="#0a0a0a" stroke="#00FF41" stroke-width="1"/>
+  <text x="250" y="565" text-anchor="middle" fill="#00FF41" font-size="12" font-weight="bold">✓ ALLOW</text>
+
+  <!-- ALLOW path (green) — right side -->
+  <line x1="800" y1="520" x2="800" y2="600" stroke="#00FF41" stroke-width="2.5" marker-end="url(#arrow-green)" filter="url(#glow)"/>
+  <rect x="745" y="548" width="110" height="24" rx="12" fill="#0a0a0a" stroke="#00FF41" stroke-width="1"/>
+  <text x="800" y="565" text-anchor="middle" fill="#00FF41" font-size="12" font-weight="bold">✓ ALLOW</text>
+
+  <!-- BLOCK path (red) — center -->
+  <line x1="530" y1="520" x2="530" y2="565" stroke="#FF3333" stroke-width="2.5"/>
+  <!-- X symbol -->
+  <line x1="515" y1="565" x2="545" y2="595" stroke="#FF3333" stroke-width="3"/>
+  <line x1="545" y1="565" x2="515" y2="595" stroke="#FF3333" stroke-width="3"/>
+  <rect x="480" y="548" width="100" height="24" rx="12" fill="#0a0a0a" stroke="#FF3333" stroke-width="1"/>
+  <text x="530" y="565" text-anchor="middle" fill="#FF3333" font-size="12" font-weight="bold">✗ BLOCK</text>
+  <text x="530" y="625" text-anchor="middle" fill="#FF3333" font-size="10" opacity="0.7">Call never reaches</text>
+  <text x="530" y="640" text-anchor="middle" fill="#FF3333" font-size="10" opacity="0.7">tool servers</text>
+
+  <!-- ==================== LAYER 3: Tool Servers ==================== -->
+  <text x="50" y="660" fill="#666" font-size="11" letter-spacing="3">TOOL SERVERS</text>
+
+  <!-- MCP Servers -->
+  <rect x="70" y="670" width="400" height="55" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+  <text x="270" y="695" text-anchor="middle" fill="#aaa" font-size="13" font-weight="bold">MCP Servers</text>
+  <text x="270" y="714" text-anchor="middle" fill="#555" font-size="11">filesystem  ·  GitHub  ·  database  ·  Slack</text>
+
+  <!-- OpenClaw Gateway -->
+  <rect x="560" y="670" width="400" height="55" rx="4" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+  <text x="760" y="695" text-anchor="middle" fill="#aaa" font-size="13" font-weight="bold">OpenClaw Gateway</text>
+  <text x="760" y="714" text-anchor="middle" fill="#555" font-size="11">email  ·  calendar  ·  shell  ·  web browser</text>
+
+  <!-- Transport labels on bottom -->
+  <text x="270" y="745" text-anchor="middle" fill="#00FF41" font-size="10" opacity="0.5">stdio</text>
+  <text x="760" y="745" text-anchor="middle" fill="#00FF41" font-size="10" opacity="0.5">HTTP / WebSocket</text>
+
+  <!-- ==================== Footer ==================== -->
+  <line x1="100" y1="768" x2="1100" y2="768" stroke="#222" stroke-width="1"/>
+  <text x="600" y="790" text-anchor="middle" fill="#00FF41" font-size="12" opacity="0.6" filter="url(#glow)">Code-level enforcement outside the LLM context window — prompt injection can't override structural policies</text>
+
+</svg>
+    </div>
+  </section>
+
+  <!-- FOUR STAGES -->
+  <section style="max-width:840px;margin:0 auto;padding:0 20px 64px">
+    <h2 style="font-size:24px;font-weight:700;color:#fff;text-align:center;margin-bottom:36px">Four stages. One command at a time.</h2>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px" id="stagesGrid"></div>
+  </section>
+
+  <!-- TERMINAL DEMO -->
+  <div style="display:flex;justify-content:center;padding:48px 20px 64px">
+    <div style="background:#0a0a0a;border-radius:12px;padding:20px 24px;font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;font-size:12.5px;line-height:1.65;border:1px solid #222;box-shadow:0 8px 32px rgba(0,0,0,0.5);max-width:640px;width:100%;height:520px;display:flex;flex-direction:column;">
+      <div style="display:flex;gap:6px;margin-bottom:16px;flex-shrink:0">
+        <div style="width:12px;height:12px;border-radius:50%;background:#ff5f57"></div>
+        <div style="width:12px;height:12px;border-radius:50%;background:#febc2e"></div>
+        <div style="width:12px;height:12px;border-radius:50%;background:#28c840"></div>
+      </div>
+      <div id="terminalLines" style="flex:1;overflow-y:auto"></div>
+      <div id="terminalCursor" style="color:#00ff88;opacity:0;transition:opacity 0.3s;flex-shrink:0;margin-top:4px">
+        <span style="opacity:0.5">$</span> <span class="blink">▊</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- RISK EXAMPLES -->
+  <section style="max-width:900px;margin:0 auto;padding:0 20px 80px">
+    <h2 style="font-size:22px;font-weight:700;color:#fff;text-align:center;margin-bottom:8px">What does overprivileged(unsafe) actually look like?</h2>
+    <p style="text-align:center;color:#555;font-size:13px;font-family:'JetBrains Mono',monospace;margin-bottom:40px">Real examples from production agent setups — individually and in combination</p>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+
+      <!-- LEFT: Overprivileged -->
+      <div>
+        <p style="font-size:11px;font-weight:700;letter-spacing:2px;color:#ff3366;font-family:'JetBrains Mono',monospace;margin-bottom:16px">OVERPRIVILEGED(UNSAFE) SKILLS</p>
+
+        <div style="background:#0d0d0d;border:1px solid #1f0a0a;border-left:3px solid #ff3366;border-radius:8px;padding:18px 20px;margin-bottom:14px">
+          <p style="font-size:13px;font-weight:600;color:#fff;margin-bottom:6px">shell_executor — run arbitrary commands</p>
+          <p style="font-size:12.5px;color:#666;line-height:1.7;margin-bottom:12px">Agents use this to run scripts, install packages, move files. The skill itself is the problem — a single misdirected instruction can wipe a directory, exfiltrate environment variables, or open a reverse shell.</p>
+          <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.7;color:#888">
+            <span style="color:#ff3366">CRITICAL</span>&nbsp; shell_executor.run_command<br>
+            <span style="color:#555">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; rm -rf ~/Documents/</span><br>
+            <span style="color:#555">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; unrestricted shell access</span>
+          </div>
+        </div>
+
+        <div style="background:#0d0d0d;border:1px solid #1f0a0a;border-left:3px solid #ff6b35;border-radius:8px;padding:18px 20px;margin-bottom:14px">
+          <p style="font-size:13px;font-weight:600;color:#fff;margin-bottom:6px">filesystem — write + delete access</p>
+          <p style="font-size:12.5px;color:#666;line-height:1.7;margin-bottom:12px">Read-only filesystem access is usually fine. But write and delete permissions mean a confused model can overwrite config files or delete things it was only asked to "clean up."</p>
+          <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.7;color:#888">
+            <span style="color:#ff6b35">HIGH</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; filesystem.write_file<br>
+            <span style="color:#555">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; path: ~/.ssh/authorized_keys</span><br>
+            <span style="color:#555">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; write + delete enabled</span>
+          </div>
+        </div>
+
+        <div style="background:#0d0d0d;border:1px solid #1f0a0a;border-left:3px solid #ff6b35;border-radius:8px;padding:18px 20px">
+          <p style="font-size:13px;font-weight:600;color:#fff;margin-bottom:6px">email-manager — send + delete access</p>
+          <p style="font-size:12.5px;color:#666;line-height:1.7;margin-bottom:12px">A skill that can both read and delete emails can silently erase inbound messages — including password resets or fraud alerts — without the user ever seeing them.</p>
+          <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.7;color:#888">
+            <span style="color:#ff6b35">HIGH</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; email_manager.delete_message<br>
+            <span style="color:#555">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; from: security[at]bank.com</span><br>
+            <span style="color:#555">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; send + delete enabled</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: Chaining risks -->
+      <div>
+        <p style="font-size:11px;font-weight:700;letter-spacing:2px;color:#ffcc00;font-family:'JetBrains Mono',monospace;margin-bottom:16px">UNSAFE IN COMBINATION</p>
+
+        <div style="background:#0d0d0d;border:1px solid #1a1200;border-left:3px solid #ffcc00;border-radius:8px;padding:18px 20px;margin-bottom:14px">
+          <p style="font-size:13px;font-weight:600;color:#fff;margin-bottom:4px">web-browser + email-manager</p>
+          <p style="font-size:11px;color:#555;font-family:'JetBrains Mono',monospace;margin-bottom:8px">individually: LOW &middot; LOW &rarr; combined: HIGH</p>
+          <p style="font-size:12.5px;color:#666;line-height:1.7;margin-bottom:12px">Neither skill is alarming alone. But together an agent can be tricked into exfiltrating data — read a private doc, summarize it, send the summary to an external address.</p>
+          <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.7;color:#888">
+            <span style="color:#ff6b35">HIGH</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; web_browser.navigate &rarr; email_manager.send<br>
+            <span style="color:#555">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; content routed to external address</span><br>
+            <span style="color:#555">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; data exfiltration path detected</span>
+          </div>
+        </div>
+
+        <div style="background:#0d0d0d;border:1px solid #1a1200;border-left:3px solid #ffcc00;border-radius:8px;padding:18px 20px;margin-bottom:14px">
+          <p style="font-size:13px;font-weight:600;color:#fff;margin-bottom:4px">calendar-reader + slack-poster</p>
+          <p style="font-size:11px;color:#555;font-family:'JetBrains Mono',monospace;margin-bottom:8px">individually: LOW &middot; LOW &rarr; combined: MEDIUM</p>
+          <p style="font-size:12.5px;color:#666;line-height:1.7;margin-bottom:12px">Reading someone's calendar is low-risk. Posting to Slack is low-risk. Together, an agent can leak when executives are traveling or who is on PTO — to any Slack channel it can reach.</p>
+          <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.7;color:#888">
+            <span style="color:#ffcc00">MEDIUM</span>&nbsp;&nbsp;&nbsp; calendar.read_events &rarr; slack.post_message<br>
+            <span style="color:#555">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; PII in calendar data detected</span><br>
+            <span style="color:#555">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; combined exposure: schedule + broadcast</span>
+          </div>
+        </div>
+
+        <div style="background:#0d0d0d;border:1px solid #1a1200;border-left:3px solid #ff3366;border-radius:8px;padding:18px 20px">
+          <p style="font-size:13px;font-weight:600;color:#fff;margin-bottom:4px">code-executor + github-writer</p>
+          <p style="font-size:11px;color:#555;font-family:'JetBrains Mono',monospace;margin-bottom:8px">individually: MEDIUM &middot; MEDIUM &rarr; combined: CRITICAL</p>
+          <p style="font-size:12.5px;color:#666;line-height:1.7;margin-bottom:12px">A coding agent that can run code locally and push to GitHub can introduce malicious changes, exfiltrate secrets found during execution, or overwrite CI config to persist access.</p>
+          <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.7;color:#888">
+            <span style="color:#ff3366">CRITICAL</span>&nbsp; code_executor &rarr; github.push_commit<br>
+            <span style="color:#555">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; secret found in execution env</span><br>
+            <span style="color:#555">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; combined: exec + write + persist</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- POLICY YAML -->
+  <section style="max-width:620px;margin:0 auto;padding:0 20px 64px">
+    <h2 style="font-size:24px;font-weight:700;color:#fff;text-align:center;margin-bottom:12px">Human-readable policies</h2>
+    <p style="text-align:center;color:#777;font-size:14px;margin-bottom:24px">YAML you can read, diff, and version control. Auto-generated from scan results.</p>
+    <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:12px;padding:20px 24px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.8;color:#888;overflow-x:auto">
+      <pre style="margin:0"># agentward.yaml — auto-generated by agentward configure
+version: "1.0"
+
+skills:
+  email-manager:
+    gmail:
+      read: true
+      send: false         # 🚫 blocked — requires approval
+      delete: false
+    google_calendar:
+      denied: true        # email skill has zero calendar access
+
+  finance-tracker:
+    gmail:
+      read: true
+      filters:
+        only_from: ["chase.com", "amex.com"]
+    network:
+      outbound: false     # financial data NEVER leaves machine
+
+  web-researcher:
+    browser: { allowed: true }
+    gmail:  { denied: true }
+    filesystem: { denied: true }
+
+skill_chaining:
+  - email-manager cannot trigger web-researcher
+  - finance-tracker cannot trigger any other skill
+  - web-researcher cannot trigger shell-executor
+
+require_approval:
+  - send_email
+  - delete_file
+  - outbound_network_with_pii
+  - shell_command_with_sudo</pre>
+    </div>
+  </section>
+
+  <!-- OPENCLAW QUICKSTART -->
+  <section style="max-width:620px;margin:0 auto;padding:0 20px 64px">
+    <h2 style="font-size:24px;font-weight:700;color:#fff;text-align:center;margin-bottom:12px">Running OpenClaw? Start here.</h2>
+    <p style="text-align:center;color:#777;font-size:14px;margin-bottom:24px">Production-ready hardened profile — 34 skills pre-configured with approval gates, chaining rules, and data boundaries.</p>
+    <div style="background:#0a0a0a;border-radius:12px;padding:20px 24px;font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;font-size:12.5px;line-height:1.65;border:1px solid #222;box-shadow:0 8px 32px rgba(0,0,0,0.5)">
+      <div style="display:flex;gap:6px;margin-bottom:16px">
+        <div style="width:12px;height:12px;border-radius:50%;background:#ff5f57"></div>
+        <div style="width:12px;height:12px;border-radius:50%;background:#febc2e"></div>
+        <div style="width:12px;height:12px;border-radius:50%;background:#28c840"></div>
+      </div>
+      <div>
+        <div style="color:#888;white-space:pre"><span style="opacity:0.5">$</span> <span style="color:#00ff88">pip install agentward</span></div>
+        <div style="color:#888;white-space:pre"><span style="opacity:0.5">$</span> <span style="color:#00ff88">git clone https://github.com/agentward-ai/agentward</span></div>
+        <div style="color:#888;white-space:pre"><span style="opacity:0.5">$</span> <span style="color:#00ff88">cd agentward/examples/openclaw-hardened</span></div>
+        <div style="color:#888;white-space:pre"><span style="opacity:0.5">$</span> <span style="color:#00ff88">chmod +x setup.sh && ./setup.sh</span></div>
+        <div style="color:#888;white-space:pre;margin-top:12px"> </div>
+        <div style="color:#5eead4;white-space:pre">  ✓ Found agentward 0.2.0</div>
+        <div style="color:#5eead4;white-space:pre">  ✓ Policy validated: 34 skill(s), 7 chain rule(s), 7 approval gate(s)</div>
+        <div style="color:#5eead4;white-space:pre">  ✓ Copied policy and MCP config to ~/.clawdbot/</div>
+        <div style="color:#888;white-space:pre;margin-top:12px"> </div>
+        <div style="color:#888;white-space:pre">  <span style="color:#fff;font-weight:600">What's enforced:</span></div>
+        <div style="color:#888;white-space:pre">  <span style="color:#ff3366">✗</span> Shell execution blocked</div>
+        <div style="color:#888;white-space:pre">  <span style="color:#ff3366">✗</span> Voice calls blocked</div>
+        <div style="color:#888;white-space:pre">  <span style="color:#ffcc00">⚠</span> Email send requires approval</div>
+        <div style="color:#888;white-space:pre">  <span style="color:#ffcc00">⚠</span> iMessage send requires approval</div>
+        <div style="color:#888;white-space:pre">  <span style="color:#ffcc00">⚠</span> Code execution requires approval</div>
+        <div style="color:#888;white-space:pre">  <span style="color:#00ff88">✓</span> Browsing content cannot leak into email</div>
+        <div style="color:#888;white-space:pre">  <span style="color:#00ff88">✓</span> Credentials isolated from all other skills</div>
+        <div style="color:#888;white-space:pre">  <span style="color:#00ff88">✓</span> Max chain depth: 2 handoffs</div>
+        <div style="color:#888;white-space:pre;margin-top:12px"> </div>
+        <div style="color:#00ff88;white-space:pre;font-weight:600">  Done. <span style="color:#888;font-weight:400">Run</span> agentward map --policy agentward.yaml <span style="color:#888;font-weight:400">to visualize.</span></div>
+      </div>
+    </div>
+    <p style="text-align:center;color:#555;font-size:12px;font-family:'JetBrains Mono',monospace;margin-top:16px">30 seconds from clone to fully enforced. Customize the YAML to fit your workflow.</p>
+  </section>
+
+  <!-- COMPARISON TABLE -->
+  <section style="max-width:760px;margin:0 auto;padding:0 20px 64px">
+    <h2 style="font-size:24px;font-weight:700;color:#fff;text-align:center;margin-bottom:32px">Beyond scanning. Beyond prompts.</h2>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-family:'JetBrains Mono',monospace;font-size:12.5px">
+        <thead><tr id="tableHeader"></tr></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+      <p style="font-size:11px;color:#444;margin-top:12px;font-family:'JetBrains Mono',monospace;line-height:1.7">
+        †Snyk mcp-scan proxy: guardrails via Invariant Labs API; PII detection in proxy mode.<br>
+        ‡SecureClaw: code-level plugin (51 audit checks) + behavioral skill (15 rules in LLM context, bypassable via prompt injection).
+      </p>
+    </div>
+  </section>
+
+  <!-- COMPATIBILITY -->
+  <section style="max-width:700px;margin:0 auto;padding:0 20px 64px;text-align:center">
+    <p style="font-size:12px;font-weight:600;color:#555;margin-bottom:16px;letter-spacing:1px;font-family:'JetBrains Mono',monospace">WORKS WITH</p>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap" id="compatGrid"></div>
+  </section>
+
+  <!-- TROUBLESHOOTING -->
+  <section style="max-width:760px;margin:0 auto;padding:0 20px 80px">
+    <h2 style="font-size:24px;font-weight:700;color:#fff;text-align:center;margin-bottom:8px">Troubleshooting</h2>
+    <p style="text-align:center;color:#555;font-size:13px;font-family:'JetBrains Mono',monospace;margin-bottom:36px">Common issues and fixes</p>
+
+    <!-- Group: OpenClaw Gateway -->
+    <p style="font-size:11px;font-weight:600;color:#555;letter-spacing:2px;font-family:'JetBrains Mono',monospace;margin-bottom:12px">OPENCLAW GATEWAY SETUP</p>
+    <div class="faq-group" style="margin-bottom:40px">
+
+      <details class="faq-item">
+        <summary>What's the correct command to restart OpenClaw?</summary>
+        <div class="faq-body">
+          <p>OpenClaw does <strong>not</strong> support <code>openclaw stop</code>, <code>openclaw start</code>, or <code>openclaw restart</code> as standalone commands. The correct command is:</p>
+          <pre>openclaw gateway restart</pre>
+          <p style="margin-top:10px">Also avoid <code>openclaw reset</code> — that cancels the current operation, it does not restart the gateway.</p>
+        </div>
+      </details>
+
+      <details class="faq-item">
+        <summary>"Address already in use" — OSError Errno 48 on port 18789</summary>
+        <div class="faq-body">
+          <p><strong style="color:#ff6b35">Symptom:</strong> AgentWard proxy fails to start with <code>OSError: [Errno 48] address already in use</code> on port 18789.</p>
+          <p style="margin-top:8px"><strong style="color:#888">Root cause:</strong> OpenClaw is still listening on the original port (18789) because it wasn't restarted after <code>agentward setup --gateway openclaw</code> swapped the port.</p>
+          <p style="margin-top:12px"><strong style="color:#00ff88">Fix:</strong></p>
+          <pre>1. Run: agentward setup --gateway openclaw
+2. Run: openclaw gateway restart
+3. Verify: lsof -i :18790   # should show node
+           lsof -i :18789   # should be empty
+4. Run: agentward inspect --gateway openclaw --policy agentward.yaml</pre>
+        </div>
+      </details>
+
+      <details class="faq-item">
+        <summary>OpenClaw still binds to the old port even after restart</summary>
+        <div class="faq-body">
+          <p><strong style="color:#ff6b35">Symptom:</strong> After editing <code>clawdbot.json</code> to change the port, OpenClaw still binds to the old port after restart.</p>
+          <p style="margin-top:8px"><strong style="color:#888">Root cause:</strong> OpenClaw uses a macOS LaunchAgent plist at <code>~/Library/LaunchAgents/com.clawdbot.gateway.plist</code> that hardcodes the port in two places — <code>ProgramArguments</code> and <code>EnvironmentVariables</code>. OpenClaw reads from the plist at launch, not from <code>clawdbot.json</code>. Both must be updated.</p>
+          <p style="margin-top:12px"><strong style="color:#00ff88">Fix:</strong> Run <code>agentward setup --gateway openclaw</code> — it patches both files automatically. If debugging manually, check both <code>clawdbot.json</code> and the plist.</p>
+        </div>
+      </details>
+
+      <details class="faq-item">
+        <summary>Proxy starts but forwards to itself / setup says already wrapped</summary>
+        <div class="faq-body">
+          <p><strong style="color:#ff6b35">Symptom:</strong> Proxy starts but creates an infinite loop, or <code>agentward setup</code> reports the gateway is already wrapped but ports look wrong.</p>
+          <p style="margin-top:8px"><strong style="color:#888">Root cause:</strong> A stale <code>.agentward-gateway.json</code> sidecar file in <code>~/.clawdbot/</code> from a previous run.</p>
+          <p style="margin-top:12px"><strong style="color:#00ff88">Fix:</strong></p>
+          <pre>rm ~/.clawdbot/.agentward-gateway.json
+agentward setup --gateway openclaw
+openclaw gateway restart
+agentward inspect --gateway openclaw --policy agentward.yaml</pre>
+        </div>
+      </details>
+
+      <details class="faq-item">
+        <summary>OpenClaw UI shows blank page or connection error through proxy</summary>
+        <div class="faq-body">
+          <p><strong style="color:#ff6b35">Symptom:</strong> OpenClaw UI at <code>http://127.0.0.1:18789/</code> shows blank page or connection error when accessed through the AgentWard proxy.</p>
+          <p style="margin-top:8px"><strong style="color:#888">Root cause (historical):</strong> The HTTP proxy was not forwarding WebSocket upgrade requests. OpenClaw's React SPA communicates with the gateway over WebSocket.</p>
+          <p style="margin-top:8px"><strong style="color:#00ff88">Current state:</strong> This is fixed. The proxy now detects WebSocket upgrade headers and proxies traffic bidirectionally. No action needed unless this reappears after code changes.</p>
+        </div>
+      </details>
+
+      <details class="faq-item">
+        <summary>Policy enforcement isn't triggering on tool calls</summary>
+        <div class="faq-body">
+          <p>OpenClaw's tool invocation endpoint is <code>POST /tools-invoke</code> (with a hyphen), <strong>not</strong> <code>/tools/invoke</code> (with a slash). If policy enforcement isn't working, verify the proxy is intercepting the correct path.</p>
+        </div>
+      </details>
+
+    </div>
+
+    <!-- Group: Policy & Runtime -->
+    <p style="font-size:11px;font-weight:600;color:#555;letter-spacing:2px;font-family:'JetBrains Mono',monospace;margin-bottom:12px">POLICY & RUNTIME</p>
+    <div class="faq-group" style="margin-bottom:40px">
+
+      <details class="faq-item">
+        <summary>Tool still appears "blocked" after re-enabling it in the policy</summary>
+        <div class="faq-body">
+          <p><strong style="color:#ff6b35">Symptom:</strong> You blocked a tool (e.g., <code>browser: denied: true</code>), then removed the block from <code>agentward.yaml</code> and restarted the proxy. The agent still avoids using the tool, or says something like "that tool is blocked."</p>
+          <p style="margin-top:8px"><strong style="color:#888">Root cause:</strong> This is <strong>not</strong> AgentWard blocking the tool. When a tool is blocked, AgentWard injects a message like <code>[AgentWard: blocked tool 'browser']</code> into the LLM response. The LLM sees this in its conversation history and "remembers" the restriction — so even after you re-enable the tool, the LLM avoids using it because it thinks it's still blocked.</p>
+          <p style="margin-top:12px"><strong style="color:#00ff88">Fix:</strong> Start a <strong>new chat session</strong> after changing your policy. A fresh conversation has no memory of the previous block. You can confirm AgentWard is no longer blocking by checking the proxy output — if you see <code>ALLOW</code> (or no <code>BLOCK</code> message), the tool is allowed through.</p>
+        </div>
+      </details>
+
+    </div>
+
+    <!-- Group: HTTP Proxy -->
+    <p style="font-size:11px;font-weight:600;color:#555;letter-spacing:2px;font-family:'JetBrains Mono',monospace;margin-bottom:12px">HTTP PROXY ISSUES</p>
+    <div class="faq-group" style="margin-bottom:40px">
+
+      <details class="faq-item">
+        <summary>"Error handling request from 127.0.0.1"</summary>
+        <div class="faq-body">
+          <p><strong style="color:#888">Root cause (historical):</strong> Two bugs in the HTTP proxy:</p>
+          <ul style="margin:8px 0 8px 16px;color:#888;line-height:1.8">
+            <li><strong>Double body read:</strong> <code>request.json()</code> consumed the body, then <code>request.read()</code> returned empty bytes when forwarding.</li>
+            <li><strong>StreamResponse + Content-Length mismatch:</strong> Using <code>web.StreamResponse</code> and copying the backend's <code>Content-Length</code> header while streaming caused mismatches.</li>
+          </ul>
+          <p><strong style="color:#00ff88">Current state:</strong> Fixed. The proxy now reads raw body once with <code>request.read()</code>, parses with <code>json.loads()</code>, and passes cached <code>raw_body</code> to <code>_forward_request()</code>. Uses <code>web.Response</code> (not <code>StreamResponse</code>) to avoid header issues.</p>
+        </div>
+      </details>
+
+    </div>
+
+    <!-- Group: MCP Stdio Proxy -->
+    <p style="font-size:11px;font-weight:600;color:#555;letter-spacing:2px;font-family:'JetBrains Mono',monospace;margin-bottom:12px">MCP STDIO PROXY ISSUES</p>
+    <div class="faq-group" style="margin-bottom:40px">
+
+      <details class="faq-item">
+        <summary>Server subprocess exits immediately</summary>
+        <div class="faq-body">
+          <p>Check that the server command works standalone first:</p>
+          <pre>npx -y @modelcontextprotocol/server-filesystem /tmp</pre>
+          <p style="margin-top:10px">If the server requires specific env vars or paths, pass them through the agentward command.</p>
+        </div>
+      </details>
+
+    </div>
+  </section>
+
+  <!-- BOTTOM CTA -->
+  <section style="max-width:600px;margin:0 auto;padding:60px 20px 80px;text-align:center;border-top:1px solid #1a1a1a">
+    <div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:12px">
+      <svg width="32" height="32" viewBox="0 0 48 48" fill="none">
+        <path d="M24 4L6 12v12c0 11.1 7.7 21.5 18 24 10.3-2.5 18-12.9 18-24V12L24 4z" fill="#111" stroke="#00ff88" stroke-width="2"/>
+        <path d="M18 24l4 4 8-8" stroke="#00ff88" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <circle cx="24" cy="24" r="12" stroke="#00ff88" stroke-width="1" stroke-dasharray="3 3" opacity="0.4"/>
+      </svg>
+      <h2 style="font-size:28px;font-weight:700;color:#fff">Stop YOLOing your agent permissions.</h2>
+    <p style="font-size:16px;color:#00ff88;font-weight:600;margin-top:8px;font-family:'JetBrains Mono',monospace">Start verifying.</p>
+    </div>
+    <p style="color:#777;margin-bottom:28px;font-size:15px">5 seconds to see what your AI agent's tools can actually do.</p>
+    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+      <button onclick="copyCmd()" style="padding:14px 24px;border-radius:10px;background:#111;border:1px solid #222;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:14px;color:#00ff88;font-weight:500">$ pip install agentward</button>
+      <a href="https://github.com/agentward-ai/agentward" target="_blank" rel="noopener" style="padding:14px 24px;border-radius:10px;background:#00ff88;color:#0a0a0a;text-decoration:none;font-weight:600;font-size:14px">GitHub →</a>
+    </div>
+    <p style="margin-top:24px;font-size:12px;color:#555;font-family:'JetBrains Mono',monospace">Apache 2.0 · Python 3.11+ · No API key · Everything runs locally</p>
+    <a href="/cdn-cgi/l/email-protection#b7dfd2dbdbd8f7d6d0d2d9c3c0d6c5d399d6de" style="display:inline-block;margin-top:8px;font-size:13px;color:#00ff88;text-decoration:none;font-family:'JetBrains Mono',monospace;opacity:0.8"><span class="__cf_email__" data-cfemail="bfd7dad3d3d0ffded8dad1cbc8decddb91ded6">[email&#160;protected]</span></a>
+  </section>
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+// ─── Copy command ───
+function copyCmd() {
+  navigator.clipboard && navigator.clipboard.writeText('pip install agentward');
+  const icon = document.getElementById('copyIcon');
+  if (icon) { icon.textContent = '✓ copied'; setTimeout(() => icon.textContent = '⎘', 2000); }
+}
+
+// ─── Terminal animation ───
+const terminalLines = [
+  { text: '$ pip install agentward', type: 'cmd', delay: 0 },
+  { text: '$ agentward scan ~/', type: 'cmd', delay: 600 },
+  { text: '', type: 'blank', delay: 900 },
+  { text: '🔍 Auto-discovering tool sources...', type: 'info', delay: 1100 },
+  { text: '   Found: ~/.cursor/mcp.json (4 MCP servers)', type: 'found', delay: 1400 },
+  { text: '   Found: ~/projects/*.py (6 tool definitions)', type: 'found', delay: 1700 },
+  { text: '   Found: ~/.openclaw/skills/ (9 OpenClaw skills)', type: 'found', delay: 2000 },
+  { text: '', type: 'blank', delay: 2200 },
+  { text: '⚡ Enumerating live MCP servers...', type: 'info', delay: 2400 },
+  { text: '⚡ Scanning Python SDK tools (OpenAI, LangChain)...', type: 'info', delay: 2700 },
+  { text: '⚡ Analyzing OpenClaw skill permissions...', type: 'info', delay: 3000 },
+  { text: '', type: 'blank', delay: 3200 },
+  { text: '┌──────────────────────────────────────────────────────┐', type: 'border', delay: 3400 },
+  { text: '│  Source             Tool/Skill        Risk          │', type: 'header', delay: 3500 },
+  { text: '├──────────────────────────────────────────────────────┤', type: 'border', delay: 3600 },
+  { text: '│  MCP  filesystem    read,write,del    🔴 CRITICAL   │', type: 'crit', delay: 3800 },
+  { text: '│  MCP  slack         all-channels      ⚠ HIGH        │', type: 'high', delay: 4000 },
+  { text: '│  MCP  postgres      read,write        ⚠ MEDIUM      │', type: 'medium', delay: 4200 },
+  { text: '│  MCP  github        repos,issues      ✓ LOW         │', type: 'low', delay: 4400 },
+  { text: '│  Skill email-mgr    send,read,del     ⚠ HIGH        │', type: 'high', delay: 4600 },
+  { text: '│  Skill web-browser  navigate,js,dl    ⚠ HIGH        │', type: 'high', delay: 4800 },
+  { text: '│  Skill finance      read,network      🔴 CRITICAL   │', type: 'crit', delay: 5000 },
+  { text: '│  SDK  shell_exec    subprocess        🔴 CRITICAL   │', type: 'crit', delay: 5200 },
+  { text: '│  SDK  send_email    smtp,attachments   ⚠ HIGH       │', type: 'high', delay: 5400 },
+  { text: '└──────────────────────────────────────────────────────┘', type: 'border', delay: 5600 },
+  { text: '', type: 'blank', delay: 5800 },
+  { text: '⚠ Skill chain detected: email-mgr → web-browser', type: 'chain', delay: 6000 },
+  { text: '  Email content could leak via browsing', type: 'chainwarn', delay: 6200 },
+  { text: '', type: 'blank', delay: 6400 },
+  { text: '3 critical · 4 high · 1 medium · 1 low', type: 'summary', delay: 6600 },
+  { text: '→ Run `agentward configure` to generate policies', type: 'action', delay: 7000 },
+];
+const colors = {
+  cmd:'#00ff88', info:'#888', found:'#5eead4', header:'#555',
+  high:'#ff6b35', low:'#00ff88', medium:'#ffcc00', crit:'#ff3366',
+  border:'#333', summary:'#fff', action:'#00ff88', blank:'transparent',
+  chain:'#ff6b35', chainwarn:'#996633',
+};
+const container = document.getElementById('terminalLines');
+const cursor = document.getElementById('terminalCursor');
+terminalLines.forEach((line, i) => {
+  setTimeout(() => {
+    const div = document.createElement('div');
+    div.style.color = colors[line.type] || '#ccc';
+    div.style.whiteSpace = 'pre';
+    div.style.fontFamily = "'JetBrains Mono','Fira Code','SF Mono',monospace";
+    div.style.fontSize = '12.5px';
+    div.style.lineHeight = '1.65';
+    div.style.opacity = '1';
+    div.textContent = line.text || '\u00A0';
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+    if (i === terminalLines.length - 1) cursor.style.opacity = '1';
+  }, line.delay);
+});
+
+// ─── Stages ───
+const stages = [
+  { num:1, icon:'🔍', title:'Scan', cmd:'agentward scan', status:'live', desc:'Auto-discover and map permissions across all tool sources — MCP servers, OpenClaw skills, Python SDK tools (OpenAI, LangChain, CrewAI). Risk-rated permission maps with use-case-aware recommendations.' },
+  { num:2, icon:'⚙️', title:'Configure', cmd:'agentward configure', status:'live', desc:'Generate smart-default YAML policies from scan results. Detects use-case patterns (email+calendar, dev tools, finance) and tailors rules: approval gates, skill restrictions, chaining controls.' },
+  { num:3, icon:'📋', title:'Comply', cmd:'agentward comply', status:'coming', desc:'Evaluate policies against HIPAA, SOX, GDPR, PCI-DSS. Generate compliance delta reports with exact config changes needed. Auto-fix mode produces compliant policy YAML.' },
+  { num:4, icon:'🛡️', title:'Inspect', cmd:'agentward inspect', status:'live', desc:'Runtime MCP + HTTP proxy with live policy enforcement. Blocks, redacts, or flags tool calls. Skill chaining enforcement, human-in-the-loop approval gates, and structured audit trail.' },
+];
+const grid = document.getElementById('stagesGrid');
+stages.forEach(s => {
+  const coming = s.status === 'coming';
+  grid.innerHTML += `
+    <div style="background:#111;border:1px solid ${coming?'#ffcc0030':'#222'};border-radius:12px;padding:24px;opacity:${coming?0.75:1}">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+        <span style="font-size:24px">${s.icon}</span>
+        <span style="font-family:monospace;font-size:10px;font-weight:700;color:#00ff88;background:#00ff8815;padding:2px 8px;border-radius:4px">STAGE ${s.num}</span>
+        ${coming ? '<span style="font-family:monospace;font-size:10px;font-weight:700;color:#ffcc00;background:#ffcc0015;padding:2px 8px;border-radius:4px;border:1px solid #ffcc0030">COMING SOON</span>' : ''}
+        <h3 style="font-size:17px;font-weight:700;color:#fff">${s.title}</h3>
+      </div>
+      <code style="font-family:monospace;font-size:12px;color:${coming?'#888':'#00ff88'};background:#0a0a0a;padding:4px 10px;border-radius:6px;display:inline-block;margin-bottom:12px;border:1px solid #1a1a1a">${s.cmd}</code>
+      <p style="font-size:13.5px;line-height:1.6;color:#888">${s.desc}</p>
+    </div>`;
+});
+
+// ─── Comparison Table ───
+const headers = ['Capability','Cisco','Caterpillar','Snyk','SecureClaw','AgentWard'];
+const rows = [
+  ['Static Scanning','✓','✓','✓','✓','✓'],
+  ['Runtime Enforcement','✗','✗','Proxy†','Plugin‡','✓'],
+  ['Declarative Policy (YAML)','✗','✗','✗','✗','✓'],
+  ['Skill Chaining Control','✗','✗','✗','✗','✓'],
+  ['Compliance Mapping','✗','✗','✗','OWASP','Soon'],
+  ['Data Flow Classification','✗','✗','PII†','✗','✓'],
+  ['Structured Audit Trail','✗','✗','✗','✗','✓'],
+  ['OpenClaw Skills','✓','✓','✓','✓','✓'],
+  ['MCP + SDK + HTTP','~','~','MCP','OC','✓'],
+];
+const thead = document.getElementById('tableHeader');
+headers.forEach((h,i) => {
+  const th = document.createElement('th');
+  th.style.cssText = `padding:12px;text-align:left;border-bottom:2px solid #222;color:${i===5?'#00ff88':'#555'};font-weight:700;font-size:11px;white-space:nowrap`;
+  th.textContent = h;
+  thead.appendChild(th);
+});
+const tbody = document.getElementById('tableBody');
+rows.forEach(row => {
+  const tr = document.createElement('tr');
+  row.forEach((cell,j) => {
+    const td = document.createElement('td');
+    td.style.cssText = `padding:10px 12px;border-bottom:1px solid #1a1a1a;white-space:nowrap;font-weight:${j===0?500:400}`;
+    let color = '#ccc';
+    if (cell==='✓') color = j===5?'#00ff88':'#4ade80';
+    else if (cell==='✗') color = '#444';
+    else if (cell==='~') color = '#666';
+    else if (cell==='Soon') color = '#ffcc00';
+    else if (cell==='OC') color = '#666';
+    else if (cell.includes('†')||cell.includes('‡')||cell==='OWASP'||cell==='PII†') color = '#ff6b35';
+    td.style.color = color;
+    td.textContent = cell;
+    tr.appendChild(td);
+  });
+  tbody.appendChild(tr);
+});
+
+// ─── Compat ───
+const compatList = [
+  {name:'Claude Desktop',done:true},{name:'Claude Code',done:true},{name:'Cursor',done:true},
+  {name:'Windsurf',done:true},{name:'VS Code',done:true},{name:'OpenClaw',done:true},
+  {name:'OpenAI SDK',done:false},{name:'LangChain',done:false},{name:'CrewAI',done:false},
+];
+const cg = document.getElementById('compatGrid');
+compatList.forEach(c => {
+  cg.innerHTML += `<span style="padding:8px 16px;border-radius:8px;font-size:13px;font-weight:500;background:${c.done?'#111':'transparent'};border:${c.done?'1px solid #1a1a1a':'1px dashed #333'};color:${c.done?'#ccc':'#555'};opacity:${c.done?1:0.7}">${c.name}${!c.done?'<span style="font-size:9px;margin-left:6px;color:#555;font-family:monospace"> SOON</span>':''}</span>`;
+});
+</script>
+</body>
+</html>

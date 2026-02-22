@@ -20,7 +20,9 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json as _json
+import re
 import signal
+from datetime import datetime, timezone
 from sys import platform as _platform
 from pathlib import Path
 from typing import Any
@@ -63,7 +65,7 @@ def _cleanup_stale_proxy(port: int) -> bool:
     # Check if the process is still alive
     try:
         os.kill(stale_pid, 0)  # signal 0 = just check, don't kill
-    except ProcessNotFoundError:
+    except ProcessLookupError:
         # Process already gone — clean up PID file
         pid_path.unlink(missing_ok=True)
         return False
@@ -87,11 +89,11 @@ def _cleanup_stale_proxy(port: int) -> bool:
             # Still alive after SIGTERM — force kill
             os.kill(stale_pid, signal.SIGKILL)
             time.sleep(0.3)
-        except ProcessNotFoundError:
+        except ProcessLookupError:
             pass
         pid_path.unlink(missing_ok=True)
         return True
-    except (ProcessNotFoundError, PermissionError):
+    except (ProcessLookupError, PermissionError):
         pid_path.unlink(missing_ok=True)
         return False
 
@@ -168,6 +170,36 @@ _HOP_BY_HOP_RESPONSE = _HOP_BY_HOP_REQUEST | {"content-length"}
 # The ClawdBot gateway tool invocation endpoint (hyphen, not slash).
 _TOOL_INVOKE_PATH = "/tools-invoke"
 
+# Regex for extracting tool invocations from ClawdBot's detailed log.
+# Matches: "embedded run tool start: runId=... tool=exec toolCallId=toolu_..."
+_TOOL_LOG_RE = re.compile(
+    r"embedded run tool (?P<phase>start|end): "
+    r"runId=(?P<runId>\S+) "
+    r"tool=(?P<tool>\S+) "
+    r"toolCallId=(?P<toolCallId>\S+)"
+)
+
+
+def _find_clawdbot_log() -> Path | None:
+    """Find the current OpenClaw/ClawdBot detailed log file.
+
+    Checks the new ``/tmp/openclaw/`` directory first, then falls back to the
+    legacy ``/tmp/clawdbot/`` path.  The log filename follows the pattern
+    ``{name}-YYYY-MM-DD.log``.
+
+    Returns the path for today's date, or None if no log directory exists.
+    """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Try new path first, then legacy
+    for dir_name, file_prefix in [("openclaw", "openclaw"), ("clawdbot", "clawdbot")]:
+        log_dir = Path(f"/tmp/{dir_name}")
+        if not log_dir.is_dir():
+            continue
+        log_path = log_dir / f"{file_prefix}-{today}.log"
+        if log_path.exists():
+            return log_path
+    return None
+
 
 class HttpProxy:
     """HTTP reverse proxy that intercepts tool invocations for policy enforcement.
@@ -206,13 +238,23 @@ class HttpProxy:
         self._session: ClientSession | None = None
         # Monotonic counter for synthetic request IDs (HTTP has no JSON-RPC ids)
         self._request_counter = itertools.count(1)
+        # Track seen agent lifecycle events to suppress duplicates.
+        # ClawdBot can emit the same start/end event multiple times.
+        self._seen_lifecycle: set[str] = set()
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def run(self) -> None:
-        """Start the HTTP proxy server and block until shutdown."""
+    async def run(self, shutdown_event: asyncio.Event | None = None) -> None:
+        """Start the HTTP proxy server and block until shutdown.
+
+        Args:
+            shutdown_event: Optional external event to trigger shutdown.
+                When running alongside other proxies, pass a shared event
+                so a single Ctrl+C stops everything.  If *None*, the proxy
+                registers its own signal handlers.
+        """
         # Kill any stale proxy from a previous run that didn't exit cleanly
         _cleanup_stale_proxy(self._listen_port)
 
@@ -233,16 +275,14 @@ class HttpProxy:
         site = web.TCPSite(runner, self._listen_host, self._listen_port)
 
         # Graceful shutdown on signals
-        # add_signal_handler is not supported on Windows
-        loop = asyncio.get_running_loop()
-        shutdown_event = asyncio.Event()
+        own_event = shutdown_event is None
+        if shutdown_event is None:
+            shutdown_event = asyncio.Event()
 
-        def _signal_handler() -> None:
-            shutdown_event.set()
-
-        if _platform != "win32":
+        if own_event and _platform != "win32":
+            loop = asyncio.get_running_loop()
             for sig in (signal.SIGINT, signal.SIGTERM):
-                loop.add_signal_handler(sig, _signal_handler)
+                loop.add_signal_handler(sig, shutdown_event.set)
 
         try:
             try:
@@ -282,8 +322,20 @@ class HttpProxy:
             )
             _console.print("[dim]Press Ctrl+C to stop[/dim]")
 
+            # Start log tailer as a background task
+            log_tailer_task = asyncio.create_task(
+                self._tail_clawdbot_log(shutdown_event),
+            )
+
             await shutdown_event.wait()
         finally:
+            # Cancel log tailer
+            if "log_tailer_task" in locals():
+                log_tailer_task.cancel()
+                try:
+                    await log_tailer_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             _remove_pid_file(self._listen_port)
             if self._session is not None:
                 await self._session.close()
@@ -295,6 +347,101 @@ class HttpProxy:
         if self._session is None or self._session.closed:
             self._session = ClientSession()
         return self._session
+
+    # ------------------------------------------------------------------
+    # ClawdBot log file tailer
+    # ------------------------------------------------------------------
+
+    async def _tail_clawdbot_log(self, shutdown_event: asyncio.Event) -> None:
+        """Tail ClawdBot's detailed log file to surface tool invocations.
+
+        ClawdBot executes tools server-side in its embedded agent loop and
+        does NOT stream tool events over WebSocket. The only way to observe
+        tool calls is by tailing the detailed log at /tmp/clawdbot/.
+
+        This coroutine seeks to the end of the log file and watches for new
+        ``embedded run tool start/end`` lines, logging them to the AgentWard
+        console and audit trail.
+        """
+        log_path = _find_clawdbot_log()
+        if log_path is None:
+            _console.print(
+                "  [dim]Log tailer: no ClawdBot log found (tool audit from log disabled)[/dim]",
+                highlight=False,
+            )
+            return
+
+        _console.print(
+            f"  [dim]Tailing {log_path} for tool invocations[/dim]",
+            highlight=False,
+        )
+
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                # Seek to end — we only care about new events
+                f.seek(0, 2)
+
+                while not shutdown_event.is_set():
+                    line = f.readline()
+                    if not line:
+                        # No new data — wait briefly before polling again
+                        try:
+                            await asyncio.wait_for(
+                                shutdown_event.wait(), timeout=0.5,
+                            )
+                            break  # shutdown requested
+                        except asyncio.TimeoutError:
+                            continue
+
+                    # Extract the message field from the structured JSON log
+                    self._process_clawdbot_log_line(line)
+
+        except OSError as e:
+            _console.print(
+                f"  [dim]Log tailer stopped: {e}[/dim]",
+                highlight=False,
+            )
+
+    def _process_clawdbot_log_line(self, line: str) -> None:
+        """Parse a ClawdBot log line and surface tool invocations."""
+        try:
+            entry = _json.loads(line)
+        except (ValueError, TypeError):
+            return
+
+        # The log format has the message in field "1"
+        message = entry.get("1", "")
+        if not isinstance(message, str):
+            return
+
+        match = _TOOL_LOG_RE.search(message)
+        if not match:
+            return
+
+        phase = match.group("phase")
+        tool_name = match.group("tool")
+        run_id = match.group("runId")[:8]
+        tool_call_id = match.group("toolCallId")
+
+        if phase == "start":
+            _console.print(
+                f"  [bold #ffcc00]TOOL[/bold #ffcc00] {tool_name} [{run_id}]",
+                highlight=False,
+            )
+            _console.print(
+                f"    [dim]toolCallId={tool_call_id}[/dim]",
+                highlight=False,
+            )
+
+            # Log to audit trail
+            result = self._evaluate_tool_call(tool_name, {})
+            self._audit_logger.log_tool_call(tool_name, {}, result)
+
+        elif phase == "end":
+            _console.print(
+                f"  [dim #5eead4]TOOL DONE[/dim #5eead4] {tool_name} [{run_id}]",
+                highlight=False,
+            )
 
     # ------------------------------------------------------------------
     # Request routing
@@ -322,7 +469,11 @@ class HttpProxy:
         if request.method == "POST" and request.path == _TOOL_INVOKE_PATH:
             return await self._handle_tool_invoke(request)
 
-        return await self._forward_request(request)
+        response = await self._forward_request(request)
+        self._audit_logger.log_http_request(
+            request.method, request.path, response.status,
+        )
+        return response
 
     # ------------------------------------------------------------------
     # WebSocket proxy
@@ -364,6 +515,10 @@ class HttpProxy:
 
         session = await self._get_session()
 
+        self._audit_logger.log_http_request(
+            "GET", request.path, 101, is_websocket=True,
+        )
+
         try:
             async with session.ws_connect(
                 backend_ws_url,
@@ -371,9 +526,11 @@ class HttpProxy:
                 max_msg_size=25 * 1024 * 1024,  # 25MB to match ClawdBot
             ) as backend_ws:
                 # Relay in both directions concurrently
+                # client→backend: inspected (policy-checks node.invoke frames)
+                # backend→client: transparent (forwards everything unchanged)
                 await asyncio.gather(
-                    self._relay_ws(client_ws, backend_ws, "client→backend"),
-                    self._relay_ws(backend_ws, client_ws, "backend→client"),
+                    self._relay_ws_inspected(client_ws, backend_ws),
+                    self._relay_ws_transparent(backend_ws, client_ws),
                 )
         except (ClientError, OSError) as e:
             _console.print(
@@ -385,17 +542,134 @@ class HttpProxy:
                     message=b"Backend unavailable",
                 )
 
+        self._audit_logger.log_websocket_disconnect(request.path)
+
         return client_ws
 
-    @staticmethod
-    async def _relay_ws(
+    async def _relay_ws_inspected(
+        self,
         source: web.WebSocketResponse | ClientWebSocketResponse,
         dest: web.WebSocketResponse | ClientWebSocketResponse,
-        direction: str,
     ) -> None:
-        """Relay WebSocket messages from source to dest until one side closes."""
+        """Relay client→backend WebSocket messages, intercepting node.invoke frames.
+
+        Parses TEXT messages as JSON when they may contain a ``node.invoke``
+        request.  If the tool call is blocked or requires approval, an error
+        response frame is sent back to the *client* and the message is NOT
+        forwarded to the backend.  All other messages pass through unchanged.
+        """
         async for msg in source:
             if msg.type == aiohttp.WSMsgType.TEXT:
+                raw = msg.data
+
+                self._log_client_ws_frame(raw)
+
+                # Fast path: skip JSON parsing for non-tool messages
+                if '"node.invoke"' not in raw:
+                    await dest.send_str(raw)
+                    continue
+
+                # Might be a node.invoke frame — parse JSON
+                try:
+                    parsed = _json.loads(raw)
+                except Exception:
+                    _console.print(
+                        "[bold #ffcc00]Warning:[/bold #ffcc00] Unparseable WebSocket "
+                        "message containing 'node.invoke' — forwarding as-is",
+                        highlight=False,
+                    )
+                    await dest.send_str(raw)
+                    continue
+
+                # Only intercept node.invoke request frames
+                if not (
+                    isinstance(parsed, dict)
+                    and parsed.get("type") == "req"
+                    and parsed.get("method") == "node.invoke"
+                ):
+                    await dest.send_str(raw)
+                    continue
+
+                # --- node.invoke interception ---
+                request_id = parsed.get("id", "")
+                params = parsed.get("params", {})
+                if not isinstance(params, dict):
+                    params = {}
+                tool_name = params.get("command", "")
+                arguments = params.get("params", {})
+
+                if not isinstance(tool_name, str) or not tool_name:
+                    # Can't identify tool — forward as-is
+                    await dest.send_str(raw)
+                    continue
+
+                if not isinstance(arguments, dict):
+                    arguments = {}
+
+                # Evaluate policy
+                result = self._evaluate_tool_call(tool_name, arguments)
+
+                if result.decision == PolicyDecision.BLOCK:
+                    self._audit_logger.log_tool_call(tool_name, arguments, result)
+                    await source.send_str(self._make_ws_error_frame(
+                        request_id, "policy_blocked", f"AgentWard: {result.reason}",
+                    ))
+                    continue
+
+                if result.decision == PolicyDecision.APPROVE:
+                    self._audit_logger.log_tool_call(tool_name, arguments, result)
+                    await source.send_str(self._make_ws_error_frame(
+                        request_id, "approval_required", f"AgentWard: {result.reason}",
+                    ))
+                    continue
+
+                # ALLOW or LOG — check chaining rules before forwarding
+                if self._chain_tracker is not None:
+                    chain_result = self._chain_tracker.check_before_call(
+                        tool_name, arguments,
+                    )
+                    if chain_result is not None and chain_result.decision == PolicyDecision.BLOCK:
+                        self._audit_logger.log_tool_call(
+                            tool_name, arguments, chain_result, chain_violation=True,
+                        )
+                        await source.send_str(self._make_ws_error_frame(
+                            request_id, "chain_blocked", f"AgentWard: {chain_result.reason}",
+                        ))
+                        continue
+                    counter_id = next(self._request_counter)
+                    self._chain_tracker.record_call(
+                        tool_name, arguments, request_id=counter_id,
+                    )
+
+                # Passed all checks — log and forward
+                self._audit_logger.log_tool_call(tool_name, arguments, result)
+                await dest.send_str(raw)
+
+            elif msg.type == aiohttp.WSMsgType.BINARY:
+                await dest.send_bytes(msg.data)
+            elif msg.type in (
+                aiohttp.WSMsgType.CLOSE,
+                aiohttp.WSMsgType.CLOSING,
+                aiohttp.WSMsgType.CLOSED,
+            ):
+                break
+            elif msg.type == aiohttp.WSMsgType.ERROR:
+                break
+
+        # When source closes, close dest too
+        if not dest.closed:
+            await dest.close()
+
+    async def _relay_ws_transparent(
+        self,
+        source: web.WebSocketResponse | ClientWebSocketResponse,
+        dest: web.WebSocketResponse | ClientWebSocketResponse,
+    ) -> None:
+        """Relay backend→client WebSocket messages unchanged."""
+        async for msg in source:
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                self._inspect_backend_event(msg.data)
+
                 await dest.send_str(msg.data)
             elif msg.type == aiohttp.WSMsgType.BINARY:
                 await dest.send_bytes(msg.data)
@@ -411,6 +685,199 @@ class HttpProxy:
         # When source closes, close dest too
         if not dest.closed:
             await dest.close()
+
+    @staticmethod
+    def _make_ws_error_frame(
+        request_id: str,
+        error_type: str,
+        message: str,
+    ) -> str:
+        """Build a ClawdBot WebSocket error response frame as a JSON string.
+
+        Args:
+            request_id: The ``id`` from the original node.invoke request frame.
+            error_type: Error type identifier (e.g., ``policy_blocked``).
+            message: Human-readable error message.
+
+        Returns:
+            JSON-serialized response frame string.
+        """
+        return _json.dumps({
+            "type": "res",
+            "id": request_id,
+            "ok": False,
+            "payload": {
+                "error": {
+                    "type": error_type,
+                    "message": message,
+                },
+            },
+        })
+
+    # ------------------------------------------------------------------
+    # WebSocket frame logging
+    # ------------------------------------------------------------------
+
+    # Client→backend WS methods that are high-frequency polling or plumbing.
+    # Logging these drowns out meaningful tool-call output.
+    _WS_QUIET_METHODS: frozenset[str] = frozenset({
+        "node.list",
+        "chat.history",
+        "chat.send",
+        "chat.list",
+        "health.check",
+    })
+
+    def _log_client_ws_frame(self, raw: str) -> None:
+        """Log a client→backend WebSocket frame (compact, low-noise).
+
+        Suppresses high-frequency polling methods (node.list, chat.history,
+        etc.) to keep the output focused on tool-call decisions.
+        """
+        try:
+            parsed = _json.loads(raw)
+            if not isinstance(parsed, dict):
+                return
+            method = parsed.get("method", "")
+            if method in self._WS_QUIET_METHODS:
+                return
+        except Exception:
+            pass
+
+    def _inspect_backend_event(self, raw: str) -> None:
+        """Inspect a backend→client WebSocket frame for tool invocations.
+
+        Logs lifecycle events (start/end), tool use events with full details,
+        and skips noisy text-streaming deltas to keep output readable.
+        """
+        try:
+            parsed = _json.loads(raw)
+            if not isinstance(parsed, dict):
+                return
+
+            frame_type = parsed.get("type", "?")
+            event_name = parsed.get("event", parsed.get("method", ""))
+
+            # Only inspect event frames from the agent
+            if frame_type != "event" or event_name not in ("agent", "chat"):
+                return
+
+            payload = parsed.get("payload", parsed.get("data", {}))
+            if not isinstance(payload, dict):
+                return
+
+            stream = payload.get("stream", "")
+            data = payload.get("data", {})
+            if not isinstance(data, dict):
+                data = {}
+
+            # --- Lifecycle events: log start/end of agent runs ---
+            if stream == "lifecycle":
+                phase = data.get("phase", "")
+                run_id = str(payload.get("runId", ""))[:8]
+                lifecycle_key = f"{phase}:{run_id}"
+                if lifecycle_key in self._seen_lifecycle:
+                    return  # suppress duplicate
+                self._seen_lifecycle.add(lifecycle_key)
+                # Prune old entries to avoid unbounded growth
+                if len(self._seen_lifecycle) > 100:
+                    self._seen_lifecycle.clear()
+                if phase == "start":
+                    _console.print(
+                        f"  [bold #5eead4]▶ agent run[/bold #5eead4] [dim][{run_id}][/dim]",
+                        highlight=False,
+                    )
+                elif phase == "end":
+                    _console.print(
+                        f"  [dim #5eead4]■ agent run ended[/dim #5eead4] [dim][{run_id}][/dim]",
+                        highlight=False,
+                    )
+                return
+
+            # --- Tool use events: log with full details ---
+            # ClawdBot streams tool_use as content blocks in chat events
+            # or as dedicated stream types in agent events.
+            # Look for tool_use in multiple places:
+
+            # 1. Agent event with stream "tool_use" or "tool"
+            if stream in ("tool_use", "tool", "tool_result"):
+                tool_name = data.get("name", data.get("command", "unknown"))
+                tool_input = data.get("input", data.get("params", {}))
+                run_id = str(payload.get("runId", ""))[:8]
+
+                # Log as a visible tool call observation
+                _console.print(
+                    f"  [bold #ffcc00]TOOL[/bold #ffcc00] {tool_name} [{run_id}]",
+                    highlight=False,
+                )
+                if tool_input and isinstance(tool_input, dict):
+                    input_str = _json.dumps(tool_input, default=str)
+                    if len(input_str) > 200:
+                        input_str = input_str[:200] + "..."
+                    _console.print(
+                        f"    [dim]{input_str}[/dim]",
+                        highlight=False,
+                    )
+
+                # Also log to audit trail
+                result = self._evaluate_tool_call(tool_name, tool_input if isinstance(tool_input, dict) else {})
+                self._audit_logger.log_tool_call(
+                    tool_name,
+                    tool_input if isinstance(tool_input, dict) else {},
+                    result,
+                )
+                return
+
+            # 2. Chat event with tool_use content blocks
+            if event_name == "chat":
+                message = payload.get("message", {})
+                if isinstance(message, dict):
+                    content = message.get("content", [])
+                    if isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "tool_use":
+                                tool_name = block.get("name", "unknown")
+                                tool_input = block.get("input", {})
+                                run_id = str(payload.get("runId", ""))[:8]
+
+                                _console.print(
+                                    f"  [bold #ffcc00]TOOL[/bold #ffcc00] {tool_name} [{run_id}]",
+                                    highlight=False,
+                                )
+                                if tool_input and isinstance(tool_input, dict):
+                                    input_str = _json.dumps(tool_input, default=str)
+                                    if len(input_str) > 200:
+                                        input_str = input_str[:200] + "..."
+                                    _console.print(
+                                        f"    [dim]{input_str}[/dim]",
+                                        highlight=False,
+                                    )
+
+                                result = self._evaluate_tool_call(
+                                    tool_name,
+                                    tool_input if isinstance(tool_input, dict) else {},
+                                )
+                                self._audit_logger.log_tool_call(
+                                    tool_name,
+                                    tool_input if isinstance(tool_input, dict) else {},
+                                    result,
+                                )
+
+                            elif isinstance(block, dict) and block.get("type") == "tool_result":
+                                tool_name = block.get("name", block.get("tool_use_id", "unknown"))
+                                is_error = block.get("is_error", False)
+                                _console.print(
+                                    f"  [dim #5eead4]TOOL RESULT[/dim #5eead4] {tool_name}"
+                                    f"{' [error]' if is_error else ''}",
+                                    highlight=False,
+                                )
+                return
+
+            # Skip assistant text-streaming deltas (too noisy)
+            # stream == "assistant" → token-by-token LLM output
+
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Tool invocation interception

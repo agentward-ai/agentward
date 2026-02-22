@@ -217,12 +217,13 @@ def _run_gateway_proxy(
 
     from agentward.proxy.http import HttpProxy
     from agentward.scan.openclaw import find_clawdbot_config
-    from agentward.setup import get_clawdbot_gateway_ports
+    from agentward.setup import get_clawdbot_gateway_ports, get_clawdbot_llm_proxy_config
 
     config_path = find_clawdbot_config()
     if config_path is None:
         _console.print(
-            "[bold red]Error:[/bold red] OpenClaw config not found at ~/.clawdbot/clawdbot.json\n"
+            "[bold red]Error:[/bold red] OpenClaw config not found.\n"
+            "Searched: ~/.openclaw/openclaw.json, ~/.clawdbot/clawdbot.json\n"
             "Is OpenClaw installed?",
             highlight=False,
         )
@@ -242,7 +243,7 @@ def _run_gateway_proxy(
     listen_port, backend_port = ports
     backend_url = f"http://127.0.0.1:{backend_port}"
 
-    proxy = HttpProxy(
+    http_proxy = HttpProxy(
         backend_url=backend_url,
         listen_host="127.0.0.1",
         listen_port=listen_port,
@@ -252,10 +253,42 @@ def _run_gateway_proxy(
         chain_tracker=chain_tracker,  # type: ignore[arg-type]
     )
 
-    try:
-        asyncio.run(proxy.run())
-    except KeyboardInterrupt:
-        pass
+    # Check if LLM proxy is configured (baseUrl patching in sidecar)
+    llm_config = get_clawdbot_llm_proxy_config(config_path)
+
+    if llm_config is not None:
+        from agentward.proxy.llm import LlmProxy
+
+        llm_port, provider_urls = llm_config
+        llm_proxy = LlmProxy(
+            listen_port=llm_port,
+            provider_urls=provider_urls,
+            policy_engine=policy_engine,  # type: ignore[arg-type]
+            audit_logger=audit_logger,  # type: ignore[arg-type]
+            policy_path=policy_path,
+        )
+
+        async def _run_both() -> None:
+            import signal as _signal
+
+            shutdown = asyncio.Event()
+            loop = asyncio.get_running_loop()
+            for sig in (_signal.SIGINT, _signal.SIGTERM):
+                loop.add_signal_handler(sig, shutdown.set)
+            await asyncio.gather(
+                http_proxy.run(shutdown_event=shutdown),
+                llm_proxy.run(shutdown_event=shutdown),
+            )
+
+        try:
+            asyncio.run(_run_both())
+        except KeyboardInterrupt:
+            pass
+    else:
+        try:
+            asyncio.run(http_proxy.run())
+        except KeyboardInterrupt:
+            pass
 
 
 
@@ -1077,7 +1110,8 @@ def _run_gateway_setup(gateway_type: str, undo: bool, dry_run: bool) -> None:
     config_path = find_clawdbot_config()
     if config_path is None:
         _console.print(
-            "[bold red]Error:[/bold red] OpenClaw config not found at ~/.clawdbot/clawdbot.json\n"
+            "[bold red]Error:[/bold red] OpenClaw config not found.\n"
+            "Searched: ~/.openclaw/openclaw.json, ~/.clawdbot/clawdbot.json\n"
             "Is OpenClaw installed?",
             highlight=False,
         )

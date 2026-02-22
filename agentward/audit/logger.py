@@ -79,19 +79,28 @@ class AuditLogger:
         # Human-readable stderr output
         if chain_violation and result.decision == PolicyDecision.BLOCK:
             _console.print(
-                f"[bold]CHAIN BLOCK[/bold] {tool_name}",
-                style="bold red",
+                f"  [bold red]✗ CHAIN BLOCK[/bold red] {tool_name}",
+                highlight=False,
+            )
+            _console.print(f"    [dim]{result.reason}[/dim]", highlight=False)
+        elif result.decision == PolicyDecision.BLOCK:
+            _console.print(
+                f"  [bold red]✗ BLOCK[/bold red] {tool_name}",
+                highlight=False,
+            )
+            _console.print(f"    [dim]{result.reason}[/dim]", highlight=False)
+        elif result.decision == PolicyDecision.ALLOW:
+            _console.print(
+                f"  [#00ff88]✓ ALLOW[/#00ff88] {tool_name}",
                 highlight=False,
             )
         else:
             decision_style = _decision_style(result.decision)
             _console.print(
-                f"[bold]{result.decision.value}[/bold] {tool_name}",
-                style=decision_style,
+                f"  [{decision_style}]{result.decision.value}[/{decision_style}] {tool_name}",
                 highlight=False,
             )
-        if result.decision != PolicyDecision.ALLOW:
-            _console.print(f"  {result.reason}", style="dim")
+            _console.print(f"    [dim]{result.reason}[/dim]", highlight=False)
 
     def log_tool_result(
         self,
@@ -140,6 +149,76 @@ class AuditLogger:
         else:
             _console.print("  Mode: [#ffcc00]passthrough[/#ffcc00] (no policy loaded)")
 
+    def log_http_request(
+        self,
+        method: str,
+        path: str,
+        status: int,
+        *,
+        is_websocket: bool = False,
+        stderr: bool = True,
+    ) -> None:
+        """Log a proxied HTTP request (non-tool-invoke traffic).
+
+        Uses dim styling so tool call decisions remain visually prominent.
+
+        Args:
+            method: HTTP method (GET, POST, etc.).
+            path: Request path.
+            status: Response status code.
+            is_websocket: Whether this was a WebSocket upgrade.
+            stderr: Whether to print to stderr.  Set to False for high-frequency
+                    paths (e.g., LLM API calls) that would drown out tool decisions.
+        """
+        entry = {
+            "timestamp": _now_iso(),
+            "event": "http_request",
+            "method": method,
+            "path": path,
+            "status": status,
+        }
+        if is_websocket:
+            entry["websocket"] = True
+        self._write_entry(entry)
+
+        if not stderr:
+            return
+
+        if is_websocket:
+            _console.print(
+                f"  [dim]WS  {path} → upgraded[/dim]",
+                highlight=False,
+            )
+        else:
+            # Color status code: green for 2xx, yellow for 3xx, red for 4xx/5xx
+            if 200 <= status < 300:
+                status_style = "#00ff88"
+            elif 300 <= status < 400:
+                status_style = "#ffcc00"
+            else:
+                status_style = "red"
+            _console.print(
+                f"  [dim]{method:4s} {path} → [{status_style}]{status}[/{status_style}][/dim]",
+                highlight=False,
+            )
+
+    def log_websocket_disconnect(self, path: str) -> None:
+        """Log a WebSocket disconnection.
+
+        Args:
+            path: The WebSocket path that disconnected.
+        """
+        entry = {
+            "timestamp": _now_iso(),
+            "event": "websocket_disconnect",
+            "path": path,
+        }
+        self._write_entry(entry)
+        _console.print(
+            f"  [dim]WS  {path} → closed[/dim]",
+            highlight=False,
+        )
+
     def log_http_startup(
         self,
         listen_port: int,
@@ -169,6 +248,29 @@ class AuditLogger:
             _console.print(f"  Policy:  {policy_path}")
         else:
             _console.print("  Mode: [#ffcc00]passthrough[/#ffcc00] (no policy loaded)")
+
+    def log_llm_startup(
+        self,
+        listen_port: int,
+        provider_urls: dict[str, str],
+        policy_path: Path | None,
+    ) -> None:
+        """Log LLM proxy startup.
+
+        Args:
+            listen_port: The port the LLM proxy is listening on.
+            provider_urls: Mapping of model key to real provider base URL.
+            policy_path: Path to the loaded policy, or None if passthrough mode.
+        """
+        entry = {
+            "timestamp": _now_iso(),
+            "event": "llm_proxy_startup",
+            "listen_port": listen_port,
+            "provider_urls": provider_urls,
+            "policy_path": str(policy_path) if policy_path else None,
+            "mode": "enforce" if policy_path else "passthrough",
+        }
+        self._write_entry(entry)
 
     def log_shutdown(self, reason: str) -> None:
         """Log proxy shutdown.

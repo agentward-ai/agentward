@@ -301,27 +301,45 @@ def format_diff(
 # ---------------------------------------------------------------------------
 
 _DEFAULT_GATEWAY_PORT = 18789
+_DEFAULT_LLM_PROXY_PORT = 18900
 
-# Sidecar file stored next to clawdbot.json to track the original port.
-# ClawdBot strictly validates its config and rejects unknown keys,
-# so we cannot embed markers inside clawdbot.json itself.
+# Default upstream URLs per provider prefix.
+_PROVIDER_BASE_URLS: dict[str, str] = {
+    "anthropic": "https://api.anthropic.com",
+    "openai": "https://api.openai.com",
+    "openai-codex": "https://api.openai.com",
+}
+
+# Sidecar file stored next to the OpenClaw/ClawdBot config to track the
+# original port. The config validates strictly and rejects unknown keys,
+# so we cannot embed markers inside the config JSON itself.
 _GATEWAY_SIDECAR_NAME = ".agentward-gateway.json"
 
-# macOS LaunchAgent plist that ClawdBot uses to run the gateway as a service.
-# The plist hardcodes the port as a CLI arg (--port) and env var
-# (CLAWDBOT_GATEWAY_PORT), so we must update it alongside clawdbot.json.
-_LAUNCHAGENT_PLIST_NAME = "com.clawdbot.gateway.plist"
+# macOS LaunchAgent plist names — new OpenClaw first, then legacy ClawdBot.
+# The plist hardcodes the port as a CLI arg (--port) and env var, so we must
+# update it alongside the config JSON.
+_LAUNCHAGENT_PLIST_NAMES = [
+    "ai.openclaw.gateway.plist",    # OpenClaw (current)
+    "bot.molt.gateway.plist",       # OpenClaw (older builds)
+    "com.clawdbot.gateway.plist",   # ClawdBot (legacy)
+]
 
 
 def _launchagent_plist_path() -> Path | None:
-    """Find the ClawdBot LaunchAgent plist if it exists.
+    """Find the OpenClaw/ClawdBot LaunchAgent plist if it exists.
+
+    Searches ``ai.openclaw.gateway.plist`` (current OpenClaw) first, then
+    ``bot.molt.gateway.plist`` (older OpenClaw), then ``com.clawdbot.gateway.plist``
+    (legacy ClawdBot).
 
     Returns:
         Path to the plist, or None if not found.
     """
-    plist_path = Path.home() / "Library" / "LaunchAgents" / _LAUNCHAGENT_PLIST_NAME
-    if plist_path.exists():
-        return plist_path
+    agents_dir = Path.home() / "Library" / "LaunchAgents"
+    for name in _LAUNCHAGENT_PLIST_NAMES:
+        plist_path = agents_dir / name
+        if plist_path.exists():
+            return plist_path
     return None
 
 
@@ -329,7 +347,8 @@ def _patch_plist_port(plist_path: Path, new_port: int) -> bool:
     """Update the gateway port in the LaunchAgent plist.
 
     Patches both the ``--port`` CLI argument in ``ProgramArguments``
-    and the ``CLAWDBOT_GATEWAY_PORT`` environment variable.
+    and the gateway port environment variable (``OPENCLAW_GATEWAY_PORT``
+    or ``CLAWDBOT_GATEWAY_PORT``).
 
     Args:
         plist_path: Path to the .plist file.
@@ -351,11 +370,12 @@ def _patch_plist_port(plist_path: Path, new_port: int) -> bool:
             modified = True
             break
 
-    # Patch EnvironmentVariables
+    # Patch EnvironmentVariables — handle both new and legacy env var names
     env = plist.get("EnvironmentVariables", {})
-    if "CLAWDBOT_GATEWAY_PORT" in env:
-        env["CLAWDBOT_GATEWAY_PORT"] = str(new_port)
-        modified = True
+    for env_key in ("OPENCLAW_GATEWAY_PORT", "CLAWDBOT_GATEWAY_PORT"):
+        if env_key in env:
+            env[env_key] = str(new_port)
+            modified = True
 
     if modified:
         with plist_path.open("wb") as f:
@@ -364,11 +384,63 @@ def _patch_plist_port(plist_path: Path, new_port: int) -> bool:
     return modified
 
 
-def _sidecar_path(config_path: Path) -> Path:
-    """Return the sidecar file path for a given clawdbot.json.
+def _patch_plist_auth(plist_path: Path, *, disable: bool) -> str | None:
+    """Disable or restore gateway token auth in the LaunchAgent plist.
+
+    The gateway reads ``OPENCLAW_GATEWAY_TOKEN`` from the plist env vars
+    and enables token auth if set — regardless of the JSON config.  To
+    truly disable auth we must clear this env var.
 
     Args:
-        config_path: Path to the clawdbot.json file.
+        plist_path: Path to the .plist file.
+        disable: True to clear the token (returns original token),
+                 False has no effect (use ``_restore_plist_auth``).
+
+    Returns:
+        The original token value if it was cleared, or None.
+    """
+    if not disable:
+        return None
+
+    with plist_path.open("rb") as f:
+        plist = plistlib.load(f)
+
+    env = plist.get("EnvironmentVariables", {})
+    original_token: str | None = None
+    for token_key in ("OPENCLAW_GATEWAY_TOKEN", "CLAWDBOT_GATEWAY_TOKEN"):
+        if token_key in env:
+            original_token = env.pop(token_key)
+            break  # Only need to clear one — gateway checks whichever is present
+
+    if original_token is not None:
+        with plist_path.open("wb") as f:
+            plistlib.dump(plist, f)
+
+    return original_token
+
+
+def _restore_plist_auth(plist_path: Path, token: str) -> None:
+    """Restore the gateway token in the LaunchAgent plist.
+
+    Args:
+        plist_path: Path to the .plist file.
+        token: The original token value to restore.
+    """
+    with plist_path.open("rb") as f:
+        plist = plistlib.load(f)
+
+    env = plist.get("EnvironmentVariables", {})
+    env["OPENCLAW_GATEWAY_TOKEN"] = token
+
+    with plist_path.open("wb") as f:
+        plistlib.dump(plist, f)
+
+
+def _sidecar_path(config_path: Path) -> Path:
+    """Return the sidecar file path for a given OpenClaw/ClawdBot config.
+
+    Args:
+        config_path: Path to the config file (openclaw.json or clawdbot.json).
 
     Returns:
         Path to the sidecar file in the same directory.
@@ -376,20 +448,142 @@ def _sidecar_path(config_path: Path) -> Path:
     return config_path.parent / _GATEWAY_SIDECAR_NAME
 
 
+def _patch_model_base_urls(
+    config: dict[str, Any],
+    sidecar_data: dict[str, Any],
+) -> dict[str, str]:
+    """Patch provider baseUrl to route LLM calls through the AgentWard proxy.
+
+    ClawdBot validates model entries with ``.strict()`` and only accepts
+    ``alias`` and ``params`` — NOT ``baseUrl``.  The correct override point
+    is ``models.providers[provider].baseUrl``.
+
+    ClawdBot's zod ``ModelProviderSchema`` requires a ``models`` array
+    (non-optional), so new provider entries must include ``"models": []``.
+    The ``ensureClawdbotModelsJson()`` merge logic combines this empty
+    array with the implicit provider's built-in models, and
+    pi-coding-agent's ``ModelRegistry`` then treats the result as an
+    "override-only" provider (applies ``baseUrl`` to all built-in models).
+
+    Extracts unique provider prefixes from ``agents.defaults.models`` keys
+    (e.g., ``anthropic/claude-opus-4-5`` → ``anthropic``), then adds or
+    updates an entry in ``models.providers`` with ``baseUrl`` pointing to
+    the AgentWard LLM proxy.
+
+    If ``sidecar_data`` already contains ``original_base_urls``, those
+    originals are reused (idempotent re-wrap).
+
+    Args:
+        config: The ClawdBot config dict (mutated in place).
+        sidecar_data: Existing sidecar data (may contain ``original_base_urls``).
+
+    Returns:
+        Mapping of provider name → original base URL.
+    """
+    # Discover which providers are in use from model keys
+    model_keys = (
+        config.get("agents", {}).get("defaults", {}).get("models", {})
+    )
+    if not isinstance(model_keys, dict) or not model_keys:
+        return {}
+
+    # Collect unique provider prefixes
+    providers_in_use: set[str] = set()
+    for model_key in model_keys:
+        if "/" in model_key:
+            providers_in_use.add(model_key.split("/")[0])
+
+    if not providers_in_use:
+        return {}
+
+    llm_port = sidecar_data.get("llm_proxy_port", _DEFAULT_LLM_PROXY_PORT)
+    proxy_url = f"http://127.0.0.1:{llm_port}"
+
+    # If sidecar already has originals, use those (idempotent)
+    existing_originals: dict[str, str] = sidecar_data.get("original_base_urls", {})
+
+    original_base_urls: dict[str, str] = {}
+
+    # Ensure models.providers exists in config
+    if "models" not in config:
+        config["models"] = {}
+    if "providers" not in config["models"]:
+        config["models"]["providers"] = {}
+    providers_cfg = config["models"]["providers"]
+
+    for provider in sorted(providers_in_use):
+        # Determine original base URL
+        if provider in existing_originals:
+            original_url = existing_originals[provider]
+        elif provider in providers_cfg and "baseUrl" in providers_cfg[provider]:
+            original_url = providers_cfg[provider]["baseUrl"]
+        else:
+            original_url = _PROVIDER_BASE_URLS.get(provider, "")
+
+        if not original_url:
+            continue  # Unknown provider — skip
+
+        original_base_urls[provider] = original_url
+
+        # Set or update the provider entry with proxy URL.
+        # ClawdBot's zod schema requires `models` (non-optional array),
+        # so new entries must include an empty array.
+        if provider not in providers_cfg:
+            providers_cfg[provider] = {"models": []}
+        elif "models" not in providers_cfg[provider]:
+            providers_cfg[provider]["models"] = []
+        providers_cfg[provider]["baseUrl"] = proxy_url
+
+    return original_base_urls
+
+
+def _restore_model_base_urls(
+    config: dict[str, Any],
+    original_base_urls: dict[str, str],
+) -> None:
+    """Restore original provider baseUrl values.
+
+    Args:
+        config: The ClawdBot config dict (mutated in place).
+        original_base_urls: Mapping of provider name → original base URL.
+    """
+    providers_cfg = config.get("models", {}).get("providers", {})
+    if not isinstance(providers_cfg, dict):
+        return
+
+    for provider, original_url in original_base_urls.items():
+        if provider not in providers_cfg:
+            continue
+
+        # If original was a well-known default, remove the provider entry
+        # entirely (it didn't exist before we added it)
+        default_url = _PROVIDER_BASE_URLS.get(provider, "")
+        if original_url == default_url:
+            del providers_cfg[provider]
+        else:
+            providers_cfg[provider]["baseUrl"] = original_url
+
+    # Clean up empty models.providers / models sections
+    if not providers_cfg and "providers" in config.get("models", {}):
+        del config["models"]["providers"]
+    if not config.get("models"):
+        config.pop("models", None)
+
+
 def wrap_clawdbot_gateway(
     config: dict[str, Any],
     config_path: Path,
     port_offset: int = 1,
 ) -> tuple[dict[str, Any], int, int]:
-    """Swap the ClawdBot gateway port so AgentWard can proxy in front.
+    """Swap the OpenClaw/ClawdBot gateway port so AgentWard can proxy in front.
 
     Changes ``gateway.port`` from the original to ``original + port_offset``,
-    and stores the original port in a sidecar file next to clawdbot.json
-    (ClawdBot rejects unknown keys, so we cannot embed markers in the config).
+    and stores the original port in a sidecar file next to the config JSON
+    (the config rejects unknown keys, so we cannot embed markers in it).
 
     Args:
-        config: The parsed clawdbot.json dict.
-        config_path: Path to the clawdbot.json file (for sidecar location).
+        config: The parsed config dict (openclaw.json or clawdbot.json).
+        config_path: Path to the config file (for sidecar location).
         port_offset: How far to shift the gateway port (default 1).
 
     Returns:
@@ -401,8 +595,8 @@ def wrap_clawdbot_gateway(
     gateway = config.get("gateway")
     if not isinstance(gateway, dict):
         msg = (
-            "No 'gateway' section found in clawdbot.json. "
-            "Is the ClawdBot gateway enabled?"
+            f"No 'gateway' section found in {config_path.name}. "
+            "Is the OpenClaw gateway enabled?"
         )
         raise ValueError(msg)
 
@@ -415,6 +609,8 @@ def wrap_clawdbot_gateway(
         # Deep copy — don't change anything, port is already swapped
         result = json.loads(json.dumps(config))
         backend_port = result["gateway"].get("port", original_port + port_offset)
+        # Ensure baseUrl patching is still in place (idempotent)
+        _patch_model_base_urls(result, sidecar_data)
         return result, original_port, backend_port
 
     # Deep copy to avoid mutating input
@@ -429,23 +625,44 @@ def wrap_clawdbot_gateway(
 
     gw["port"] = backend_port
 
+    # Disable gateway auth so the proxy can relay WebSocket connections
+    # without needing to replicate the connect.challenge crypto handshake.
+    # The original auth config is saved in the sidecar and restored on unwrap.
+    original_auth = gw.get("auth")
+    if isinstance(original_auth, dict) and original_auth.get("mode") != "none":
+        gw["auth"] = {"mode": "none"}
+
     # Write sidecar with original port
     sidecar_data: dict[str, Any] = {"original_port": original_port}
+    if original_auth is not None:
+        sidecar_data["original_gateway_auth"] = original_auth
 
-    # Also patch the LaunchAgent plist (macOS) — ClawdBot hardcodes the
-    # port as --port CLI arg and CLAWDBOT_GATEWAY_PORT env var in the plist,
-    # so editing clawdbot.json alone is not enough.
+    # Patch model baseUrl entries to route through AgentWard LLM proxy
+    original_base_urls = _patch_model_base_urls(result, sidecar_data)
+    if original_base_urls:
+        sidecar_data["llm_proxy_port"] = _DEFAULT_LLM_PROXY_PORT
+        sidecar_data["original_base_urls"] = original_base_urls
+
+    # Also patch the LaunchAgent plist (macOS) — the gateway hardcodes the
+    # port as --port CLI arg and an env var in the plist, so editing the
+    # config JSON alone is not enough.
     plist_path = _launchagent_plist_path()
     if plist_path is not None:
         _patch_plist_port(plist_path, backend_port)
+        # Also clear the gateway token from the plist env vars — the gateway
+        # reads OPENCLAW_GATEWAY_TOKEN from the plist and enables token auth
+        # if set, regardless of the JSON config's auth.mode setting.
+        original_plist_token = _patch_plist_auth(plist_path, disable=True)
+        if original_plist_token is not None:
+            sidecar_data["original_plist_token"] = original_plist_token
         sidecar_data["plist_path"] = str(plist_path)
     elif platform.system() == "Darwin":
         from rich.console import Console as _Console
         _warn_console = _Console(stderr=True)
         _warn_console.print(
-            f"[bold #ffcc00]Warning:[/bold #ffcc00] LaunchAgent plist not found at "
-            f"~/Library/LaunchAgents/{_LAUNCHAGENT_PLIST_NAME}\n"
-            f"If OpenClaw uses a LaunchAgent, the gateway may ignore the port change.\n"
+            "[bold #ffcc00]Warning:[/bold #ffcc00] LaunchAgent plist not found.\n"
+            f"Searched: {', '.join(_LAUNCHAGENT_PLIST_NAMES)}\n"
+            "If OpenClaw uses a LaunchAgent, the gateway may ignore the port change.\n"
             f"Verify with: openclaw gateway restart && lsof -i :{backend_port}",
             highlight=False,
         )
@@ -461,13 +678,13 @@ def unwrap_clawdbot_gateway(
     config: dict[str, Any],
     config_path: Path,
 ) -> tuple[dict[str, Any], bool]:
-    """Restore the original ClawdBot gateway port.
+    """Restore the original OpenClaw/ClawdBot gateway port.
 
     Reads the sidecar file to recover the original port, then removes it.
 
     Args:
-        config: The current clawdbot.json dict.
-        config_path: Path to the clawdbot.json file (for sidecar location).
+        config: The current config dict (openclaw.json or clawdbot.json).
+        config_path: Path to the config file (for sidecar location).
 
     Returns:
         Tuple of (restored_config, was_wrapped).
@@ -478,8 +695,8 @@ def unwrap_clawdbot_gateway(
     gateway = config.get("gateway")
     if not isinstance(gateway, dict):
         msg = (
-            "No 'gateway' section found in clawdbot.json. "
-            "Is the ClawdBot gateway enabled?"
+            f"No 'gateway' section found in {config_path.name}. "
+            "Is the OpenClaw gateway enabled?"
         )
         raise ValueError(msg)
 
@@ -494,12 +711,25 @@ def unwrap_clawdbot_gateway(
     result = json.loads(json.dumps(config))
     result["gateway"]["port"] = original_port
 
-    # Restore the LaunchAgent plist port if we patched it
+    # Restore gateway auth if we disabled it
+    original_auth = sidecar_data.get("original_gateway_auth")
+    if original_auth is not None:
+        result["gateway"]["auth"] = original_auth
+
+    # Restore model baseUrl values if we patched them
+    original_base_urls = sidecar_data.get("original_base_urls", {})
+    if original_base_urls:
+        _restore_model_base_urls(result, original_base_urls)
+
+    # Restore the LaunchAgent plist port and auth token if we patched them
     plist_str = sidecar_data.get("plist_path")
     if plist_str is not None:
         plist_path = Path(plist_str)
         if plist_path.exists():
             _patch_plist_port(plist_path, original_port)
+            original_plist_token = sidecar_data.get("original_plist_token")
+            if original_plist_token is not None:
+                _restore_plist_auth(plist_path, original_plist_token)
 
     # Remove sidecar
     sidecar.unlink()
@@ -508,10 +738,10 @@ def unwrap_clawdbot_gateway(
 
 
 def is_clawdbot_gateway_wrapped(config_path: Path) -> bool:
-    """Check if the ClawdBot gateway has been wrapped by AgentWard.
+    """Check if the OpenClaw/ClawdBot gateway has been wrapped by AgentWard.
 
     Args:
-        config_path: Path to the clawdbot.json file.
+        config_path: Path to the OpenClaw/ClawdBot config file.
 
     Returns:
         True if the sidecar file exists (port has been swapped).
@@ -519,11 +749,36 @@ def is_clawdbot_gateway_wrapped(config_path: Path) -> bool:
     return _sidecar_path(config_path).exists()
 
 
-def get_clawdbot_gateway_ports(config_path: Path) -> tuple[int, int] | None:
-    """Get the listen and backend ports for a wrapped ClawdBot gateway.
+def get_clawdbot_llm_proxy_config(
+    config_path: Path,
+) -> tuple[int, dict[str, str]] | None:
+    """Get LLM proxy port and provider URL mapping from sidecar.
 
     Args:
-        config_path: Path to the clawdbot.json file.
+        config_path: Path to the OpenClaw/ClawdBot config file.
+
+    Returns:
+        Tuple of (llm_proxy_port, provider_urls) if configured, None otherwise.
+        provider_urls maps model key → real provider base URL.
+    """
+    sidecar = _sidecar_path(config_path)
+    if not sidecar.exists():
+        return None
+
+    sidecar_data = json.loads(sidecar.read_text(encoding="utf-8"))
+    original_base_urls = sidecar_data.get("original_base_urls")
+    if not original_base_urls:
+        return None
+
+    llm_port = sidecar_data.get("llm_proxy_port", _DEFAULT_LLM_PROXY_PORT)
+    return llm_port, original_base_urls
+
+
+def get_clawdbot_gateway_ports(config_path: Path) -> tuple[int, int] | None:
+    """Get the listen and backend ports for a wrapped OpenClaw/ClawdBot gateway.
+
+    Args:
+        config_path: Path to the OpenClaw/ClawdBot config file.
 
     Returns:
         Tuple of (listen_port, backend_port) if wrapped, None otherwise.

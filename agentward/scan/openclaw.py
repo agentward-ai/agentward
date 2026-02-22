@@ -369,18 +369,23 @@ def scan_all_skill_dirs() -> list[SkillDefinition]:
 # clawdbot.json parser
 # ---------------------------------------------------------------------------
 
-_CLAWDBOT_CONFIG_PATHS = [
+_CONFIG_SEARCH_PATHS = [
+    # New OpenClaw paths first, then legacy ClawdBot paths
+    "~/.openclaw/openclaw.json",
     "~/.clawdbot/clawdbot.json",
 ]
 
 
 def find_clawdbot_config() -> Path | None:
-    """Find the clawdbot.json config file.
+    """Find the OpenClaw/ClawdBot config file.
+
+    Searches for the new ``~/.openclaw/openclaw.json`` first, then falls back
+    to the legacy ``~/.clawdbot/clawdbot.json``.
 
     Returns:
         Path to the config if found, None otherwise.
     """
-    for path_str in _CLAWDBOT_CONFIG_PATHS:
+    for path_str in _CONFIG_SEARCH_PATHS:
         path = Path(path_str).expanduser()
         if path.exists():
             return path
@@ -388,13 +393,13 @@ def find_clawdbot_config() -> Path | None:
 
 
 def parse_clawdbot_config(path: Path) -> ClawdBotConfig:
-    """Parse a clawdbot.json file for security-relevant configuration.
+    """Parse an OpenClaw/ClawdBot config file for security-relevant configuration.
 
     Extracts auth profiles, channels, gateway settings, hooks, and plugins
     without capturing actual secrets (tokens, passwords).
 
     Args:
-        path: Path to clawdbot.json.
+        path: Path to openclaw.json or clawdbot.json.
 
     Returns:
         A ClawdBotConfig with security-relevant metadata.
@@ -404,7 +409,7 @@ def parse_clawdbot_config(path: Path) -> ClawdBotConfig:
         ValueError: If the JSON is malformed.
     """
     if not path.exists():
-        raise FileNotFoundError(f"clawdbot.json not found: {path}")
+        raise FileNotFoundError(f"OpenClaw config not found: {path}")
 
     text = path.read_text(encoding="utf-8")
     try:
@@ -413,7 +418,7 @@ def parse_clawdbot_config(path: Path) -> ClawdBotConfig:
         raise ValueError(f"Failed to parse {path}: {e}") from e
 
     if not isinstance(data, dict):
-        raise ValueError(f"clawdbot.json must be a JSON object, got {type(data).__name__}")
+        raise ValueError(f"OpenClaw config must be a JSON object, got {type(data).__name__}")
 
     # Auth profiles — extract names only, NOT tokens
     auth_data = data.get("auth", {})
