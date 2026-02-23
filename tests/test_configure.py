@@ -101,7 +101,8 @@ class TestRequireApproval:
         policy = generate_policy(scan)
         assert "dangerous_tool" in policy.require_approval
 
-    def test_shell_tool_requires_approval(self) -> None:
+    def test_shell_tool_blocked_not_approval(self) -> None:
+        """Shell tools should be denied outright, not approval-gated."""
         tool = _perm(
             "run_command",
             risk=RiskLevel.CRITICAL,
@@ -109,13 +110,29 @@ class TestRequireApproval:
         )
         scan = _scan(_server("s", [tool], RiskLevel.CRITICAL))
         policy = generate_policy(scan)
-        assert "run_command" in policy.require_approval
+        # Shell tools are blocked via denied resource, NOT require_approval
+        assert "run_command" not in policy.require_approval
+        assert "s" in policy.skills
+        resources = policy.skills["s"]
+        denied = any(p.denied for p in resources.values())
+        assert denied, f"Expected a denied resource for shell tool, got: {resources}"
 
     def test_destructive_tool_requires_approval(self) -> None:
         tool = _perm("delete_file", risk=RiskLevel.HIGH, destructive=True)
         scan = _scan(_server("s", [tool], RiskLevel.HIGH))
         policy = generate_policy(scan)
         assert "delete_file" in policy.require_approval
+
+    def test_browser_tool_requires_approval(self) -> None:
+        """Browser tools are prompt injection vectors — always gated."""
+        tool = _perm(
+            "browse",
+            risk=RiskLevel.MEDIUM,
+            access=[_access(DataAccessType.BROWSER)],
+        )
+        scan = _scan(_server("s", [tool]))
+        policy = generate_policy(scan)
+        assert "browse" in policy.require_approval
 
     def test_low_risk_read_only_no_approval(self) -> None:
         tool = _perm("read_file", risk=RiskLevel.LOW, read_only=True)
@@ -128,12 +145,26 @@ class TestRequireApproval:
         tool = _perm(
             "nuke",
             risk=RiskLevel.CRITICAL,
-            access=[_access(DataAccessType.SHELL, write=True)],
             destructive=True,
         )
         scan = _scan(_server("s", [tool], RiskLevel.CRITICAL))
         policy = generate_policy(scan)
         assert policy.require_approval.count("nuke") == 1
+
+    def test_shell_tool_not_in_require_approval(self) -> None:
+        """Shell tools go to BLOCK, not require_approval — even if also CRITICAL."""
+        tool = _perm(
+            "shell_exec",
+            risk=RiskLevel.CRITICAL,
+            access=[_access(DataAccessType.SHELL, write=True)],
+            destructive=True,
+        )
+        scan = _scan(_server("s", [tool], RiskLevel.CRITICAL))
+        policy = generate_policy(scan)
+        assert "shell_exec" not in policy.require_approval
+        resources = policy.skills["s"]
+        denied = any(p.denied for p in resources.values())
+        assert denied
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +365,11 @@ class TestPolicyStructure:
                 access=[_access(DataAccessType.EMAIL, write=True)],
                 read_only=False,
             ),
+            _perm(
+                "dangerous_api",
+                risk=RiskLevel.CRITICAL,
+                destructive=True,
+            ),
         ]
         scan = _scan(_server("my-server", tools, RiskLevel.CRITICAL))
         policy = generate_policy(scan)
@@ -341,7 +377,10 @@ class TestPolicyStructure:
         # This should not raise
         assert isinstance(policy, AgentWardPolicy)
         assert policy.version
+        # Shell tool → blocked (denied resource), CRITICAL non-shell → require_approval
         assert len(policy.require_approval) > 0
+        assert "shell_exec" not in policy.require_approval
+        assert "dangerous_api" in policy.require_approval
 
     def test_serialized_yaml_is_parseable(self) -> None:
         tool = _perm(
@@ -373,14 +412,12 @@ class TestPolicyStructure:
                 read_only=False,
             ),
         ]
-        email_server = _server("email-mgr", tools[:1], RiskLevel.CRITICAL)
         browser_server = _server(
             "browser-srv",
             [_perm("browse", access=[_access(DataAccessType.BROWSER)])],
         )
         scan = _scan(
             _server("my-server", tools, RiskLevel.CRITICAL),
-            email_server,
             browser_server,
         )
         policy = generate_policy(scan)
@@ -392,6 +429,8 @@ class TestPolicyStructure:
         # Must load back without errors
         loaded = load_policy(out_path)
         assert loaded.version == "1.0"
+        # Shell tool should be blocked
+        assert "my-server" in loaded.skills
 
 
 # ---------------------------------------------------------------------------
@@ -439,10 +478,12 @@ class TestInferResourceKey:
 
 
 class TestPolicyToDict:
-    def test_empty_policy_only_has_version(self) -> None:
+    def test_empty_policy_has_version_and_sensitive_content(self) -> None:
         policy = AgentWardPolicy(version="1.0")
         d = _policy_to_dict(policy)
-        assert d == {"version": "1.0"}
+        assert d["version"] == "1.0"
+        assert "sensitive_content" in d
+        assert d["sensitive_content"]["enabled"] is True
 
     def test_chaining_rules_as_strings(self) -> None:
         policy = AgentWardPolicy(

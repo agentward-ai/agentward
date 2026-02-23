@@ -21,18 +21,20 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import signal
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
 from sys import platform as _platform
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 import aiohttp
 from aiohttp import ClientSession, web
 from rich.console import Console
 
 from agentward.audit.logger import AuditLogger
+from agentward.inspect.classifier import ClassificationResult, Finding, classify_arguments
 from agentward.policy.engine import EvaluationResult, PolicyEngine
 from agentward.policy.schema import PolicyDecision
 from agentward.proxy.http import (
@@ -41,6 +43,9 @@ from agentward.proxy.http import (
     _remove_pid_file,
     _write_pid_file,
 )
+
+if TYPE_CHECKING:
+    from agentward.proxy.approval import ApprovalHandler
 
 _console = Console(stderr=True)
 
@@ -163,6 +168,7 @@ class ActionType(Enum):
     BUFFER = auto()  # Hold internally (tool_use in progress)
     FLUSH = auto()  # Tool allowed — flush buffered events
     BLOCK = auto()  # Tool blocked — drop buffered events, inject replacement
+    APPROVE = auto()  # Tool needs human approval — hold events until dialog resolves
 
 
 @dataclass
@@ -318,7 +324,21 @@ class AnthropicInterceptor(ToolInterceptor):
 
             self._state = _AnthropicState.IDLE
 
-            if result.decision in (PolicyDecision.ALLOW, PolicyDecision.LOG):
+            if result.decision == PolicyDecision.APPROVE:
+                # Needs human approval — return APPROVE action with buffered
+                # events.  The streaming handler will show a dialog and decide
+                # whether to flush or block.
+                self._all_tools_blocked = False
+                action = InterceptAction(
+                    type=ActionType.APPROVE,
+                    events=list(self._buffer),
+                    tool_name=self._tool_name,
+                    arguments=arguments,
+                    result=result,
+                )
+                self._buffer = []
+                return action
+            elif result.decision in (PolicyDecision.ALLOW, PolicyDecision.LOG):
                 self._all_tools_blocked = False
                 action = InterceptAction(
                     type=ActionType.FLUSH,
@@ -330,7 +350,7 @@ class AnthropicInterceptor(ToolInterceptor):
                 self._buffer = []
                 return action
             else:
-                # BLOCK, APPROVE, REDACT — drop the tool_use block
+                # BLOCK, REDACT — drop the tool_use block
                 self._any_tool_blocked = True
                 replacement = self._make_replacement_text(
                     self._block_index, self._tool_name, result.reason
@@ -488,6 +508,7 @@ class OpenAIChatInterceptor(ToolInterceptor):
     def _evaluate_all(self) -> InterceptAction:
         """Evaluate all accumulated tool calls and produce a single action."""
         all_blocked = True
+        any_approve = False
         blocked_names: list[str] = []
         results: list[tuple[str, dict[str, Any], EvaluationResult]] = []
 
@@ -504,7 +525,10 @@ class OpenAIChatInterceptor(ToolInterceptor):
             result = self._evaluate(name, args)
             results.append((name, args, result))
 
-            if result.decision in (PolicyDecision.ALLOW, PolicyDecision.LOG):
+            if result.decision == PolicyDecision.APPROVE:
+                all_blocked = False
+                any_approve = True
+            elif result.decision in (PolicyDecision.ALLOW, PolicyDecision.LOG):
                 all_blocked = False
             else:
                 blocked_names.append(name)
@@ -537,6 +561,23 @@ class OpenAIChatInterceptor(ToolInterceptor):
                 tool_name=blocked_names[0] if blocked_names else "",
                 arguments=first_result[1] if first_result else {},
                 result=first_result[2] if first_result else None,
+            )
+            self._tools.clear()
+            self._buffer.clear()
+            return action
+        elif any_approve:
+            # At least one tool needs approval — return APPROVE
+            # Find the first APPROVE result for the dialog
+            approve_result = next(
+                (r for r in results if r[2].decision == PolicyDecision.APPROVE), results[0]
+            )
+            events = list(self._buffer)
+            action = InterceptAction(
+                type=ActionType.APPROVE,
+                events=events,
+                tool_name=approve_result[0],
+                arguments=approve_result[1],
+                result=approve_result[2],
             )
             self._tools.clear()
             self._buffer.clear()
@@ -632,7 +673,17 @@ class OpenAIResponsesInterceptor(ToolInterceptor):
             result = self._evaluate(self._tool_name, arguments)
             self._buffering = False
 
-            if result.decision in (PolicyDecision.ALLOW, PolicyDecision.LOG):
+            if result.decision == PolicyDecision.APPROVE:
+                events = list(self._buffer)
+                self._buffer.clear()
+                return InterceptAction(
+                    type=ActionType.APPROVE,
+                    events=events,
+                    tool_name=self._tool_name,
+                    arguments=arguments,
+                    result=result,
+                )
+            elif result.decision in (PolicyDecision.ALLOW, PolicyDecision.LOG):
                 events = list(self._buffer)
                 self._buffer.clear()
                 return InterceptAction(
@@ -711,17 +762,59 @@ def _make_interceptor(
     raise ValueError(msg)
 
 
+# Cache for runtime tool risk classification — avoids re-analyzing on every request.
+_runtime_risk_cache: dict[str, "RiskLevel"] = {}
+
+
+
+def _classify_unknown_tool(tool: dict[str, Any]) -> "RiskLevel":
+    """Classify an unknown tool at runtime using the scan risk engine.
+
+    For tools that have no policy match, we run the same ``analyze_tool()``
+    logic the scanner uses — but against the actual tool definition from the
+    LLM API request, not guessed names.  Results are cached per tool name.
+
+    Args:
+        tool: A tool dict from the Anthropic ``tools`` array
+              (has ``name``, ``description``, ``input_schema``).
+
+    Returns:
+        The computed RiskLevel.
+    """
+    from agentward.scan.enumerator import ToolInfo
+    from agentward.scan.permissions import RiskLevel, analyze_tool
+
+    name = tool.get("name", "")
+    if name in _runtime_risk_cache:
+        return _runtime_risk_cache[name]
+
+    tool_info = ToolInfo(
+        name=name,
+        description=tool.get("description"),
+        input_schema=tool.get("input_schema", {}),
+    )
+    perm = analyze_tool(tool_info)
+    _runtime_risk_cache[name] = perm.risk_level
+    return perm.risk_level
+
+
 def _filter_blocked_tools(
     body: dict[str, Any],
     policy_engine: PolicyEngine | None,
     audit_logger: AuditLogger,
 ) -> bool:
-    """Remove blocked tools from the ``tools`` array in an Anthropic request.
+    """Remove blocked/dangerous tools from the ``tools`` array in an API request.
 
-    Instead of waiting for the LLM to call a blocked tool and then
-    intercepting the response (which corrupts conversation history),
-    we proactively remove blocked tools from the request so the LLM
-    never sees them.
+    Two-pass strategy:
+
+    1. **Policy check:** If the policy engine has an explicit rule for a tool
+       (BLOCK, APPROVE, or any resource match), that decision is used.
+    2. **Runtime classification:** For tools with NO policy match (the engine
+       returned default ALLOW with "No policy rule matches"), run
+       ``analyze_tool()`` on the actual tool definition. CRITICAL tools
+       (shell/exec) are blocked; HIGH tools (credentials/destructive) are
+       gated for approval.  This catches tools like ``exec`` that the policy
+       doesn't know about by name but are clearly dangerous by nature.
 
     Args:
         body: The parsed request body (mutated in place).
@@ -731,6 +824,8 @@ def _filter_blocked_tools(
     Returns:
         True if any tools were removed, False otherwise.
     """
+    from agentward.scan.permissions import RiskLevel
+
     if policy_engine is None:
         return False
 
@@ -752,53 +847,76 @@ def _filter_blocked_tools(
             continue
 
         result = policy_engine.evaluate(name, {})
-        if result.decision in (PolicyDecision.BLOCK, PolicyDecision.APPROVE):
+
+        # Pass 1: explicit policy decision (APPROVE stays — gated at execution)
+        if result.decision == PolicyDecision.BLOCK:
             removed_names.append(name)
-            audit_logger.log_tool_call(name, {}, result)
-        else:
-            filtered.append(tool)
+            continue
+
+        # Pass 2: runtime classification for unknown tools
+        if "No policy rule matches" in result.reason:
+            risk = _classify_unknown_tool(tool)
+            if risk in (RiskLevel.CRITICAL, RiskLevel.HIGH):
+                removed_names.append(name)
+                continue
+
+        filtered.append(tool)
 
     if not removed_names:
         return False
 
     body["tools"] = filtered
-    _console.print(
-        f"  [bold #ffcc00]Filtered {len(removed_names)} blocked tool(s) "
-        f"from request: {', '.join(removed_names)}[/bold #ffcc00]",
-        highlight=False,
+
+    # Inject a system-level notice so the LLM knows WHY the tools are
+    # unavailable and can tell the user, instead of confabulating reasons.
+    notice = (
+        "[AgentWard] The following tools have been blocked by policy and are "
+        "unavailable: " + ", ".join(removed_names) + ". "
+        "If the user asks to use these tools, tell them AgentWard has blocked "
+        "them per the security policy. Do not suggest workarounds."
     )
+    _inject_system_notice(body, notice)
+
+    for name in removed_names:
+        _console.print(
+            f"  [bold red]✗ BLOCK[/bold red] {name}",
+            highlight=False,
+        )
+
     return True
 
 
-def _dump_tool_ids(body: dict[str, Any], label: str) -> None:
-    """Debug: dump tool_use and tool_result IDs from messages to stderr."""
-    messages = body.get("messages")
-    if not isinstance(messages, list):
+def _inject_system_notice(body: dict[str, Any], notice: str) -> None:
+    """Append a notice to the system prompt in the request body.
+
+    Handles both Anthropic (top-level ``system`` field) and OpenAI
+    (``messages[0].role == "system"``) formats.
+
+    Args:
+        body: The parsed request body (mutated in place).
+        notice: The notice text to inject.
+    """
+    # Anthropic format: top-level "system" field (string or list of blocks)
+    if "system" in body:
+        system = body["system"]
+        if isinstance(system, str):
+            body["system"] = system + "\n\n" + notice
+        elif isinstance(system, list):
+            # Content block array — append a text block
+            system.append({"type": "text", "text": notice})
         return
-    for i, msg in enumerate(messages):
-        if not isinstance(msg, dict):
-            continue
-        role = msg.get("role", "?")
-        content = msg.get("content")
-        if not isinstance(content, list):
-            continue
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            btype = block.get("type", "")
-            if btype == "tool_use":
-                tid = block.get("id", "?")
-                name = block.get("name", "?")
-                _console.print(
-                    f"  [dim]{label} msg[{i}] {role}: tool_use id={tid} name={name}[/dim]",
-                    highlight=False,
-                )
-            elif btype == "tool_result":
-                tid = block.get("tool_use_id", "?")
-                _console.print(
-                    f"  [dim]{label} msg[{i}] {role}: tool_result for={tid}[/dim]",
-                    highlight=False,
-                )
+
+    # OpenAI format: first message with role "system" or "developer"
+    messages = body.get("messages")
+    if isinstance(messages, list) and messages:
+        for msg in messages:
+            if isinstance(msg, dict) and msg.get("role") in ("system", "developer"):
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    msg["content"] = content + "\n\n" + notice
+                return
+        # No system message — prepend one
+        messages.insert(0, {"role": "system", "content": notice})
 
 
 def _sanitize_anthropic_messages(body: dict[str, Any]) -> bool:
@@ -888,6 +1006,245 @@ def _sanitize_anthropic_messages(body: dict[str, Any]) -> bool:
     return modified
 
 
+def _extract_last_user_text(messages: list[Any]) -> str:
+    """Extract the text content from the last user message.
+
+    Handles both string content and content-block arrays (Anthropic format).
+
+    Args:
+        messages: The messages array from the request body.
+
+    Returns:
+        The concatenated text of the last user message, or empty string.
+    """
+    # Walk backwards to find the last user message
+    for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for block in content:
+                if isinstance(block, str):
+                    parts.append(block)
+                elif isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text", "")
+                    if isinstance(text, str):
+                        parts.append(text)
+            return "\n".join(parts)
+    return ""
+
+
+def _make_canned_response(provider: str, message: str, is_streaming: bool) -> web.Response:
+    """Build a canned LLM response without forwarding to the provider.
+
+    Returns a normal-looking LLM response containing just a text message,
+    so the agent runtime displays it to the user.
+
+    Args:
+        provider: The LLM provider identifier.
+        message: The text message to include in the response.
+        is_streaming: Whether the request expected an SSE stream.
+
+    Returns:
+        An aiohttp ``web.Response`` with the canned response body.
+    """
+    if provider == "anthropic":
+        body = _json.dumps({
+            "id": "msg_agentward_block",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": message}],
+            "model": "agentward-proxy",
+            "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {"input_tokens": 0, "output_tokens": 0},
+        })
+        if is_streaming:
+            # Build a minimal SSE stream that delivers the text
+            events = [
+                f'event: message_start\ndata: {_json.dumps({"type": "message_start", "message": {"id": "msg_agentward_block", "type": "message", "role": "assistant", "content": [], "model": "agentward-proxy", "stop_reason": None, "stop_sequence": None, "usage": {"input_tokens": 0, "output_tokens": 0}}})}\n\n',
+                f'event: content_block_start\ndata: {_json.dumps({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}})}\n\n',
+                f'event: content_block_delta\ndata: {_json.dumps({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": message}})}\n\n',
+                f'event: content_block_stop\ndata: {_json.dumps({"type": "content_block_stop", "index": 0})}\n\n',
+                f'event: message_delta\ndata: {_json.dumps({"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None}, "usage": {"output_tokens": 0}})}\n\n',
+                f'event: message_stop\ndata: {_json.dumps({"type": "message_stop"})}\n\n',
+            ]
+            return web.Response(
+                body="".join(events).encode(),
+                status=200,
+                content_type="text/event-stream",
+            )
+        return web.Response(body=body.encode(), status=200, content_type="application/json")
+
+    elif provider == "openai_chat":
+        body = _json.dumps({
+            "id": "chatcmpl-agentward-block",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": message},
+                "finish_reason": "stop",
+            }],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        })
+        if is_streaming:
+            events = [
+                f'data: {_json.dumps({"choices": [{"index": 0, "delta": {"role": "assistant", "content": message}, "finish_reason": "stop"}]})}\n\n',
+                "data: [DONE]\n\n",
+            ]
+            return web.Response(
+                body="".join(events).encode(),
+                status=200,
+                content_type="text/event-stream",
+            )
+        return web.Response(body=body.encode(), status=200, content_type="application/json")
+
+    elif provider == "openai_responses":
+        body = _json.dumps({
+            "id": "resp_agentward_block",
+            "object": "response",
+            "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": message}]}],
+            "status": "completed",
+        })
+        if is_streaming:
+            events = [
+                f'data: {_json.dumps({"type": "response.output_text.done", "text": message})}\n\n',
+                "data: [DONE]\n\n",
+            ]
+            return web.Response(
+                body="".join(events).encode(),
+                status=200,
+                content_type="text/event-stream",
+            )
+        return web.Response(body=body.encode(), status=200, content_type="application/json")
+
+    # Unknown provider — simple text response
+    return web.Response(body=message.encode(), status=200, content_type="text/plain")
+
+
+def _make_denial_replacement(provider: str, tool_name: str) -> bytes:
+    """Build SSE bytes for a user-denied tool call replacement.
+
+    Produces provider-appropriate SSE events so the agent runtime sees a
+    text message explaining the tool was denied instead of the tool_use block.
+
+    Args:
+        provider: The LLM provider ("anthropic", "openai_chat", "openai_responses").
+        tool_name: The denied tool name.
+
+    Returns:
+        Raw SSE bytes to write to the client stream.
+    """
+    msg = f"[AgentWard: tool '{tool_name}' denied by user]"
+
+    if provider == "anthropic":
+        # Use index 0 — the interceptor already dropped the original block
+        events = [
+            (
+                "content_block_start",
+                _json.dumps(
+                    {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+                    separators=(",", ":"),
+                ),
+            ),
+            (
+                "content_block_delta",
+                _json.dumps(
+                    {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": msg}},
+                    separators=(",", ":"),
+                ),
+            ),
+            (
+                "content_block_stop",
+                _json.dumps(
+                    {"type": "content_block_stop", "index": 0},
+                    separators=(",", ":"),
+                ),
+            ),
+        ]
+        return b"".join(f"event: {etype}\ndata: {data}\n\n".encode() for etype, data in events)
+    elif provider == "openai_chat":
+        replacement = _json.dumps(
+            {"choices": [{"index": 0, "delta": {"content": msg}, "finish_reason": "stop"}]},
+            separators=(",", ":"),
+        )
+        return f"data: {replacement}\n\n".encode()
+    elif provider == "openai_responses":
+        replacement = _json.dumps(
+            {"type": "response.output_text.done", "text": msg},
+            separators=(",", ":"),
+        )
+        return f"data: {replacement}\n\n".encode()
+    else:
+        return b""
+
+
+def _make_sensitive_block_replacement(
+    provider: str,
+    tool_name: str,
+    findings: list[Finding],
+) -> bytes:
+    """Build SSE bytes for a tool call blocked by the sensitive content classifier.
+
+    Args:
+        provider: The LLM provider ("anthropic", "openai_chat", "openai_responses").
+        tool_name: The blocked tool name.
+        findings: List of classifier findings (for the message).
+
+    Returns:
+        Raw SSE bytes to write to the client stream.
+    """
+    summary = ", ".join(
+        f"{f.finding_type.value} ({f.matched_text})" for f in findings
+    )
+    msg = f"[AgentWard: blocked tool '{tool_name}' — sensitive data detected: {summary}]"
+
+    if provider == "anthropic":
+        events = [
+            (
+                "content_block_start",
+                _json.dumps(
+                    {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+                    separators=(",", ":"),
+                ),
+            ),
+            (
+                "content_block_delta",
+                _json.dumps(
+                    {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": msg}},
+                    separators=(",", ":"),
+                ),
+            ),
+            (
+                "content_block_stop",
+                _json.dumps(
+                    {"type": "content_block_stop", "index": 0},
+                    separators=(",", ":"),
+                ),
+            ),
+        ]
+        return b"".join(f"event: {etype}\ndata: {data}\n\n".encode() for etype, data in events)
+    elif provider == "openai_chat":
+        replacement = _json.dumps(
+            {"choices": [{"index": 0, "delta": {"content": msg}, "finish_reason": "stop"}]},
+            separators=(",", ":"),
+        )
+        return f"data: {replacement}\n\n".encode()
+    elif provider == "openai_responses":
+        replacement = _json.dumps(
+            {"type": "response.output_text.done", "text": msg},
+            separators=(",", ":"),
+        )
+        return f"data: {replacement}\n\n".encode()
+    else:
+        return b""
+
+
 class LlmProxy:
     """HTTP reverse proxy for LLM API endpoints with SSE tool_use interception.
 
@@ -913,6 +1270,7 @@ class LlmProxy:
         policy_engine: PolicyEngine | None = None,
         audit_logger: AuditLogger,
         policy_path: Path | None = None,
+        approval_handler: "ApprovalHandler | None" = None,
     ) -> None:
         self._listen_host = listen_host
         self._listen_port = listen_port
@@ -920,6 +1278,7 @@ class LlmProxy:
         self._policy_engine = policy_engine
         self._audit_logger = audit_logger
         self._policy_path = policy_path
+        self._approval_handler = approval_handler
         self._session: ClientSession | None = None
 
     async def run(self, shutdown_event: asyncio.Event | None = None) -> None:
@@ -1041,18 +1400,17 @@ class LlmProxy:
             #    conversation history.  When we previously blocked a
             #    tool_use in the response stream, the agent runtime may
             #    still have the stale ID in its cached messages.
-            # Debug: dump tool_use/tool_result IDs before sanitization
-            _dump_tool_ids(body_json, "BEFORE")
             if _sanitize_anthropic_messages(body_json):
                 body_modified = True
-                _console.print(
-                    "  [bold #ffcc00]Sanitizer: stripped orphaned tool_use/tool_result blocks[/bold #ffcc00]",
-                    highlight=False,
-                )
-                _dump_tool_ids(body_json, "AFTER")
 
         if body_modified and body_json is not None:
             raw_body = _json.dumps(body_json, separators=(",", ":")).encode()
+
+        # Scan user messages for sensitive data before sending to LLM
+        if body_json is not None:
+            block_response = self._scan_request_messages(body_json, provider, is_streaming)
+            if block_response is not None:
+                return block_response
 
         if is_streaming:
             return await self._handle_streaming(request, raw_body, real_base_url, provider)
@@ -1105,10 +1463,13 @@ class LlmProxy:
         session = await self._get_session()
         upstream_url = real_base_url.rstrip("/") + request.path
 
-        # Copy request headers (filter hop-by-hop)
+        # Copy request headers (filter hop-by-hop + content-length).
+        # content-length must be excluded because the proxy may have modified
+        # the body (e.g. filtered blocked tools), making the original length
+        # stale.  aiohttp will recompute it from the actual data payload.
         fwd_headers: dict[str, str] = {}
         for key, value in request.headers.items():
-            if key.lower() not in _HOP_BY_HOP and key.lower() != "host":
+            if key.lower() not in _HOP_BY_HOP and key.lower() not in ("host", "content-length"):
                 fwd_headers[key] = value
 
         try:
@@ -1170,13 +1531,49 @@ class LlmProxy:
                     pass  # held by interceptor
 
                 elif action.type == ActionType.FLUSH:
-                    for ev in action.events:
-                        await response.write(ev.raw)
-                    if action.result:
-                        # Audit logger handles both file + stderr output
-                        self._audit_logger.log_tool_call(
-                            action.tool_name, action.arguments, action.result
+                    # Classify arguments for sensitive data before flushing
+                    classification = self._classify_tool_args(action.arguments)
+                    if classification.has_sensitive_data:
+                        replacement = _make_sensitive_block_replacement(
+                            provider, action.tool_name, classification.findings,
                         )
+                        await response.write(replacement)
+                        self._audit_logger.log_sensitive_block(
+                            action.tool_name, action.arguments, classification.findings,
+                        )
+                    else:
+                        for ev in action.events:
+                            await response.write(ev.raw)
+                        if action.result:
+                            self._audit_logger.log_tool_call(
+                                action.tool_name, action.arguments, action.result
+                            )
+
+                elif action.type == ActionType.APPROVE and action.result is not None:
+                    # Pause the SSE stream and show the approval dialog
+                    approved = await self._request_approval(
+                        action.tool_name, action.arguments, action.result,
+                    )
+                    if approved:
+                        # User approved — classify before flushing
+                        classification = self._classify_tool_args(action.arguments)
+                        if classification.has_sensitive_data:
+                            replacement = _make_sensitive_block_replacement(
+                                provider, action.tool_name, classification.findings,
+                            )
+                            await response.write(replacement)
+                            self._audit_logger.log_sensitive_block(
+                                action.tool_name, action.arguments, classification.findings,
+                            )
+                        else:
+                            for ev in action.events:
+                                await response.write(ev.raw)
+                    else:
+                        # User denied — inject replacement text block
+                        replacement = _make_denial_replacement(
+                            provider, action.tool_name,
+                        )
+                        await response.write(replacement)
 
                 elif action.type == ActionType.BLOCK:
                     await response.write(action.replacement)
@@ -1199,7 +1596,12 @@ class LlmProxy:
                 highlight=False,
             )
 
-        await response.write_eof()
+        try:
+            await response.write_eof()
+        except (aiohttp.ClientError, ConnectionResetError, OSError):
+            # Client disconnected before we finished writing — normal for
+            # long-running SSE streams when the agent runtime cancels.
+            pass
         # Log to file only — LLM API calls are noisy on stderr
         self._audit_logger.log_http_request(
             "POST", request.path, upstream.status, stderr=False,
@@ -1218,12 +1620,13 @@ class LlmProxy:
         provider: str,
     ) -> web.Response:
         """Forward a non-streaming request, filtering tool_use from the response."""
+
         session = await self._get_session()
         upstream_url = real_base_url.rstrip("/") + request.path
 
         fwd_headers: dict[str, str] = {}
         for key, value in request.headers.items():
-            if key.lower() not in _HOP_BY_HOP and key.lower() != "host":
+            if key.lower() not in _HOP_BY_HOP and key.lower() not in ("host", "content-length"):
                 fwd_headers[key] = value
 
         try:
@@ -1253,9 +1656,9 @@ class LlmProxy:
             return web.Response(body=body, status=upstream.status, headers=resp_headers)
 
         if provider == "anthropic":
-            body = self._filter_anthropic_response(resp_json)
+            body = await self._filter_anthropic_response(resp_json)
         elif provider == "openai_chat":
-            body = self._filter_openai_chat_response(resp_json)
+            body = await self._filter_openai_chat_response(resp_json)
         # openai_responses non-streaming is rare; pass through
 
         self._audit_logger.log_http_request("POST", request.path, upstream.status)
@@ -1266,7 +1669,7 @@ class LlmProxy:
             content_type="application/json",
         )
 
-    def _filter_anthropic_response(self, resp: Any) -> bytes:
+    async def _filter_anthropic_response(self, resp: Any) -> bytes:
         """Remove blocked tool_use blocks from a non-streaming Anthropic response."""
         if not isinstance(resp, dict):
             return _json.dumps(resp).encode()
@@ -1285,12 +1688,54 @@ class LlmProxy:
                 if not isinstance(input_args, dict):
                     input_args = {}
                 result = self._evaluate(name, input_args)
-                self._audit_logger.log_tool_call(name, input_args, result)
 
-                if result.decision in (PolicyDecision.ALLOW, PolicyDecision.LOG):
-                    filtered.append(block)
+                if result.decision == PolicyDecision.APPROVE:
+                    # Show approval dialog
+                    allowed = await self._request_approval(name, input_args, result)
+                    if allowed:
+                        # Classify before allowing
+                        classification = self._classify_tool_args(input_args)
+                        if classification.has_sensitive_data:
+                            any_blocked = True
+                            summary = ", ".join(
+                                f.finding_type.value for f in classification.findings
+                            )
+                            filtered.append({
+                                "type": "text",
+                                "text": f"[AgentWard: blocked tool '{name}' — sensitive data detected: {summary}]",
+                            })
+                            self._audit_logger.log_sensitive_block(
+                                name, input_args, classification.findings,
+                            )
+                        else:
+                            filtered.append(block)
+                    else:
+                        any_blocked = True
+                        filtered.append({
+                            "type": "text",
+                            "text": f"[AgentWard: tool '{name}' denied by user]",
+                        })
+                elif result.decision in (PolicyDecision.ALLOW, PolicyDecision.LOG):
+                    # Classify before allowing
+                    classification = self._classify_tool_args(input_args)
+                    if classification.has_sensitive_data:
+                        any_blocked = True
+                        summary = ", ".join(
+                            f.finding_type.value for f in classification.findings
+                        )
+                        filtered.append({
+                            "type": "text",
+                            "text": f"[AgentWard: blocked tool '{name}' — sensitive data detected: {summary}]",
+                        })
+                        self._audit_logger.log_sensitive_block(
+                            name, input_args, classification.findings,
+                        )
+                    else:
+                        self._audit_logger.log_tool_call(name, input_args, result)
+                        filtered.append(block)
                 else:
                     any_blocked = True
+                    self._audit_logger.log_tool_call(name, input_args, result)
                     filtered.append({
                         "type": "text",
                         "text": f"[AgentWard: blocked tool '{name}' — {result.reason}]",
@@ -1309,7 +1754,7 @@ class LlmProxy:
 
         return _json.dumps(resp).encode()
 
-    def _filter_openai_chat_response(self, resp: Any) -> bytes:
+    async def _filter_openai_chat_response(self, resp: Any) -> bytes:
         """Remove blocked tool_calls from a non-streaming OpenAI Chat response."""
         if not isinstance(resp, dict):
             return _json.dumps(resp).encode()
@@ -1344,10 +1789,28 @@ class LlmProxy:
                     args = {}
 
                 result = self._evaluate(name, args)
-                self._audit_logger.log_tool_call(name, args, result)
 
-                if result.decision in (PolicyDecision.ALLOW, PolicyDecision.LOG):
-                    filtered.append(tc)
+                if result.decision == PolicyDecision.APPROVE:
+                    allowed = await self._request_approval(name, args, result)
+                    if allowed:
+                        classification = self._classify_tool_args(args)
+                        if not classification.has_sensitive_data:
+                            filtered.append(tc)
+                        else:
+                            self._audit_logger.log_sensitive_block(
+                                name, args, classification.findings,
+                            )
+                elif result.decision in (PolicyDecision.ALLOW, PolicyDecision.LOG):
+                    classification = self._classify_tool_args(args)
+                    if classification.has_sensitive_data:
+                        self._audit_logger.log_sensitive_block(
+                            name, args, classification.findings,
+                        )
+                    else:
+                        self._audit_logger.log_tool_call(name, args, result)
+                        filtered.append(tc)
+                else:
+                    self._audit_logger.log_tool_call(name, args, result)
 
             message["tool_calls"] = filtered if filtered else None
             if not filtered and choice.get("finish_reason") == "tool_calls":
@@ -1363,6 +1826,126 @@ class LlmProxy:
                 reason="No policy loaded (passthrough mode).",
             )
         return self._policy_engine.evaluate(tool_name, arguments)
+
+    def _classify_tool_args(self, arguments: dict[str, Any]) -> ClassificationResult:
+        """Run the sensitive content classifier on tool call arguments.
+
+        Reads enabled patterns from the policy config. If no policy is loaded
+        or the classifier is disabled, returns a clean result.
+
+        Args:
+            arguments: The tool call arguments dict.
+
+        Returns:
+            A ClassificationResult.
+        """
+        if self._policy_engine is None:
+            return ClassificationResult(has_sensitive_data=False)
+
+        config = self._policy_engine.policy.sensitive_content
+        if not config.enabled:
+            return ClassificationResult(has_sensitive_data=False)
+
+        return classify_arguments(arguments, enabled_patterns=config.patterns)
+
+    def _scan_request_messages(
+        self,
+        body: dict[str, Any],
+        provider: str,
+        is_streaming: bool,
+    ) -> web.Response | None:
+        """Scan user messages in the request body for sensitive data.
+
+        If sensitive content is found, returns a canned LLM-style response
+        that tells the agent about the block.  The request is never forwarded
+        to the upstream provider.
+
+        Args:
+            body: The parsed request body.
+            provider: The LLM provider identifier.
+            is_streaming: Whether the request expects an SSE stream.
+
+        Returns:
+            A ``web.Response`` if the request should be blocked, None otherwise.
+        """
+        if self._policy_engine is None:
+            return None
+
+        config = self._policy_engine.policy.sensitive_content
+        if not config.enabled:
+            return None
+
+        # Extract text from the last user message
+        messages = body.get("messages")
+        if not isinstance(messages, list) or not messages:
+            return None
+
+        # Scan only the most recent user message (the new input)
+        last_user_text = _extract_last_user_text(messages)
+        if not last_user_text:
+            return None
+
+        classification = classify_arguments(
+            {"_user_message": last_user_text},
+            enabled_patterns=config.patterns,
+        )
+        if not classification.has_sensitive_data:
+            return None
+
+        # Sensitive data found — block the request
+        self._audit_logger.log_sensitive_block(
+            "_user_message", {}, classification.findings,
+        )
+
+        summary = ", ".join(
+            f"{f.finding_type.value} ({f.matched_text})" for f in classification.findings
+        )
+        msg = (
+            f"[AgentWard] I've detected sensitive content in your message ({summary}). "
+            f"This request has been blocked to protect your data from being sent "
+            f"to external services. Please remove sensitive information and try again."
+        )
+
+        return _make_canned_response(provider, msg, is_streaming)
+
+    async def _request_approval(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: EvaluationResult,
+    ) -> bool:
+        """Show an approval dialog and return whether the tool was approved.
+
+        Handles logging, timing, and fallback when no handler is configured.
+
+        Args:
+            tool_name: The tool requesting approval.
+            arguments: The tool call arguments.
+            result: The policy evaluation result.
+
+        Returns:
+            True if the user approved the tool call, False otherwise.
+        """
+        from agentward.proxy.approval import ApprovalDecision, ApprovalHandler
+
+        if self._approval_handler is None:
+            # No handler configured — fall back to deny (fail-secure)
+            self._audit_logger.log_tool_call(tool_name, arguments, result)
+            return False
+
+        start = time.monotonic()
+        decision = await self._approval_handler.request_approval(
+            tool_name, arguments, result.reason,
+        )
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+
+        # Log the approval dialog interaction
+        self._audit_logger.log_approval_dialog(
+            tool_name, arguments, decision.value, elapsed_ms,
+        )
+        self._audit_logger.log_tool_call(tool_name, arguments, result)
+
+        return decision in (ApprovalDecision.ALLOW_ONCE, ApprovalDecision.ALLOW_SESSION)
 
     # ------------------------------------------------------------------
     # Transparent forwarding (non-LLM paths)
@@ -1384,7 +1967,7 @@ class LlmProxy:
 
         fwd_headers: dict[str, str] = {}
         for key, value in request.headers.items():
-            if key.lower() not in _HOP_BY_HOP and key.lower() != "host":
+            if key.lower() not in _HOP_BY_HOP and key.lower() not in ("host", "content-length"):
                 fwd_headers[key] = value
 
         raw_body = await request.read()

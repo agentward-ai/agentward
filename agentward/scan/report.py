@@ -85,7 +85,9 @@ def print_scan_report(
         console: Rich console to print to (should be stderr).
         chains: Detected skill chains (optional, computed if not provided).
     """
-    console.print()
+    from agentward.banner import print_banner
+
+    print_banner(console)
 
     # Count totals
     total_servers = len(scan.servers)

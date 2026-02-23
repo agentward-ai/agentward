@@ -272,6 +272,69 @@ class AuditLogger:
         }
         self._write_entry(entry)
 
+    def log_approval_dialog(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        decision: str,
+        elapsed_ms: int,
+    ) -> None:
+        """Log an approval dialog interaction.
+
+        Args:
+            tool_name: The tool that required approval.
+            arguments: The tool call arguments.
+            decision: The outcome (allow_once, allow_session, deny, timeout).
+            elapsed_ms: How long the dialog was open in milliseconds.
+        """
+        entry = {
+            "timestamp": _now_iso(),
+            "event": "approval_dialog",
+            "tool": tool_name,
+            "decision": decision,
+            "elapsed_ms": elapsed_ms,
+        }
+        self._write_entry(entry)
+
+    def log_sensitive_block(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        findings: list[Any],
+    ) -> None:
+        """Log a tool call blocked due to sensitive data in arguments.
+
+        Args:
+            tool_name: The tool that was blocked.
+            arguments: The tool call arguments (not logged raw — contains sensitive data).
+            findings: List of Finding objects from the classifier.
+        """
+        finding_summaries = [
+            f"{f.finding_type.value} ({f.matched_text})" if hasattr(f, "matched_text") else str(f)
+            for f in findings
+        ]
+        entry = {
+            "timestamp": _now_iso(),
+            "event": "sensitive_data_blocked",
+            "tool": tool_name,
+            "findings": [
+                {"type": f.finding_type.value, "redacted": f.matched_text, "path": f.field_path}
+                for f in findings
+                if hasattr(f, "finding_type")
+            ],
+        }
+        self._write_entry(entry)
+
+        summary = ", ".join(finding_summaries)
+        _console.print(
+            f"  [bold red]\u2717 SENSITIVE DATA BLOCKED[/bold red] {tool_name}",
+            highlight=False,
+        )
+        _console.print(
+            f"    [dim]Detected: {summary}[/dim]",
+            highlight=False,
+        )
+
     def log_shutdown(self, reason: str) -> None:
         """Log proxy shutdown.
 

@@ -51,6 +51,57 @@ def main(
     """AgentWard — Permission control plane for AI agents."""
 
 
+# ---------------------------------------------------------------------------
+# init command
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def init(
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Run the full scan and show what would be done, without writing anything.",
+        ),
+    ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            "-y",
+            help="Skip confirmation prompts. Apply recommended policy immediately.",
+        ),
+    ] = False,
+    output: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--output",
+            "-o",
+            help="Output path for the generated policy YAML. Default: ./agentward.yaml",
+        ),
+    ] = None,
+) -> None:
+    """One-command setup: scan, generate policy, and wrap your agent environment.
+
+    Scans for MCP configs and OpenClaw skills, shows a risk summary,
+    generates a recommended policy, and wires AgentWard into OpenClaw.
+
+    Examples:
+      agentward init                          # interactive setup
+      agentward init --yes                    # non-interactive (CI/CD)
+      agentward init --dry-run                # preview without writing
+    """
+    from agentward.init import run_init
+
+    run_init(
+        console=_console,
+        dry_run=dry_run,
+        yes=yes,
+        policy_path=output,
+    )
+
+
 @app.command(
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
@@ -215,6 +266,7 @@ def _run_gateway_proxy(
         )
         raise typer.Exit(1)
 
+    from agentward.proxy.approval import ApprovalHandler
     from agentward.proxy.http import HttpProxy
     from agentward.scan.openclaw import find_clawdbot_config
     from agentward.setup import get_clawdbot_gateway_ports, get_clawdbot_llm_proxy_config
@@ -243,6 +295,12 @@ def _run_gateway_proxy(
     listen_port, backend_port = ports
     backend_url = f"http://127.0.0.1:{backend_port}"
 
+    # Create approval handler for APPROVE decisions
+    approval_timeout = 60
+    if policy_engine is not None:
+        approval_timeout = policy_engine.policy.approval_timeout
+    approval_handler = ApprovalHandler(timeout=approval_timeout)
+
     http_proxy = HttpProxy(
         backend_url=backend_url,
         listen_host="127.0.0.1",
@@ -251,6 +309,7 @@ def _run_gateway_proxy(
         audit_logger=audit_logger,  # type: ignore[arg-type]
         policy_path=policy_path,
         chain_tracker=chain_tracker,  # type: ignore[arg-type]
+        approval_handler=approval_handler,
     )
 
     # Check if LLM proxy is configured (baseUrl patching in sidecar)
@@ -266,6 +325,7 @@ def _run_gateway_proxy(
             policy_engine=policy_engine,  # type: ignore[arg-type]
             audit_logger=audit_logger,  # type: ignore[arg-type]
             policy_path=policy_path,
+            approval_handler=approval_handler,
         )
 
         async def _run_both() -> None:

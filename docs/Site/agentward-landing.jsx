@@ -298,9 +298,11 @@ const stages = [
     desc: "Auto-discover and map permissions across all tool sources — MCP servers, OpenClaw skills, Python SDK tools (OpenAI, LangChain, CrewAI). Risk-rated permission maps with use-case-aware recommendations." },
   { num: 2, icon: "⚙️", title: "Configure", cmd: "agentward configure", status: "live",
     desc: "Generate smart-default YAML policies from scan results. Detects use-case patterns (email+calendar, dev tools, finance) and tailors rules: approval gates, skill restrictions, chaining controls." },
-  { num: 3, icon: "📋", title: "Comply", cmd: "agentward comply", status: "coming",
+  { num: 3, icon: "🔌", title: "Setup", cmd: "agentward setup", status: "live",
+    desc: "Wire enforcement into your infrastructure. Wraps MCP server commands in agent host configs (Claude Desktop, Cursor, VS Code, Windsurf). Swaps OpenClaw gateway ports and patches LaunchAgent plists for HTTP proxy mode." },
+  { num: 4, icon: "📋", title: "Comply", cmd: "agentward comply", status: "coming",
     desc: "Evaluate policies against HIPAA, SOX, GDPR, PCI-DSS. Generate compliance delta reports with exact config changes needed. Auto-fix mode produces compliant policy YAML." },
-  { num: 4, icon: "🛡️", title: "Inspect", cmd: "agentward inspect", status: "live",
+  { num: 5, icon: "🛡️", title: "Inspect", cmd: "agentward inspect", status: "live",
     desc: "Runtime MCP + HTTP proxy with live policy enforcement. Blocks, redacts, or flags tool calls. Skill chaining enforcement, human-in-the-loop approval gates, and structured audit trail." },
 ];
 
@@ -402,9 +404,32 @@ export default function App() {
         <ArchitectureDiagram />
       </section>
 
-      {/* ─── FOUR STAGES ─── */}
+      {/* ─── QUICK START — agentward init ─── */}
+      <section style={{ maxWidth:840, margin:"0 auto", padding:"0 20px 48px" }}>
+        <h2 style={{ fontSize:24, fontWeight:700, color:"#fff", textAlign:"center", marginBottom:12 }}>One command to lock it down</h2>
+        <p style={{ textAlign:"center", color:"#666", fontSize:14, marginBottom:28 }}>Scans your environment, generates a policy, wires enforcement, and starts the proxy — all in one step.</p>
+        <div style={{ background:"linear-gradient(135deg,#0a1a0f,#111)", border:"1px solid #00ff8840", borderRadius:12, padding:"28px 28px 24px", position:"relative", overflow:"hidden" }}>
+          <div style={{ position:"absolute", top:0, left:0, right:0, height:2, background:"linear-gradient(90deg,transparent,#00ff88,transparent)" }} />
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12, flexWrap:"wrap" }}>
+            <span style={{ fontSize:28 }}>🚀</span>
+            <span style={{ fontFamily:"monospace", fontSize:10, fontWeight:700, color:"#00ff88", background:"#00ff8820", padding:"3px 10px", borderRadius:4, border:"1px solid #00ff8830" }}>QUICK START</span>
+            <h3 style={{ fontSize:20, fontWeight:700, color:"#fff", margin:0 }}>Init</h3>
+          </div>
+          <code style={{ fontFamily:"monospace", fontSize:13, color:"#00ff88", background:"#0a0a0a", padding:"6px 14px", borderRadius:6, display:"inline-block", marginBottom:14, border:"1px solid #00ff8830" }}>agentward init</code>
+          <p style={{ fontSize:14, lineHeight:1.7, color:"#999", margin:0 }}>
+            The recommended way to get started. Discovers your tools, shows a risk summary, generates a policy, wires enforcement into your agent host (MCP configs or OpenClaw gateway), and starts the runtime proxy — all interactively in one command. Everything{" "}
+            <code style={{ fontFamily:"monospace", fontSize:12, color:"#00ff88", background:"#0a0a0a", padding:"1px 5px", borderRadius:3 }}>scan</code> +{" "}
+            <code style={{ fontFamily:"monospace", fontSize:12, color:"#00ff88", background:"#0a0a0a", padding:"1px 5px", borderRadius:3 }}>configure</code> +{" "}
+            <code style={{ fontFamily:"monospace", fontSize:12, color:"#00ff88", background:"#0a0a0a", padding:"1px 5px", borderRadius:3 }}>setup</code> +{" "}
+            <code style={{ fontFamily:"monospace", fontSize:12, color:"#00ff88", background:"#0a0a0a", padding:"1px 5px", borderRadius:3 }}>inspect</code> does, in 10 seconds.
+          </p>
+        </div>
+      </section>
+
+      {/* ─── FIVE STAGES ─── */}
       <section style={{ maxWidth:840, margin:"0 auto", padding:"0 20px 64px" }}>
-        <h2 style={{ fontSize:24, fontWeight:700, color:"#fff", textAlign:"center", marginBottom:36 }}>Four stages. One command at a time.</h2>
+        <h2 style={{ fontSize:22, fontWeight:700, color:"#fff", textAlign:"center", marginBottom:12 }}>Or go step by step</h2>
+        <p style={{ textAlign:"center", color:"#666", fontSize:14, marginBottom:28 }}>Five stages. Each command does one thing well.</p>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(240px, 1fr))", gap:16 }}>
           {stages.map(s => (
             <div key={s.num} style={{ background:"#111", border:`1px solid ${s.status==="coming"?"#ffcc0030":"#222"}`, borderRadius:12, padding:24, opacity:s.status==="coming"?0.75:1 }}>

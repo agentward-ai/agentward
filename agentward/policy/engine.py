@@ -92,7 +92,7 @@ class PolicyEngine:
         Returns:
             An EvaluationResult with the decision and reasoning.
         """
-        # Check require_approval first — takes priority over resource-level permissions
+        # Check require_approval — takes priority over resource-level permissions
         if tool_name in self._policy.require_approval:
             return EvaluationResult(
                 decision=PolicyDecision.APPROVE,

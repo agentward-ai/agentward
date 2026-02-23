@@ -210,6 +210,28 @@ class DataBoundary(BaseModel):
     on_violation: ViolationAction = ViolationAction.BLOCK_AND_LOG
 
 
+class SensitiveContentConfig(BaseModel):
+    """Configuration for the sensitive content classifier.
+
+    Controls which data patterns are scanned in tool call arguments.
+    When enabled, tool calls containing sensitive data (credit cards, SSNs,
+    API keys, etc.) are blocked before reaching the agent runtime.
+    """
+
+    enabled: bool = True
+    patterns: list[str] = Field(
+        default_factory=lambda: [
+            "credit_card",
+            "ssn",
+            "cvv",
+            "expiry_date",
+            "api_key",
+        ],
+        description="List of sensitive data pattern names to detect. "
+        "Valid values: credit_card, ssn, cvv, expiry_date, api_key.",
+    )
+
+
 class AgentWardPolicy(BaseModel):
     """Top-level policy model for agentward.yaml.
 
@@ -229,4 +251,13 @@ class AgentWardPolicy(BaseModel):
         "regardless of individual chaining rules. None means unlimited.",
     )
     require_approval: list[str] = Field(default_factory=list)
+    approval_timeout: int = Field(
+        default=60,
+        description="Timeout in seconds for approval dialogs. "
+        "If the user doesn't respond within this time, the tool call is denied.",
+    )
+    sensitive_content: SensitiveContentConfig = Field(
+        default_factory=SensitiveContentConfig,
+        description="Sensitive content classifier configuration.",
+    )
     data_boundaries: dict[str, DataBoundary] = Field(default_factory=dict)

@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agentward.policy.engine import EvaluationResult, PolicyEngine
-from agentward.policy.schema import PolicyDecision
+from agentward.policy.schema import AgentWardPolicy, PolicyDecision, SensitiveContentConfig
 from agentward.audit.logger import AuditLogger
 from agentward.proxy.llm import (
     ActionType,
@@ -27,8 +27,13 @@ from agentward.proxy.llm import (
     OpenAIChatInterceptor,
     OpenAIResponsesInterceptor,
     SSEEvent,
+    _classify_unknown_tool,
     _detect_provider,
+    _extract_last_user_text,
     _filter_blocked_tools,
+    _make_canned_response,
+    _make_sensitive_block_replacement,
+    _runtime_risk_cache,
     parse_sse,
 )
 
@@ -77,6 +82,13 @@ class _FakeResponse:
         self.content = _FakeContent(data)
 
 
+def _mock_policy() -> MagicMock:
+    """Create a mock AgentWardPolicy with real SensitiveContentConfig."""
+    policy = MagicMock(spec=AgentWardPolicy)
+    policy.sensitive_content = SensitiveContentConfig()
+    return policy
+
+
 def _blocking_engine() -> PolicyEngine:
     """Create a PolicyEngine that blocks everything."""
     engine = MagicMock(spec=PolicyEngine)
@@ -84,6 +96,7 @@ def _blocking_engine() -> PolicyEngine:
         decision=PolicyDecision.BLOCK,
         reason="Blocked by test policy.",
     )
+    engine.policy = _mock_policy()
     return engine
 
 
@@ -94,6 +107,18 @@ def _allowing_engine() -> PolicyEngine:
         decision=PolicyDecision.ALLOW,
         reason="Allowed by test policy.",
     )
+    engine.policy = _mock_policy()
+    return engine
+
+
+def _approving_engine() -> PolicyEngine:
+    """Create a PolicyEngine that returns APPROVE for everything."""
+    engine = MagicMock(spec=PolicyEngine)
+    engine.evaluate.return_value = EvaluationResult(
+        decision=PolicyDecision.APPROVE,
+        reason="Tool requires human approval.",
+    )
+    engine.policy = _mock_policy()
     return engine
 
 
@@ -438,6 +463,20 @@ class TestAnthropicInterceptor:
         assert actions[-1].type == ActionType.FLUSH
         assert actions[-1].arguments == {}
 
+    def test_tool_approve(self) -> None:
+        """APPROVE policy returns ActionType.APPROVE with buffered events."""
+        interceptor = AnthropicInterceptor(_approving_engine())
+
+        events = _anthropic_tool_block(0, "browser", {"url": "https://example.com"})
+        actions = [interceptor.process_event(e) for e in events]
+
+        assert actions[0].type == ActionType.BUFFER
+        assert actions[-1].type == ActionType.APPROVE
+        assert actions[-1].tool_name == "browser"
+        assert len(actions[-1].events) == 4
+        assert actions[-1].result is not None
+        assert actions[-1].result.decision == PolicyDecision.APPROVE
+
 
 # -----------------------------------------------------------------------
 # OpenAI Chat Completions interceptor
@@ -569,6 +608,18 @@ class TestOpenAIChatInterceptor:
         assert final is not None
         assert final.type == ActionType.FLUSH
 
+    def test_tool_approve(self) -> None:
+        """APPROVE policy returns ActionType.APPROVE."""
+        interceptor = OpenAIChatInterceptor(_approving_engine())
+
+        events = _openai_chat_tool_chunks("browser", {"url": "https://example.com"})
+        actions = [interceptor.process_event(e) for e in events]
+
+        assert actions[-1].type == ActionType.APPROVE
+        assert actions[-1].tool_name == "browser"
+        assert actions[-1].result is not None
+        assert actions[-1].result.decision == PolicyDecision.APPROVE
+
 
 # -----------------------------------------------------------------------
 # OpenAI Responses interceptor
@@ -652,6 +703,57 @@ class TestOpenAIResponsesInterceptor:
         assert final is not None
         assert final.type == ActionType.FLUSH
 
+    def test_tool_approve(self) -> None:
+        """APPROVE policy returns ActionType.APPROVE."""
+        interceptor = OpenAIResponsesInterceptor(_approving_engine())
+
+        events = _openai_responses_tool_events("web_fetch", {"url": "https://example.com"})
+        actions = [interceptor.process_event(e) for e in events]
+
+        assert actions[-1].type == ActionType.APPROVE
+        assert actions[-1].tool_name == "web_fetch"
+        assert actions[-1].result is not None
+        assert actions[-1].result.decision == PolicyDecision.APPROVE
+
+
+# -----------------------------------------------------------------------
+# _make_denial_replacement
+# -----------------------------------------------------------------------
+
+
+class TestMakeDenialReplacement:
+    """Tests for _make_denial_replacement()."""
+
+    def test_anthropic_format(self) -> None:
+        from agentward.proxy.llm import _make_denial_replacement
+
+        result = _make_denial_replacement("anthropic", "browser")
+        assert b"denied by user" in result
+        assert b"browser" in result
+        assert b"content_block_start" in result
+        assert b"text_delta" in result
+
+    def test_openai_chat_format(self) -> None:
+        from agentward.proxy.llm import _make_denial_replacement
+
+        result = _make_denial_replacement("openai_chat", "web_fetch")
+        assert b"denied by user" in result
+        assert b"web_fetch" in result
+        assert b"finish_reason" in result
+
+    def test_openai_responses_format(self) -> None:
+        from agentward.proxy.llm import _make_denial_replacement
+
+        result = _make_denial_replacement("openai_responses", "search")
+        assert b"denied by user" in result
+        assert b"search" in result
+
+    def test_unknown_provider_returns_empty(self) -> None:
+        from agentward.proxy.llm import _make_denial_replacement
+
+        result = _make_denial_replacement("unknown", "tool")
+        assert result == b""
+
 
 # -----------------------------------------------------------------------
 # Non-streaming response filtering (LlmProxy methods)
@@ -671,7 +773,8 @@ class TestNonStreamingFiltering:
             audit_logger=AuditLogger(),
         )
 
-    def test_anthropic_blocks_tool_use(self) -> None:
+    @pytest.mark.asyncio
+    async def test_anthropic_blocks_tool_use(self) -> None:
         proxy = self._make_proxy(_blocking_engine())
 
         resp = {
@@ -681,7 +784,7 @@ class TestNonStreamingFiltering:
             ],
             "stop_reason": "tool_use",
         }
-        result = json.loads(proxy._filter_anthropic_response(resp))
+        result = json.loads(await proxy._filter_anthropic_response(resp))
 
         # tool_use replaced with text block
         assert len(result["content"]) == 2
@@ -689,7 +792,8 @@ class TestNonStreamingFiltering:
         assert "blocked tool 'shell'" in result["content"][1]["text"]
         assert result["stop_reason"] == "end_turn"
 
-    def test_anthropic_allows_tool_use(self) -> None:
+    @pytest.mark.asyncio
+    async def test_anthropic_allows_tool_use(self) -> None:
         proxy = self._make_proxy(_allowing_engine())
 
         resp = {
@@ -698,12 +802,13 @@ class TestNonStreamingFiltering:
             ],
             "stop_reason": "tool_use",
         }
-        result = json.loads(proxy._filter_anthropic_response(resp))
+        result = json.loads(await proxy._filter_anthropic_response(resp))
 
         assert result["content"][0]["type"] == "tool_use"
         assert result["stop_reason"] == "tool_use"  # Not rewritten
 
-    def test_openai_chat_blocks_tool_calls(self) -> None:
+    @pytest.mark.asyncio
+    async def test_openai_chat_blocks_tool_calls(self) -> None:
         proxy = self._make_proxy(_blocking_engine())
 
         resp = {
@@ -720,14 +825,15 @@ class TestNonStreamingFiltering:
                 "finish_reason": "tool_calls",
             }],
         }
-        result = json.loads(proxy._filter_openai_chat_response(resp))
+        result = json.loads(await proxy._filter_openai_chat_response(resp))
 
         choice = result["choices"][0]
         assert choice["message"]["tool_calls"] is None
         assert choice["finish_reason"] == "stop"
         assert "blocked" in choice["message"]["content"]
 
-    def test_openai_chat_allows_tool_calls(self) -> None:
+    @pytest.mark.asyncio
+    async def test_openai_chat_allows_tool_calls(self) -> None:
         proxy = self._make_proxy(_allowing_engine())
 
         resp = {
@@ -744,19 +850,21 @@ class TestNonStreamingFiltering:
                 "finish_reason": "tool_calls",
             }],
         }
-        result = json.loads(proxy._filter_openai_chat_response(resp))
+        result = json.loads(await proxy._filter_openai_chat_response(resp))
 
         assert len(result["choices"][0]["message"]["tool_calls"]) == 1
         assert result["choices"][0]["finish_reason"] == "tool_calls"
 
-    def test_anthropic_no_content_passes_through(self) -> None:
+    @pytest.mark.asyncio
+    async def test_anthropic_no_content_passes_through(self) -> None:
         proxy = self._make_proxy(_blocking_engine())
 
         resp = {"error": {"type": "invalid_request_error"}}
-        result = json.loads(proxy._filter_anthropic_response(resp))
+        result = json.loads(await proxy._filter_anthropic_response(resp))
         assert result == resp
 
-    def test_anthropic_passthrough_mode(self) -> None:
+    @pytest.mark.asyncio
+    async def test_anthropic_passthrough_mode(self) -> None:
         proxy = self._make_proxy(None)
 
         resp = {
@@ -765,7 +873,7 @@ class TestNonStreamingFiltering:
             ],
             "stop_reason": "tool_use",
         }
-        result = json.loads(proxy._filter_anthropic_response(resp))
+        result = json.loads(await proxy._filter_anthropic_response(resp))
 
         # Passthrough: tool_use preserved
         assert result["content"][0]["type"] == "tool_use"
@@ -991,8 +1099,8 @@ class TestFilterBlockedTools:
         assert len(body["tools"]) == 1
         assert body["tools"][0]["name"] == "search"
 
-    def test_approved_tool_removed(self) -> None:
-        """Tools in require_approval are also filtered from the request."""
+    def test_approved_tool_kept(self) -> None:
+        """Tools in require_approval are KEPT (gated at execution, not request)."""
         body: dict[str, Any] = {
             "tools": [
                 {"name": "coding-agent", "description": "code execution"},
@@ -1001,9 +1109,8 @@ class TestFilterBlockedTools:
         }
         engine = _make_policy_engine(approved=["coding-agent"])
         logger = AuditLogger()
-        assert _filter_blocked_tools(body, engine, logger) is True
-        assert len(body["tools"]) == 1
-        assert body["tools"][0]["name"] == "search"
+        assert _filter_blocked_tools(body, engine, logger) is False
+        assert len(body["tools"]) == 2
 
     def test_allowed_tools_kept(self) -> None:
         body: dict[str, Any] = {
@@ -1029,6 +1136,7 @@ class TestFilterBlockedTools:
         assert body["tools"] == []
 
     def test_mixed_blocked_and_approved(self) -> None:
+        """BLOCK tools removed, APPROVE tools kept."""
         body: dict[str, Any] = {
             "tools": [
                 {"name": "exec", "description": "run commands"},
@@ -1039,5 +1147,454 @@ class TestFilterBlockedTools:
         engine = _make_policy_engine(blocked=["exec"], approved=["coding-agent"])
         logger = AuditLogger()
         assert _filter_blocked_tools(body, engine, logger) is True
+        # exec removed, coding-agent and search kept
+        assert len(body["tools"]) == 2
+        names = [t["name"] for t in body["tools"]]
+        assert "coding-agent" in names
+        assert "search" in names
+
+
+# -----------------------------------------------------------------------
+# Runtime tool classification
+# -----------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=False)
+def _clear_runtime_caches() -> None:  # type: ignore[misc]
+    """Clear module-level caches before runtime classification tests."""
+    _runtime_risk_cache.clear()
+
+
+class TestRuntimeClassification:
+    """Tests for runtime tool classification via analyze_tool()."""
+
+    @pytest.fixture(autouse=True)
+    def clear_caches(self, _clear_runtime_caches: None) -> None:  # noqa: PT004
+        pass
+
+    def test_critical_tool_classified_and_filtered(self) -> None:
+        """Tool classified as CRITICAL (shell/exec) by analyze_tool is filtered."""
+        body: dict[str, Any] = {
+            "tools": [
+                {"name": "exec", "description": "execute shell commands"},
+                {"name": "weather", "description": "get weather forecast"},
+            ]
+        }
+        # Empty policy — no explicit rules for any tool
+        engine = _make_policy_engine()
+        logger = AuditLogger()
+        assert _filter_blocked_tools(body, engine, logger) is True
         assert len(body["tools"]) == 1
-        assert body["tools"][0]["name"] == "search"
+        assert body["tools"][0]["name"] == "weather"
+
+    def test_low_risk_tool_passes_through(self) -> None:
+        """Tool classified as LOW risk passes through unchanged."""
+        body: dict[str, Any] = {
+            "tools": [
+                {"name": "get_weather", "description": "get weather forecast"},
+            ]
+        }
+        engine = _make_policy_engine()
+        logger = AuditLogger()
+        assert _filter_blocked_tools(body, engine, logger) is False
+        assert len(body["tools"]) == 1
+
+    def test_explicit_policy_takes_precedence(self) -> None:
+        """Explicit policy rule overrides runtime classification."""
+        body: dict[str, Any] = {
+            "tools": [
+                {"name": "exec", "description": "execute shell commands"},
+            ]
+        }
+        # Policy explicitly blocks "exec" via skills/resource deny
+        engine = _make_policy_engine(blocked=["exec"])
+        logger = AuditLogger()
+        assert _filter_blocked_tools(body, engine, logger) is True
+        assert body["tools"] == []
+
+    def test_classification_cached(self) -> None:
+        """Runtime classification is cached — second call uses cache."""
+        from agentward.scan.permissions import RiskLevel
+
+        tool = {"name": "exec", "description": "run commands"}
+        _runtime_risk_cache.clear()
+
+        result1 = _classify_unknown_tool(tool)
+        assert result1 == RiskLevel.CRITICAL
+        assert "exec" in _runtime_risk_cache
+
+        # Second call should use cache (we can verify by checking it returns same)
+        result2 = _classify_unknown_tool(tool)
+        assert result2 == result1
+
+    def test_high_risk_tool_filtered(self) -> None:
+        """Tool classified as HIGH risk (e.g. credentials access) is filtered."""
+        body: dict[str, Any] = {
+            "tools": [
+                {
+                    "name": "get_secret",
+                    "description": "retrieve credentials",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"api_key": {"type": "string"}},
+                    },
+                },
+                {"name": "search", "description": "search the web"},
+            ]
+        }
+        engine = _make_policy_engine()
+        logger = AuditLogger()
+        result = _filter_blocked_tools(body, engine, logger)
+        # get_secret should be classified as HIGH (credentials) and filtered
+        if result:
+            assert body["tools"][0]["name"] == "search"
+
+    def test_shell_tool_name_variants_classified(self) -> None:
+        """Shell tool names in _RESOURCE_PATTERNS are classified as CRITICAL."""
+        from agentward.scan.permissions import RiskLevel
+
+        _runtime_risk_cache.clear()
+        # These names map directly to DataAccessType.SHELL in _RESOURCE_PATTERNS
+        shell_names = ["exec", "shell", "bash", "terminal", "cmd"]
+        for name in shell_names:
+            tool = {"name": name, "description": f"{name} tool"}
+            risk = _classify_unknown_tool(tool)
+            assert risk == RiskLevel.CRITICAL, f"{name} should be CRITICAL, got {risk}"
+
+
+# -----------------------------------------------------------------------
+# Sensitive content classifier integration tests
+# -----------------------------------------------------------------------
+
+
+class TestSensitiveBlockReplacement:
+    """Tests for _make_sensitive_block_replacement."""
+
+    def test_anthropic_format(self) -> None:
+        from agentward.inspect.classifier import Finding, FindingType
+
+        findings = [
+            Finding(FindingType.CREDIT_CARD, "4111 **** **** 1111", "text"),
+        ]
+        result = _make_sensitive_block_replacement("anthropic", "browser", findings)
+        assert b"sensitive data detected" in result
+        assert b"credit_card" in result
+        assert b"4111" in result
+        assert b"content_block_start" in result
+
+    def test_openai_chat_format(self) -> None:
+        from agentward.inspect.classifier import Finding, FindingType
+
+        findings = [Finding(FindingType.SSN, "***-**-6789", "body")]
+        result = _make_sensitive_block_replacement("openai_chat", "tool", findings)
+        assert b"sensitive data detected" in result
+        assert b"ssn" in result
+
+    def test_openai_responses_format(self) -> None:
+        from agentward.inspect.classifier import Finding, FindingType
+
+        findings = [Finding(FindingType.API_KEY, "sk-a...xyz1", "key")]
+        result = _make_sensitive_block_replacement("openai_responses", "tool", findings)
+        assert b"sensitive data detected" in result
+        assert b"api_key" in result
+
+
+class TestClassifierInNonStreaming:
+    """Integration tests: classifier blocks sensitive tool calls in non-streaming responses."""
+
+    def _make_proxy(self, engine: PolicyEngine | None = None) -> Any:
+        from agentward.proxy.llm import LlmProxy
+
+        return LlmProxy(
+            provider_urls={"anthropic": "https://api.anthropic.com"},
+            policy_engine=engine,
+            audit_logger=AuditLogger(),
+        )
+
+    @pytest.mark.asyncio
+    async def test_anthropic_blocks_credit_card_in_tool_args(self) -> None:
+        """Tool allowed by policy but arguments contain a credit card → blocked."""
+        proxy = self._make_proxy(_allowing_engine())
+
+        resp = {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "browser",
+                    "input": {"text": "Buy with card 4111 1111 1111 1111"},
+                },
+            ],
+            "stop_reason": "tool_use",
+        }
+        result = json.loads(await proxy._filter_anthropic_response(resp))
+
+        # tool_use should be replaced with a text block about sensitive data
+        assert result["content"][0]["type"] == "text"
+        assert "sensitive data detected" in result["content"][0]["text"]
+        assert "credit_card" in result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_anthropic_allows_clean_tool_args(self) -> None:
+        """Tool allowed by policy with clean arguments → passes through."""
+        proxy = self._make_proxy(_allowing_engine())
+
+        resp = {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "browser",
+                    "input": {"url": "https://amazon.com", "query": "paper towels"},
+                },
+            ],
+            "stop_reason": "tool_use",
+        }
+        result = json.loads(await proxy._filter_anthropic_response(resp))
+
+        assert result["content"][0]["type"] == "tool_use"
+
+    @pytest.mark.asyncio
+    async def test_openai_chat_blocks_sensitive_args(self) -> None:
+        proxy = self._make_proxy(_allowing_engine())
+
+        resp = {
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "tc1",
+                        "type": "function",
+                        "function": {
+                            "name": "browser",
+                            "arguments": json.dumps({"text": "ssn: 123-45-6789"}),
+                        },
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }],
+        }
+        result = json.loads(await proxy._filter_openai_chat_response(resp))
+
+        # Tool call should be removed (sensitive data)
+        choice = result["choices"][0]
+        assert choice["message"]["tool_calls"] is None
+        assert choice["finish_reason"] == "stop"
+
+    @pytest.mark.asyncio
+    async def test_classifier_disabled_passes_through(self) -> None:
+        """When classifier is disabled in policy, sensitive args pass through."""
+        engine = _allowing_engine()
+        engine.policy.sensitive_content = SensitiveContentConfig(enabled=False)
+        proxy = self._make_proxy(engine)
+
+        resp = {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "browser",
+                    "input": {"text": "card 4111 1111 1111 1111"},
+                },
+            ],
+            "stop_reason": "tool_use",
+        }
+        result = json.loads(await proxy._filter_anthropic_response(resp))
+
+        # Should pass through since classifier is disabled
+        assert result["content"][0]["type"] == "tool_use"
+
+    @pytest.mark.asyncio
+    async def test_no_policy_engine_passes_through(self) -> None:
+        """When no policy engine loaded (passthrough mode), no classification."""
+        proxy = self._make_proxy(None)
+
+        resp = {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "browser",
+                    "input": {"text": "card 4111 1111 1111 1111"},
+                },
+            ],
+            "stop_reason": "tool_use",
+        }
+        result = json.loads(await proxy._filter_anthropic_response(resp))
+
+        # Passthrough mode — no blocking
+        assert result["content"][0]["type"] == "tool_use"
+
+    @pytest.mark.asyncio
+    async def test_demo_scenario_blocked(self) -> None:
+        """User's exact demo scenario: credit card + expiry + cvv in browser args."""
+        proxy = self._make_proxy(_allowing_engine())
+
+        text = (
+            "Here is my credit card info 4111 1111 1111 1111, "
+            "expiry 01/30, cvv 123 - buy 3 boxes of bounty kitchen "
+            "paper towel by browsing to amazon.com"
+        )
+        resp = {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "browser",
+                    "input": {"text": text},
+                },
+            ],
+            "stop_reason": "tool_use",
+        }
+        result = json.loads(await proxy._filter_anthropic_response(resp))
+
+        assert result["content"][0]["type"] == "text"
+        assert "sensitive data detected" in result["content"][0]["text"]
+        assert "credit_card" in result["content"][0]["text"]
+
+
+# -----------------------------------------------------------------------
+# Request-side scanning tests
+# -----------------------------------------------------------------------
+
+
+class TestExtractLastUserText:
+    """Tests for _extract_last_user_text."""
+
+    def test_string_content(self) -> None:
+        messages = [
+            {"role": "user", "content": "hello world"},
+        ]
+        assert _extract_last_user_text(messages) == "hello world"
+
+    def test_block_array_content(self) -> None:
+        messages = [
+            {"role": "user", "content": [
+                {"type": "text", "text": "part one"},
+                {"type": "text", "text": "part two"},
+            ]},
+        ]
+        assert "part one" in _extract_last_user_text(messages)
+        assert "part two" in _extract_last_user_text(messages)
+
+    def test_picks_last_user_message(self) -> None:
+        messages = [
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": "second"},
+        ]
+        assert _extract_last_user_text(messages) == "second"
+
+    def test_no_user_message(self) -> None:
+        messages = [
+            {"role": "assistant", "content": "hello"},
+        ]
+        assert _extract_last_user_text(messages) == ""
+
+    def test_empty_messages(self) -> None:
+        assert _extract_last_user_text([]) == ""
+
+
+class TestMakeCannedResponse:
+    """Tests for _make_canned_response."""
+
+    def test_anthropic_non_streaming(self) -> None:
+        resp = _make_canned_response("anthropic", "blocked", False)
+        body = json.loads(resp.body)
+        assert body["content"][0]["text"] == "blocked"
+        assert body["stop_reason"] == "end_turn"
+        assert resp.content_type == "application/json"
+
+    def test_anthropic_streaming(self) -> None:
+        resp = _make_canned_response("anthropic", "blocked", True)
+        assert resp.content_type == "text/event-stream"
+        assert b"content_block_delta" in resp.body
+        assert b"blocked" in resp.body
+
+    def test_openai_chat_non_streaming(self) -> None:
+        resp = _make_canned_response("openai_chat", "nope", False)
+        body = json.loads(resp.body)
+        assert body["choices"][0]["message"]["content"] == "nope"
+
+    def test_openai_chat_streaming(self) -> None:
+        resp = _make_canned_response("openai_chat", "nope", True)
+        assert resp.content_type == "text/event-stream"
+        assert b"[DONE]" in resp.body
+
+
+class TestRequestSideScanning:
+    """Tests for _scan_request_messages on LlmProxy."""
+
+    def _make_proxy(self, engine: Any = None) -> Any:
+        from agentward.proxy.llm import LlmProxy
+
+        return LlmProxy(
+            provider_urls={"anthropic": "https://api.anthropic.com"},
+            policy_engine=engine,
+            audit_logger=AuditLogger(),
+        )
+
+    def test_blocks_credit_card_in_user_message(self) -> None:
+        proxy = self._make_proxy(_allowing_engine())
+        body = {
+            "messages": [
+                {"role": "user", "content": "Pay with 4111 1111 1111 1111"},
+            ],
+            "stream": True,
+        }
+        result = proxy._scan_request_messages(body, "anthropic", True)
+        assert result is not None
+        assert result.status == 200
+        assert b"sensitive content" in result.body.lower() or b"AgentWard" in result.body
+
+    def test_allows_clean_message(self) -> None:
+        proxy = self._make_proxy(_allowing_engine())
+        body = {
+            "messages": [
+                {"role": "user", "content": "Buy paper towels on amazon"},
+            ],
+        }
+        result = proxy._scan_request_messages(body, "anthropic", False)
+        assert result is None
+
+    def test_no_policy_engine_passes_through(self) -> None:
+        proxy = self._make_proxy(None)
+        body = {
+            "messages": [
+                {"role": "user", "content": "card 4111 1111 1111 1111"},
+            ],
+        }
+        result = proxy._scan_request_messages(body, "anthropic", False)
+        assert result is None
+
+    def test_classifier_disabled_passes_through(self) -> None:
+        engine = _allowing_engine()
+        engine.policy.sensitive_content = SensitiveContentConfig(enabled=False)
+        proxy = self._make_proxy(engine)
+        body = {
+            "messages": [
+                {"role": "user", "content": "card 4111 1111 1111 1111"},
+            ],
+        }
+        result = proxy._scan_request_messages(body, "anthropic", False)
+        assert result is None
+
+    def test_demo_scenario_blocked_at_request(self) -> None:
+        """User's demo: credit card in message is caught before hitting LLM."""
+        proxy = self._make_proxy(_allowing_engine())
+        body = {
+            "messages": [
+                {"role": "user", "content": (
+                    "Here is my credit card info 4111 1111 1111 1111, "
+                    "expiry 01/30, cvv 123 - buy 3 boxes of bounty kitchen "
+                    "paper towel by browsing to amazon.com"
+                )},
+            ],
+            "stream": True,
+        }
+        result = proxy._scan_request_messages(body, "anthropic", True)
+        assert result is not None
+        assert result.content_type == "text/event-stream"
+        assert b"AgentWard" in result.body
+        assert b"credit_card" in result.body

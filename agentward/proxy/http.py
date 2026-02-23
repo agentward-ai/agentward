@@ -34,6 +34,7 @@ from rich.console import Console
 from agentward.audit.logger import AuditLogger
 from agentward.policy.engine import EvaluationResult, PolicyEngine
 from agentward.policy.schema import PolicyDecision
+from agentward.proxy.approval import ApprovalDecision, ApprovalHandler
 from agentward.proxy.chaining import ChainTracker
 
 _console = Console(stderr=True)
@@ -216,6 +217,7 @@ class HttpProxy:
         audit_logger: Structured audit logger.
         policy_path: Path to the loaded policy file (for logging only).
         chain_tracker: Optional chain tracker for runtime skill chaining enforcement.
+        approval_handler: Optional handler for APPROVE decisions (macOS dialogs).
     """
 
     def __init__(
@@ -227,6 +229,7 @@ class HttpProxy:
         audit_logger: AuditLogger,
         policy_path: Path | None = None,
         chain_tracker: ChainTracker | None = None,
+        approval_handler: "ApprovalHandler | None" = None,
     ) -> None:
         self._backend_url = backend_url.rstrip("/")
         self._listen_host = listen_host
@@ -235,6 +238,7 @@ class HttpProxy:
         self._audit_logger = audit_logger
         self._policy_path = policy_path
         self._chain_tracker = chain_tracker
+        self._approval_handler = approval_handler
         self._session: ClientSession | None = None
         # Monotonic counter for synthetic request IDs (HTTP has no JSON-RPC ids)
         self._request_counter = itertools.count(1)
@@ -617,13 +621,30 @@ class HttpProxy:
                     continue
 
                 if result.decision == PolicyDecision.APPROVE:
-                    self._audit_logger.log_tool_call(tool_name, arguments, result)
-                    await source.send_str(self._make_ws_error_frame(
-                        request_id, "approval_required", f"AgentWard: {result.reason}",
-                    ))
-                    continue
+                    if self._approval_handler is not None:
+                        decision = await self._approval_handler.request_approval(
+                            tool_name, arguments, result.reason,
+                        )
+                        self._audit_logger.log_tool_call(tool_name, arguments, result)
+                        if decision not in (
+                            ApprovalDecision.ALLOW_ONCE,
+                            ApprovalDecision.ALLOW_SESSION,
+                        ):
+                            await source.send_str(self._make_ws_error_frame(
+                                request_id, "approval_denied",
+                                f"AgentWard: User denied tool '{tool_name}'.",
+                            ))
+                            continue
+                        # Approved — fall through to chaining check + forward
+                    else:
+                        self._audit_logger.log_tool_call(tool_name, arguments, result)
+                        await source.send_str(self._make_ws_error_frame(
+                            request_id, "approval_required",
+                            f"AgentWard: {result.reason}",
+                        ))
+                        continue
 
-                # ALLOW or LOG — check chaining rules before forwarding
+                # ALLOW, LOG, or approved APPROVE — check chaining rules before forwarding
                 if self._chain_tracker is not None:
                     chain_result = self._chain_tracker.check_before_call(
                         tool_name, arguments,
@@ -948,19 +969,41 @@ class HttpProxy:
             )
 
         if result.decision == PolicyDecision.APPROVE:
-            self._audit_logger.log_tool_call(tool_name, arguments, result)
-            return web.json_response(
-                {
-                    "ok": False,
-                    "error": {
-                        "type": "approval_required",
-                        "message": f"AgentWard: {result.reason}",
+            if self._approval_handler is not None:
+                decision = await self._approval_handler.request_approval(
+                    tool_name, arguments, result.reason,
+                )
+                self._audit_logger.log_tool_call(tool_name, arguments, result)
+                if decision not in (
+                    ApprovalDecision.ALLOW_ONCE,
+                    ApprovalDecision.ALLOW_SESSION,
+                ):
+                    return web.json_response(
+                        {
+                            "ok": False,
+                            "error": {
+                                "type": "approval_denied",
+                                "message": f"AgentWard: User denied tool '{tool_name}'.",
+                            },
+                        },
+                        status=403,
+                    )
+                # Approved — fall through to chaining check + forward
+            else:
+                # No approval handler — block (backwards compat)
+                self._audit_logger.log_tool_call(tool_name, arguments, result)
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": {
+                            "type": "approval_required",
+                            "message": f"AgentWard: {result.reason}",
+                        },
                     },
-                },
-                status=403,
-            )
+                    status=403,
+                )
 
-        # ALLOW or LOG — check chaining rules before forwarding
+        # ALLOW, LOG, or approved APPROVE — check chaining rules before forwarding
         request_id: int | None = None
         if self._chain_tracker is not None:
             chain_result = self._chain_tracker.check_before_call(

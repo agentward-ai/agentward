@@ -340,3 +340,5 @@ class TestDenyOnlyResources:
         # "call_network" → suffix match resource "network", action "call"
         result = engine.evaluate("call_network", {})
         assert result.decision == PolicyDecision.BLOCK
+
+
