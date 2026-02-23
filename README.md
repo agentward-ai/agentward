@@ -240,6 +240,7 @@ ruff check agentward/
 AgentWard is early-stage software. We're being upfront about what works well and what hasn't been battle-tested yet.
 
 **Tested end-to-end and working well:**
+- `agentward init` — one-command scan, policy generation, and environment wiring (macOS)
 - `agentward scan` — static analysis across MCP configs, Python tools, and OpenClaw skills (macOS)
 - `agentward configure` — policy YAML generation from scan results
 - `agentward setup --gateway openclaw` — OpenClaw gateway port swapping + LaunchAgent plist patching
