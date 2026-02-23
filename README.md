@@ -58,24 +58,33 @@ No MCP servers yet? AgentWard can also scan Python tool definitions (OpenAI, Lan
 pip install agentward
 ```
 
-### 1. Scan your tools
+### One-command setup
+
+```bash
+agentward init
+```
+
+Scans your tools, shows a risk summary, generates a recommended policy, and wires AgentWard into your environment — all in one step. Use `--dry-run` to preview without writing anything, or `--yes` for non-interactive CI/CD.
+
+### Or step by step:
+
+#### 1. Scan your tools
 
 ```bash
 agentward scan
 ```
 
-Auto-discovers MCP configs (Claude Desktop, Cursor, Windsurf, VS Code), Python tool definitions (OpenAI, LangChain, CrewAI), and OpenClaw skills. Outputs a permission map with risk ratings and security recommendations.
+Auto-discovers MCP configs (Claude Desktop, Cursor, Windsurf, VS Code), Python tool definitions (OpenAI, LangChain, CrewAI), and OpenClaw skills. Outputs a permission map with risk ratings, skill chain analysis, security recommendations, and developer fix guidance. A markdown report (`agentward-report.md`) is saved automatically.
 
-```
- Server          Tool                 Risk    Data Access
- ─────────────── ──────────────────── ─────── ──────────────────
- filesystem      read_file            MEDIUM  File read
- filesystem      write_file           HIGH    File write
- github          create_issue         MEDIUM  GitHub API
- shell-executor  run_command          CRITICAL Shell execution
+You can also scan a specific skill or directory:
+
+```bash
+agentward scan ~/clawd/skills/bankr/          # scan a single skill
+agentward scan ~/.cursor/mcp.json             # scan specific MCP config
+agentward scan ~/project/                     # scan directory
 ```
 
-### 2. Generate a policy
+#### 2. Generate a policy
 
 ```bash
 agentward configure
@@ -97,7 +106,7 @@ require_approval:
   - delete_file
 ```
 
-### 3. Wire it in
+#### 3. Wire it in
 
 ```bash
 # MCP servers (Claude Desktop, Cursor, etc.)
@@ -109,7 +118,7 @@ agentward setup --gateway openclaw
 
 Rewrites your MCP configs so every tool call routes through the AgentWard proxy. For OpenClaw, swaps the gateway port so AgentWard sits as an HTTP reverse proxy.
 
-### 4. Enforce at runtime
+#### 4. Enforce at runtime
 
 ```bash
 # MCP stdio proxy
@@ -126,6 +135,16 @@ Every tool call is now intercepted, evaluated against your policy, and either al
  [BLOCK]  shell-executor.run_command   rm -rf /
  [APPROVE] gmail.send_email            → waiting for human approval
 ```
+
+#### 5. Visualize your permission graph
+
+```bash
+agentward map                                   # terminal visualization
+agentward map --policy agentward.yaml           # with policy overlay
+agentward map --format mermaid -o graph.md      # export as Mermaid diagram
+```
+
+Shows servers, tools, data access types, risk levels, and detected skill chains. With `--policy`, overlays ALLOW/BLOCK/APPROVE decisions on the graph.
 
 ## How It Works
 
@@ -155,10 +174,12 @@ Agent Host                    AgentWard                     Tool Server
 
 | Command | Description |
 |---------|-------------|
-| `agentward scan` | Static analysis — discover tools, generate permission maps, risk ratings |
+| `agentward init` | One-command setup — scan, generate policy, and wire your environment |
+| `agentward scan` | Static analysis — permission maps, risk ratings, skill chains, developer fix guidance |
 | `agentward configure` | Generate smart-default policy YAML from scan results |
 | `agentward setup` | Wire proxy into MCP configs or gateway ports |
 | `agentward inspect` | Start runtime proxy with live policy enforcement |
+| `agentward map` | Visualize the permission and chaining graph (terminal or Mermaid) |
 | `agentward comply` | Compliance evaluation against regulatory frameworks *(coming soon)* |
 
 ## Policy Actions
@@ -225,7 +246,7 @@ AgentWard is early-stage software. We're being upfront about what works well and
 - `agentward inspect --gateway openclaw` — runtime enforcement of OpenClaw skill calls via LLM API interception (Anthropic provider, streaming mode). This is our most thoroughly tested path.
 
 **Built and unit-tested but not yet end-to-end verified:**
-- MCP stdio proxy (`agentward inspect -- npx server`) — the proxy, protocol parsing, and policy engine are tested in isolation with 550+ unit tests, but we haven't run a full session with Claude Desktop/Cursor through the proxy yet
+- MCP stdio proxy (`agentward inspect -- npx server`) — the proxy, protocol parsing, and policy engine are tested in isolation with 780+ unit tests, but we haven't run a full session with Claude Desktop/Cursor through the proxy yet
 - OpenAI provider interception (Chat Completions + Responses API) — interceptors are unit-tested but no live OpenAI traffic has flowed through them
 - Skill chaining enforcement — the chain tracker and policy evaluation work in tests, but the real-world interaction patterns haven't been validated
 - `agentward setup` for MCP config wrapping (Claude Desktop, Cursor, Windsurf, VS Code) — config rewriting is tested, but we haven't verified the full setup → restart → use cycle for each host
@@ -236,25 +257,6 @@ AgentWard is early-stage software. We're being upfront about what works well and
 - **Windows** — untested. Signal handling, path resolution, and process management may have issues.
 
 If you run into problems on any path we haven't tested, please [open an issue](https://github.com/agentward-ai/agentward/issues) — it helps us prioritize.
-
-## Roadmap
-
-- [x] MCP stdio proxy with policy enforcement
-- [x] HTTP reverse proxy with WebSocket passthrough
-- [x] LLM API proxy with tool_use interception (Anthropic streaming)
-- [x] Static scanner (MCP configs, Python tools, OpenClaw skills)
-- [x] Smart-default policy generation
-- [x] MCP config wrapping (`agentward setup`)
-- [x] Audit logging (JSON Lines + rich stderr)
-- [ ] End-to-end testing: Claude Desktop, Cursor, Windsurf, VS Code
-- [ ] End-to-end testing: OpenAI provider paths
-- [ ] Skill chaining analysis and enforcement
-- [ ] Human-in-the-loop approval flow
-- [ ] Compliance frameworks (HIPAA, SOX, GDPR, PCI-DSS)
-- [ ] Data classifier (PII/PHI detection)
-- [ ] Data boundary enforcement
-- [ ] Skill Compliance Registry
-- [ ] Linux and Windows support
 
 ## Troubleshooting
 
