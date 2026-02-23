@@ -56,17 +56,13 @@ No MCP servers yet? AgentWard can also scan Python tool definitions (OpenAI, Lan
 
 ```bash
 pip install agentward
-```
-
-### One-command setup
-
-```bash
 agentward init
 ```
 
-Scans your tools, shows a risk summary, generates a recommended policy, and wires AgentWard into your environment — all in one step. Use `--dry-run` to preview without writing anything, or `--yes` for non-interactive CI/CD.
+That's it. `agentward init` scans your tools, shows a risk summary, generates a recommended policy, and wires AgentWard into your environment. Most users don't need anything else.
 
-### Or step by step:
+If you want more control, you can run each step individually:
+
 
 #### 1. Scan your tools
 
