@@ -441,12 +441,7 @@ def _run_scan(
     if target is None:
         # Auto-discover
         config_paths = discover_configs()
-        if not config_paths:
-            console.print(
-                "  [dim]No MCP config files found in standard locations[/dim]",
-                highlight=False,
-            )
-            # Don't exit yet — OpenClaw auto-discovery may find something
+        # Don't print "not found" — will show in summary below
     elif target.is_dir():
         # Search directory for config files
         known_names = [
@@ -464,11 +459,6 @@ def _run_scan(
             candidate = target / subdir / "mcp.json"
             if candidate.exists():
                 config_paths.append(candidate)
-        if not config_paths:
-            console.print(
-                f"  [dim]No MCP config files found in {target}[/dim]",
-                highlight=False,
-            )
     elif target is not None and target.is_file():
         config_paths = [target]
     elif target is not None:
@@ -484,10 +474,6 @@ def _run_scan(
         try:
             servers = parse_config_file(config_path)
             all_servers.extend(servers)
-            console.print(
-                f"  [#00ff88]\u2713[/#00ff88] Parsed {config_path} ({len(servers)} server(s))",
-                highlight=False,
-            )
         except (FileNotFoundError, ConfigParseError) as e:
             console.print(
                 f"  [#ff6b35]\u26a0[/#ff6b35] Skipping {config_path}: {e}",
@@ -497,17 +483,11 @@ def _run_scan(
     # Step 2: Enumerate tools from MCP servers
     results: list[EnumerationResult] = []
     if all_servers:
-        console.print(f"\n[bold #5eead4]\u26a1 Enumerating tools from {len(all_servers)} server(s)...[/bold #5eead4]")
         results = asyncio.run(enumerate_all(all_servers, timeout=timeout))
 
-        # Print per-server enumeration summary so the user knows what happened
+        # Only print per-server details for failures/warnings
         for r in results:
-            if r.tools:
-                console.print(
-                    f"  [#00ff88]\u2713[/#00ff88] {r.server.name}: {len(r.tools)} tool(s) ({r.enumeration_method})",
-                    highlight=False,
-                )
-            elif r.enumeration_method == "failed":
+            if r.enumeration_method == "failed":
                 console.print(
                     f"  [#ff6b35]\u2716[/#ff6b35] {r.server.name}: enumeration failed"
                     + (f" — {r.error}" if r.error else ""),
@@ -515,17 +495,7 @@ def _run_scan(
                 )
             elif r.enumeration_method == "static_inference":
                 console.print(
-                    f"  [#ffcc00]\u26a0[/#ffcc00] {r.server.name}: could not enumerate tools (server may not be running)",
-                    highlight=False,
-                )
-                if r.error:
-                    console.print(
-                        f"    [dim]{r.error}[/dim]",
-                        highlight=False,
-                    )
-            else:
-                console.print(
-                    f"  [#ffcc00]\u26a0[/#ffcc00] {r.server.name}: 0 tools returned",
+                    f"  [#ffcc00]\u26a0[/#ffcc00] {r.server.name}: could not enumerate (server not running?)",
                     highlight=False,
                 )
 
@@ -534,69 +504,39 @@ def _run_scan(
     if target is not None and target.is_dir():
         from agentward.scan.skills import scan_directory, tools_to_enumeration_results
 
-        console.print(f"\n[bold #5eead4]\u26a1 Scanning Python files for tool definitions...[/bold #5eead4]")
         py_tools = scan_directory(target)
         if py_tools:
             python_results = tools_to_enumeration_results(py_tools)
-            frameworks = {t.framework.value for t in py_tools}
-            console.print(
-                f"  [#00ff88]\u2713[/#00ff88] Found {len(py_tools)} tool(s) in "
-                f"{len(python_results)} file(s) ({', '.join(sorted(frameworks))})",
-                highlight=False,
-            )
-        else:
-            console.print(
-                f"  [dim]No Python tool definitions found[/dim]",
-                highlight=False,
-            )
 
     # Step 2c: Scan OpenClaw skills
     openclaw_results: list[EnumerationResult] = []
     if target is not None and target.is_dir():
         from agentward.scan.openclaw import scan_openclaw_directory
 
-        console.print(f"\n[bold #5eead4]\u26a1 Scanning for OpenClaw skills...[/bold #5eead4]")
         openclaw_results = scan_openclaw_directory(target)
-        if openclaw_results:
-            total_skills = sum(len(r.tools) for r in openclaw_results)
-            console.print(
-                f"  [#00ff88]\u2713[/#00ff88] Found {total_skills} skill(s)",
-                highlight=False,
-            )
-        else:
-            console.print(
-                f"  [dim]No OpenClaw SKILL.md files found[/dim]",
-                highlight=False,
-            )
     elif target is None:
         # Auto-discover: scan known OpenClaw locations
         from agentward.scan.openclaw import discover_skill_dirs, scan_openclaw
 
-        console.print(f"\n[bold #5eead4]\u26a1 Scanning for OpenClaw skills...[/bold #5eead4]")
         skill_dirs = discover_skill_dirs()
-        if skill_dirs:
-            for skill_dir, label in skill_dirs:
-                console.print(
-                    f"  [dim]Found skill directory: {skill_dir} ({label})[/dim]",
-                    highlight=False,
-                )
         openclaw_results = scan_openclaw()
-        if openclaw_results:
-            total_skills = sum(len(r.tools) for r in openclaw_results)
-            console.print(
-                f"  [#00ff88]\u2713[/#00ff88] Found {total_skills} skill(s) across "
-                f"{len(openclaw_results)} source(s)",
-                highlight=False,
-            )
-        else:
-            console.print(
-                f"  [dim]No OpenClaw skills found in known locations[/dim]",
-                highlight=False,
-            )
-            console.print(
-                f"  [dim]Tip: agentward scan <path> to scan a specific skill directory[/dim]",
-                highlight=False,
-            )
+
+    # Print a single concise scan summary line
+    summary_parts: list[str] = []
+    if all_servers:
+        n_tools = sum(len(r.tools) for r in results if r.tools)
+        summary_parts.append(f"{n_tools} MCP tool(s) from {len(all_servers)} server(s)")
+    if python_results:
+        n_py = sum(len(r.tools) for r in python_results)
+        summary_parts.append(f"{n_py} Python tool(s)")
+    if openclaw_results:
+        n_oc = sum(len(r.tools) for r in openclaw_results)
+        summary_parts.append(f"{n_oc} OpenClaw skill(s)")
+    if summary_parts:
+        console.print(
+            f"[bold #5eead4]\u26a1[/bold #5eead4] Scanned: {', '.join(summary_parts)}",
+            highlight=False,
+        )
 
     # Combine MCP, Python, and OpenClaw results
     all_results = results + python_results + openclaw_results
@@ -692,6 +632,9 @@ def scan(
     Discovers MCP servers, Python agent tool definitions, and OpenClaw
     skills, enumerates their tools, and analyzes data access patterns and risk levels.
 
+    A markdown report (agentward-report.md) is written to the current
+    directory automatically on every scan.
+
     Examples:
       agentward scan                                    # auto-discover all sources
       agentward scan ~/.cursor/mcp.json                 # scan specific MCP config
@@ -699,7 +642,11 @@ def scan(
       agentward scan ~/clawd/skills/                    # scan OpenClaw skills directory
       agentward scan --json > report.json               # machine-readable output
     """
-    from agentward.scan.report import print_scan_json, print_scan_report
+    from agentward.scan.report import (
+        generate_scan_markdown,
+        print_scan_json,
+        print_scan_report,
+    )
 
     scan_result, recommendations, _config_paths, chains = _run_scan(target, timeout, _console)
 
@@ -708,6 +655,15 @@ def scan(
         print_scan_json(scan_result, output_console)
     else:
         print_scan_report(scan_result, recommendations, _console, chains=chains)
+
+        # Write markdown report (skip in --json mode — stdout is for piping)
+        report_path = Path("agentward-report.md")
+        md = generate_scan_markdown(scan_result, recommendations, chains=chains)
+        report_path.write_text(md, encoding="utf-8")
+        _console.print(
+            f"[#00ff88]\u2713[/#00ff88] Report saved to {report_path}",
+            highlight=False,
+        )
 
 
 # ---------------------------------------------------------------------------

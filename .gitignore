@@ -5,6 +5,7 @@ BRIEF.md
 
 # Local config files
 /agentward.yaml
+/agentward-report.md
 sample_mcp_config.json
 
 # Python

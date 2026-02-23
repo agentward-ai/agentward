@@ -145,7 +145,7 @@ class TestScanNoConfigs:
         result = runner.invoke(app, ["scan"])
         assert result.exit_code == 1
         combined = result.output or ""
-        assert "no tools found" in combined.lower() or "no mcp config" in combined.lower()
+        assert "no tools found" in combined.lower() or "no mcp" in combined.lower()
 
     def test_scan_nonexistent_path(self) -> None:
         """Explicit path that doesn't exist → exit 1 with clear message."""

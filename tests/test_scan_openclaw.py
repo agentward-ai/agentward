@@ -12,6 +12,9 @@ from agentward.scan.openclaw import (
     SkillDefinition,
     SkillRequirements,
     _BIN_RISK_SIGNALS,
+    _extract_capabilities,
+    _skill_to_tool_info,
+    _skill_to_tool_infos,
     config_to_enumeration_result,
     parse_clawdbot_config,
     parse_skill_md,
@@ -19,7 +22,6 @@ from agentward.scan.openclaw import (
     scan_skill_directory,
     skills_to_enumeration_results,
     _parse_frontmatter,
-    _skill_to_tool_info,
 )
 from agentward.scan.permissions import (
     DataAccessType,
@@ -151,7 +153,7 @@ class TestScanSkillDirectory:
 
     def test_skill_count(self) -> None:
         skills = scan_skill_directory(FIXTURES)
-        assert len(skills) == 5  # 5 valid skills, 1 invalid (no-frontmatter)
+        assert len(skills) == 6  # 6 valid skills, 1 invalid (no-frontmatter)
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +239,8 @@ class TestSkillsToEnumerationResults:
         skills = scan_skill_directory(FIXTURES)
         results = skills_to_enumeration_results(skills, "test")
         total_tools = sum(len(r.tools) for r in results)
-        assert total_tools == 5  # 5 valid skills
+        # 5 simple skills (1 tool each) + crypto-trader (6 capabilities)
+        assert total_tools >= 11
 
     def test_enumeration_method(self) -> None:
         skills = scan_skill_directory(FIXTURES)
@@ -423,7 +426,8 @@ class TestEndToEndPipeline:
         results = scan_openclaw_directory(FIXTURES)
         assert len(results) >= 1
         total_tools = sum(len(r.tools) for r in results)
-        assert total_tools == 5
+        # 5 simple skills + crypto-trader capabilities
+        assert total_tools >= 11
 
     def test_clawdbot_config_flows_through_pipeline(self) -> None:
         """clawdbot.json analysis should flow through the permission pipeline."""
@@ -441,3 +445,228 @@ class TestEndToEndPipeline:
         for auth_tool in auth_tools:
             access_types = {a.type for a in auth_tool.data_access}
             assert DataAccessType.CREDENTIALS in access_types
+
+
+# ---------------------------------------------------------------------------
+# Capability extraction from markdown body
+# ---------------------------------------------------------------------------
+
+
+class TestCapabilityExtraction:
+    """Test extracting capabilities from SKILL.md markdown bodies."""
+
+    def test_simple_skill_no_capabilities(self) -> None:
+        """Skills without structured capability headings produce empty list."""
+        skill = parse_skill_md(FIXTURES / "email-manager" / "SKILL.md")
+        caps = _extract_capabilities(skill.markdown_body)
+        assert caps == []
+
+    def test_minimal_skill_no_capabilities(self) -> None:
+        """Minimal skill with trivial body produces empty list."""
+        skill = parse_skill_md(FIXTURES / "minimal-skill" / "SKILL.md")
+        caps = _extract_capabilities(skill.markdown_body)
+        assert caps == []
+
+    def test_complex_skill_extracts_capabilities(self) -> None:
+        """Complex skill with capability headings extracts all of them."""
+        skill = parse_skill_md(FIXTURES / "crypto-trader" / "SKILL.md")
+        caps = _extract_capabilities(skill.markdown_body)
+        names = {c.name for c in caps}
+        assert "trading_operations" in names
+        assert "portfolio_management" in names
+        assert "market_research" in names
+        assert "transfers" in names
+        assert "token_deployment" in names
+        assert "automation" in names
+
+    def test_doc_sections_excluded(self) -> None:
+        """Usage, Safety, Getting Started are not treated as capabilities."""
+        skill = parse_skill_md(FIXTURES / "crypto-trader" / "SKILL.md")
+        caps = _extract_capabilities(skill.markdown_body)
+        names = {c.name for c in caps}
+        assert "getting_started" not in names
+        assert "safety" not in names
+        assert "capabilities_overview" not in names
+
+    def test_capability_has_body_text(self) -> None:
+        """Each extracted capability should have non-empty body text."""
+        skill = parse_skill_md(FIXTURES / "crypto-trader" / "SKILL.md")
+        caps = _extract_capabilities(skill.markdown_body)
+        for cap in caps:
+            assert cap.body_text.strip(), f"{cap.name} has empty body"
+
+    def test_empty_body_returns_empty(self) -> None:
+        """Empty markdown body returns empty list."""
+        assert _extract_capabilities("") == []
+        assert _extract_capabilities("   \n   ") == []
+
+    def test_single_section_returns_empty(self) -> None:
+        """A single capability section should return empty (needs 2+)."""
+        body = "## My Capability\n- Does something cool\n- Really cool"
+        caps = _extract_capabilities(body)
+        assert caps == []
+
+
+# ---------------------------------------------------------------------------
+# Multi-tool info generation
+# ---------------------------------------------------------------------------
+
+
+class TestMultiToolInfoGeneration:
+    """Test that complex skills produce multiple ToolInfo objects."""
+
+    def test_simple_skill_single_toolinfo(self) -> None:
+        """Simple skills still produce exactly one ToolInfo."""
+        skill = parse_skill_md(FIXTURES / "email-manager" / "SKILL.md")
+        tools = _skill_to_tool_infos(skill)
+        assert len(tools) == 1
+        assert tools[0].name == "email-manager"
+
+    def test_complex_skill_multiple_toolinfos(self) -> None:
+        """Complex skill produces one ToolInfo per capability."""
+        skill = parse_skill_md(FIXTURES / "crypto-trader" / "SKILL.md")
+        tools = _skill_to_tool_infos(skill)
+        assert len(tools) >= 6
+        names = {t.name for t in tools}
+        assert "crypto-trader:trading_operations" in names
+        assert "crypto-trader:portfolio_management" in names
+        assert "crypto-trader:transfers" in names
+        assert "crypto-trader:token_deployment" in names
+
+    def test_capability_inherits_parent_signals(self) -> None:
+        """Each capability-derived ToolInfo inherits parent's env signals."""
+        skill = parse_skill_md(FIXTURES / "crypto-trader" / "SKILL.md")
+        tools = _skill_to_tool_infos(skill)
+        for tool in tools:
+            props = tool.input_schema.get("properties", {})
+            # Should inherit credential signal from CRYPTO_API_KEY
+            cred_keys = [k for k in props if "credentials" in k]
+            assert len(cred_keys) > 0, (
+                f"{tool.name} should inherit credential signals from parent"
+            )
+
+    def test_read_only_capability_has_annotation(self) -> None:
+        """Portfolio management should be annotated read-only."""
+        skill = parse_skill_md(FIXTURES / "crypto-trader" / "SKILL.md")
+        tools = _skill_to_tool_infos(skill)
+        portfolio_tool = next(t for t in tools if "portfolio" in t.name)
+        assert portfolio_tool.annotations is not None
+        assert portfolio_tool.annotations.read_only_hint is True
+
+    def test_write_capability_not_read_only(self) -> None:
+        """Trading operations should NOT be read-only."""
+        skill = parse_skill_md(FIXTURES / "crypto-trader" / "SKILL.md")
+        tools = _skill_to_tool_infos(skill)
+        trading_tool = next(t for t in tools if "trading" in t.name)
+        assert trading_tool.annotations is not None
+        assert trading_tool.annotations.read_only_hint is False
+
+    def test_capability_has_description(self) -> None:
+        """Each capability ToolInfo should have a meaningful description."""
+        skill = parse_skill_md(FIXTURES / "crypto-trader" / "SKILL.md")
+        tools = _skill_to_tool_infos(skill)
+        for tool in tools:
+            assert tool.description is not None
+            assert len(tool.description) > 5
+
+    def test_backward_compat_wrapper(self) -> None:
+        """_skill_to_tool_info (singular) returns first tool."""
+        skill = parse_skill_md(FIXTURES / "email-manager" / "SKILL.md")
+        single = _skill_to_tool_info(skill)
+        multi = _skill_to_tool_infos(skill)
+        assert single.name == multi[0].name
+        assert single.input_schema == multi[0].input_schema
+
+
+# ---------------------------------------------------------------------------
+# Capability end-to-end pipeline
+# ---------------------------------------------------------------------------
+
+
+class TestCapabilityEndToEnd:
+    """Test capabilities flowing through the full scan pipeline."""
+
+    def test_trading_capability_risk(self) -> None:
+        """Trading operations should be HIGH or CRITICAL risk."""
+        skills = [parse_skill_md(FIXTURES / "crypto-trader" / "SKILL.md")]
+        results = skills_to_enumeration_results(skills, "test")
+        scan_result = build_permission_map(results)
+
+        server_map = scan_result.servers[0]
+        trading_tool = next(
+            (t for t in server_map.tools if "trading" in t.tool.name),
+            None,
+        )
+        assert trading_tool is not None
+        assert trading_tool.risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL)
+
+    def test_portfolio_is_read_only(self) -> None:
+        """Portfolio management should be annotated as read-only."""
+        skills = [parse_skill_md(FIXTURES / "crypto-trader" / "SKILL.md")]
+        results = skills_to_enumeration_results(skills, "test")
+        scan_result = build_permission_map(results)
+
+        server_map = scan_result.servers[0]
+        portfolio_tool = next(
+            (t for t in server_map.tools if "portfolio" in t.tool.name),
+            None,
+        )
+        assert portfolio_tool is not None
+        # Portfolio is read-only (no writes), but inherits credentials
+        # from parent skill, so risk is still elevated
+        assert portfolio_tool.is_read_only is True
+        assert portfolio_tool.is_destructive is False
+
+    def test_token_deployment_high_risk(self) -> None:
+        """Token deployment (deploy + sign + credentials) should be high risk."""
+        skills = [parse_skill_md(FIXTURES / "crypto-trader" / "SKILL.md")]
+        results = skills_to_enumeration_results(skills, "test")
+        scan_result = build_permission_map(results)
+
+        server_map = scan_result.servers[0]
+        deploy_tool = next(
+            (t for t in server_map.tools if "deployment" in t.tool.name),
+            None,
+        )
+        assert deploy_tool is not None
+        assert deploy_tool.risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL)
+
+    def test_financial_access_type_detected(self) -> None:
+        """Trading capability should have FINANCIAL data access type."""
+        skills = [parse_skill_md(FIXTURES / "crypto-trader" / "SKILL.md")]
+        results = skills_to_enumeration_results(skills, "test")
+        scan_result = build_permission_map(results)
+
+        server_map = scan_result.servers[0]
+        trading_tool = next(
+            (t for t in server_map.tools if "trading" in t.tool.name),
+            None,
+        )
+        assert trading_tool is not None
+        access_types = {a.type for a in trading_tool.data_access}
+        assert DataAccessType.FINANCIAL in access_types
+
+    def test_simple_skills_unchanged(self) -> None:
+        """Simple skills in the same scan should still work normally."""
+        skills = scan_skill_directory(FIXTURES)
+        results = skills_to_enumeration_results(skills, "test")
+        scan_result = build_permission_map(results)
+
+        # Find shell-runner — should still be CRITICAL
+        all_tools = [
+            t for s in scan_result.servers for t in s.tools
+        ]
+        shell_tool = next(
+            (t for t in all_tools if t.tool.name == "shell-runner"),
+            None,
+        )
+        assert shell_tool is not None
+        assert shell_tool.risk_level == RiskLevel.CRITICAL
+
+    def test_total_tool_count_with_capabilities(self) -> None:
+        """Directory scan with crypto-trader should have more tools."""
+        skills = scan_skill_directory(FIXTURES)
+        results = skills_to_enumeration_results(skills, "test")
+        total_tools = sum(len(r.tools) for r in results)
+        # 5 simple skills (1 each) + crypto-trader (6+ capabilities)
+        assert total_tools >= 11

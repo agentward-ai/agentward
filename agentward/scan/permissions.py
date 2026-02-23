@@ -43,6 +43,7 @@ class DataAccessType(str, Enum):
     SHELL = "shell"
     CODE = "code"
     BROWSER = "browser"
+    FINANCIAL = "financial"
     UNKNOWN = "unknown"
 
 
@@ -140,6 +141,16 @@ _SCHEMA_PATTERNS: dict[str, tuple[DataAccessType, bool, bool]] = {
     "_network_": (DataAccessType.NETWORK, True, False),
     "_credentials_": (DataAccessType.CREDENTIALS, True, False),
     "_code_": (DataAccessType.CODE, True, False),
+    # OpenClaw capability-derived signals (from markdown body analysis in _skill_to_tool_infos)
+    "_cap_network": (DataAccessType.NETWORK, True, False),
+    "_cap_credentials": (DataAccessType.CREDENTIALS, True, False),
+    "_cap_financial": (DataAccessType.FINANCIAL, True, True),
+    "_cap_shell": (DataAccessType.SHELL, False, True),
+    "_cap_email": (DataAccessType.EMAIL, True, True),
+    "_cap_filesystem": (DataAccessType.FILESYSTEM, True, False),
+    "_cap_browser": (DataAccessType.BROWSER, True, False),
+    "_cap_database": (DataAccessType.DATABASE, True, False),
+    "_cap_code": (DataAccessType.CODE, True, False),
 }
 
 # --- Tool name verb patterns for mutability classification ---
@@ -398,6 +409,18 @@ def compute_risk(
     if DataAccessType.NETWORK in access_types and DataAccessType.CREDENTIALS in access_types:
         risk = _max_risk(risk, RiskLevel.CRITICAL)
         reasons.append("Network access combined with credentials — exfiltration risk")
+
+    # Financial operations → at least HIGH
+    if DataAccessType.FINANCIAL in access_types:
+        risk = _max_risk(risk, RiskLevel.HIGH)
+        reasons.append("Financial operations — value transfer risk")
+
+    # Financial + credentials → CRITICAL (direct value transfer)
+    if DataAccessType.FINANCIAL in access_types and DataAccessType.CREDENTIALS in access_types:
+        risk = _max_risk(risk, RiskLevel.CRITICAL)
+        reasons.append(
+            "Financial operations with credential access — direct value transfer risk"
+        )
 
     # Destructive tools → at least HIGH
     if is_destructive:

@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from agentward.scan.config import ServerConfig, TransportType
-from agentward.scan.enumerator import EnumerationResult, ToolInfo
+from agentward.scan.enumerator import EnumerationResult, ToolAnnotations, ToolInfo
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +62,15 @@ class SkillDefinition:
     install_steps: list[dict[str, Any]] = field(default_factory=list)
     source_file: Path = field(default_factory=lambda: Path("."))
     markdown_body: str = ""
+
+
+@dataclass
+class SkillCapability:
+    """A capability section extracted from a SKILL.md markdown body."""
+
+    name: str  # snake_case identifier, e.g. "trading_operations"
+    heading: str  # original heading text, e.g. "Trading Operations"
+    body_text: str  # collected body text (bullet points, paragraphs)
 
 
 @dataclass
@@ -532,29 +541,305 @@ _ENV_RISK_PATTERNS: list[tuple[str, str]] = [
     ("AUTH", "credentials"),
 ]
 
+# ---------------------------------------------------------------------------
+# Markdown body capability extraction
+# ---------------------------------------------------------------------------
 
-def _skill_to_tool_info(skill: SkillDefinition) -> ToolInfo:
-    """Convert a SkillDefinition to a ToolInfo for the permission pipeline.
+_HEADING_RE = re.compile(r"^(#{2,3})\s+(.+)$")
 
-    The tool name is the skill name. The input_schema is synthesized from
-    the skill's required binaries and env vars (these are the "inputs"
-    that determine what the skill can access).
+# Documentation sections that should NOT be treated as capabilities.
+_DOC_SECTIONS = frozenset({
+    "usage",
+    "configuration",
+    "setup",
+    "install",
+    "installation",
+    "safety",
+    "safety & access control",
+    "common commands",
+    "prerequisites",
+    "requirements",
+    "getting started",
+    "troubleshooting",
+    "faq",
+    "notes",
+    "examples",
+    "reference",
+    "references",
+    "changelog",
+    "license",
+    "capabilities overview",
+    "features",
+    "overview",
+    "resources",
+    "best practices",
+    "tips for success",
+    "tips",
+    "quick start",
+    "api workflow",
+    "environment variables",
+    "supported chains",
+    "error handling",
+    "prompt examples by category",
+    "common patterns",
+    "option 1: bankr cli (recommended)",
+    "option 2: rest api (direct)",
+    "cli command reference",
+    "core commands",
+    "configuration commands",
+    "getting an api key",
+    "first-time setup",
+    "see also",
+    "uninstall",
+    "upgrade",
+    "updates",
+    "migration",
+    "compatibility",
+    "contributing",
+    "acknowledgements",
+    "credits",
+    "about",
+    "contact",
+    "support",
+})
+
+
+def _heading_to_snake_case(heading: str) -> str:
+    """Normalize a markdown heading to a snake_case identifier.
+
+    Args:
+        heading: The heading text, e.g. "Trading Operations".
+
+    Returns:
+        Snake_case identifier, e.g. "trading_operations".
+    """
+    # Lowercase, strip non-alphanumeric (except spaces), collapse spaces to _
+    name = heading.lower().strip()
+    name = re.sub(r"[^a-z0-9\s]", "", name)
+    name = re.sub(r"\s+", "_", name).strip("_")
+    return name
+
+
+def _extract_capabilities(markdown_body: str) -> list[SkillCapability]:
+    """Extract capability sections from a SKILL.md markdown body.
+
+    Strategy: Look for a capabilities parent heading (``## Capabilities Overview``,
+    ``## Capabilities``, ``## Features``, etc.) and extract all ``###``
+    sub-headings beneath it. This avoids picking up documentation sections
+    like ``## Common Commands``, ``## Troubleshooting``, etc.
+
+    Falls back to scanning standalone ``##`` headings only when no
+    capabilities parent is found AND there are 3+ non-doc ``##`` sections
+    (indicating a structured skill without the standard parent heading).
+
+    Args:
+        markdown_body: The markdown content below the YAML frontmatter.
+
+    Returns:
+        List of extracted capabilities (empty if skill is simple/unstructured).
+    """
+    if not markdown_body.strip():
+        return []
+
+    # -- Pass 1: parse all sections with their parent context ----------------
+    lines = markdown_body.split("\n")
+
+    # Recognized parent headings whose ### children are capabilities
+    _CAPABILITY_PARENTS = frozenset({
+        "capabilities overview",
+        "capabilities",
+        "features",
+        "what it can do",
+        "core features",
+    })
+
+    # Track structured sections: (level, heading, body_lines, parent_h2)
+    sections: list[tuple[str, str, list[str], str | None]] = []
+    current_heading: str | None = None
+    current_level: str | None = None
+    current_body: list[str] = []
+    current_h2_parent: str | None = None  # the ## heading above current ###
+
+    for line in lines:
+        match = _HEADING_RE.match(line)
+        if match:
+            # Save previous section
+            if current_heading is not None:
+                sections.append(
+                    (current_level or "", current_heading, current_body,
+                     current_h2_parent if current_level == "###" else None)
+                )
+            current_level = match.group(1)
+            current_heading = match.group(2).strip()
+            current_body = []
+
+            # Track current ## parent for ### children
+            if current_level == "##":
+                current_h2_parent = current_heading.lower()
+        else:
+            current_body.append(line)
+
+    # Save final section
+    if current_heading is not None:
+        sections.append(
+            (current_level or "", current_heading, current_body,
+             current_h2_parent if current_level == "###" else None)
+        )
+
+    # -- Pass 2: extract capabilities from ### under capability parents ------
+    capabilities: list[SkillCapability] = []
+
+    for level, heading, body_lines, parent_h2 in sections:
+        heading_lower = heading.lower()
+
+        if heading_lower in _DOC_SECTIONS:
+            continue
+
+        # Primary path: ### headings under a recognized capability parent
+        if level == "###" and parent_h2 is not None and parent_h2 in _CAPABILITY_PARENTS:
+            body_text = "\n".join(body_lines).strip()
+            if not body_text:
+                continue
+            name = _heading_to_snake_case(heading)
+            if not name:
+                continue
+            capabilities.append(
+                SkillCapability(name=name, heading=heading, body_text=body_text)
+            )
+
+    # If we found capabilities under a parent heading, return them
+    if len(capabilities) >= 2:
+        return capabilities
+
+    # -- Fallback: standalone ## sections (for skills without a parent) ------
+    # Only used when there's no "## Capabilities Overview" style parent.
+    fallback: list[SkillCapability] = []
+    for level, heading, body_lines, _ in sections:
+        heading_lower = heading.lower()
+        if heading_lower in _DOC_SECTIONS:
+            continue
+        if level == "##":
+            body_text = "\n".join(body_lines).strip()
+            if not body_text:
+                continue
+            name = _heading_to_snake_case(heading)
+            if not name:
+                continue
+            fallback.append(
+                SkillCapability(name=name, heading=heading, body_text=body_text)
+            )
+
+    # Need 3+ standalone ## sections to qualify (high threshold to avoid
+    # false positives on simple skills with "## Usage" + "## Safety")
+    if len(fallback) >= 3:
+        return fallback
+
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Capability keyword classification
+# ---------------------------------------------------------------------------
+
+# Keywords indicating financial operations (trading, value transfer, etc.)
+_FINANCIAL_KEYWORDS = frozenset({
+    "swap", "swaps", "buy", "sell", "trade", "trades", "trading",
+    "order", "orders", "bid", "ask",
+    "balance", "balances", "portfolio", "price", "prices",
+    "market", "markets", "exchange",
+    "send", "transfer", "transfers", "withdraw", "deposit", "pay", "fund",
+    "bet", "bets", "betting", "wager", "wagers",
+    "leverage", "margin", "position", "positions",
+    "nft", "nfts", "token", "tokens", "mint", "deploy",
+    "profit", "loss", "fee", "fees", "gas", "staking", "yield",
+})
+
+# Keywords indicating network access (API calls, web requests)
+_NETWORK_KEYWORDS = frozenset({
+    "api", "endpoint", "request", "fetch", "query",
+    "blockchain", "rpc", "transaction", "block", "chain",
+    "url", "http", "webhook", "polling",
+})
+
+# Keywords indicating credential/signing operations
+_CREDENTIALS_KEYWORDS = frozenset({
+    "sign", "approve", "authorize", "authenticate",
+    "key", "wallet", "wallets", "secret", "password",
+    "deploy", "raw", "submit", "redeem",
+})
+
+# Keywords indicating write/mutating operations
+_WRITE_KEYWORDS = frozenset({
+    "swap", "swaps", "buy", "sell", "execute", "order", "orders",
+    "send", "transfer", "withdraw", "deposit", "pay",
+    "create", "modify", "update", "set", "write", "post",
+    "submit", "sign", "deploy", "mint", "launch", "approve",
+    "bet", "bets", "betting", "wager", "wagers",
+    "leverage", "short", "long",
+    "automate", "schedule", "trigger", "place",
+})
+
+# Keywords indicating destructive operations
+_DESTRUCTIVE_KEYWORDS = frozenset({
+    "delete", "remove", "liquidate", "burn", "revoke", "cancel", "close",
+})
+
+
+def _classify_capability(
+    body_text: str,
+) -> tuple[set[str], bool, bool]:
+    """Classify a capability's risk signals from its body text keywords.
+
+    Tokenizes the body text and checks for membership in keyword sets to
+    determine what data access types and mutability the capability implies.
+
+    Args:
+        body_text: The collected text from the capability section.
+
+    Returns:
+        Tuple of (set of _cap_* property names, is_write, is_destructive).
+    """
+    lower = body_text.lower()
+    # Tokenize: split on non-alphanumeric, filter empties
+    tokens = frozenset(re.split(r"[^a-z0-9]+", lower))
+
+    properties: set[str] = set()
+    is_write = bool(tokens & _WRITE_KEYWORDS)
+    is_destructive = bool(tokens & _DESTRUCTIVE_KEYWORDS)
+
+    if tokens & _FINANCIAL_KEYWORDS:
+        properties.add("_cap_financial")
+    if tokens & _NETWORK_KEYWORDS:
+        properties.add("_cap_network")
+    if tokens & _CREDENTIALS_KEYWORDS:
+        properties.add("_cap_credentials")
+
+    # If financial or network keywords found but neither property added,
+    # ensure at least network is signaled (most capabilities involve network)
+    if not properties and (tokens & _FINANCIAL_KEYWORDS or tokens & _NETWORK_KEYWORDS):
+        properties.add("_cap_network")
+
+    return properties, is_write, is_destructive
+
+
+def _build_base_properties(skill: SkillDefinition) -> dict[str, Any]:
+    """Build synthetic schema properties from a skill's binary/env requirements.
+
+    These properties encode risk signals (shell, network, credentials, etc.)
+    so the downstream schema-based analyzer can detect them.
 
     Args:
         skill: The parsed skill definition.
 
     Returns:
-        A ToolInfo suitable for the downstream permission analyzer.
+        Dict of synthetic JSON schema properties.
     """
-    # Build a synthetic input_schema from requirements
-    # This lets the existing schema-based analysis detect risk signals
     properties: dict[str, Any] = {}
 
     for bin_name in skill.requirements.bins + skill.requirements.any_bins:
         signal = _BIN_RISK_SIGNALS.get(bin_name)
         if signal:
             risk_type = signal["type"]
-            # Add a synthetic property that triggers the right pattern match
             properties[f"_{risk_type}_bin_{bin_name}"] = {
                 "type": "string",
                 "description": f"Requires binary: {bin_name}",
@@ -569,29 +854,117 @@ def _skill_to_tool_info(skill: SkillDefinition) -> ToolInfo:
                 }
                 break
 
-    schema: dict[str, Any] = {}
-    if properties:
-        schema = {
-            "type": "object",
-            "properties": properties,
-        }
+    return properties
 
-    # Build description from skill metadata
-    desc_parts: list[str] = []
-    if skill.description:
-        desc_parts.append(skill.description)
-    if skill.requirements.bins:
-        desc_parts.append(f"Uses: {', '.join(skill.requirements.bins)}")
-    if skill.requirements.any_bins:
-        desc_parts.append(f"Uses one of: {', '.join(skill.requirements.any_bins)}")
-    if skill.requirements.env:
-        desc_parts.append(f"Env: {', '.join(skill.requirements.env)}")
 
-    return ToolInfo(
-        name=skill.name,
-        description=" | ".join(desc_parts) if desc_parts else None,
-        input_schema=schema,
-    )
+def _skill_to_tool_infos(skill: SkillDefinition) -> list[ToolInfo]:
+    """Convert a SkillDefinition to one or more ToolInfo objects.
+
+    For simple skills (no structured capability headings), returns a single
+    ToolInfo matching the legacy behavior. For complex skills with markdown
+    capability sections, returns one ToolInfo per capability — each inheriting
+    the parent skill's binary/env signals and adding capability-specific
+    risk properties.
+
+    Args:
+        skill: The parsed skill definition.
+
+    Returns:
+        List of ToolInfo objects for the downstream permission analyzer.
+    """
+    base_properties = _build_base_properties(skill)
+    capabilities = _extract_capabilities(skill.markdown_body)
+
+    # Simple skill path: no capability sections found → single ToolInfo
+    if not capabilities:
+        schema: dict[str, Any] = {}
+        if base_properties:
+            schema = {"type": "object", "properties": base_properties}
+
+        desc_parts: list[str] = []
+        if skill.description:
+            desc_parts.append(skill.description)
+        if skill.requirements.bins:
+            desc_parts.append(f"Uses: {', '.join(skill.requirements.bins)}")
+        if skill.requirements.any_bins:
+            desc_parts.append(
+                f"Uses one of: {', '.join(skill.requirements.any_bins)}"
+            )
+        if skill.requirements.env:
+            desc_parts.append(f"Env: {', '.join(skill.requirements.env)}")
+
+        return [
+            ToolInfo(
+                name=skill.name,
+                description=" | ".join(desc_parts) if desc_parts else None,
+                input_schema=schema,
+            )
+        ]
+
+    # Complex skill path: one ToolInfo per capability
+    tool_infos: list[ToolInfo] = []
+
+    for cap in capabilities:
+        cap_properties, is_write, is_destructive = _classify_capability(
+            cap.body_text
+        )
+
+        # Start with inherited base properties, then add capability-specific
+        props = dict(base_properties)
+        for cap_prop in cap_properties:
+            props[cap_prop] = {
+                "type": "string",
+                "description": f"Capability signal: {cap.heading}",
+            }
+
+        cap_schema: dict[str, Any] = {}
+        if props:
+            cap_schema = {"type": "object", "properties": props}
+
+        # Set annotations based on keyword analysis
+        if is_destructive:
+            annotations = ToolAnnotations(
+                read_only_hint=False, destructive_hint=True
+            )
+        elif is_write:
+            annotations = ToolAnnotations(read_only_hint=False)
+        else:
+            annotations = ToolAnnotations(read_only_hint=True)
+
+        # Build description from capability heading + first meaningful line
+        first_line = ""
+        for line in cap.body_text.split("\n"):
+            stripped = line.strip().lstrip("-*").strip()
+            if stripped:
+                first_line = stripped
+                break
+        desc = f"{cap.heading}: {first_line}" if first_line else cap.heading
+
+        tool_infos.append(
+            ToolInfo(
+                name=f"{skill.name}:{cap.name}",
+                description=desc,
+                input_schema=cap_schema,
+                annotations=annotations,
+            )
+        )
+
+    return tool_infos
+
+
+def _skill_to_tool_info(skill: SkillDefinition) -> ToolInfo:
+    """Convert a SkillDefinition to a single ToolInfo (backward compat).
+
+    Returns the first ToolInfo from _skill_to_tool_infos. Kept for
+    backward compatibility with existing callers and tests.
+
+    Args:
+        skill: The parsed skill definition.
+
+    Returns:
+        A ToolInfo suitable for the downstream permission analyzer.
+    """
+    return _skill_to_tool_infos(skill)[0]
 
 
 def skills_to_enumeration_results(
@@ -600,9 +973,10 @@ def skills_to_enumeration_results(
 ) -> list[EnumerationResult]:
     """Convert OpenClaw skill definitions into EnumerationResults.
 
-    Each skill becomes a separate tool within a single "virtual server"
-    representing the skill directory. This mirrors how MCP servers and
-    Python tool files are represented.
+    Each skill becomes one or more tools within a single "virtual server"
+    representing the skill directory. Simple skills produce one tool;
+    complex skills with structured capability sections produce one tool
+    per capability.
 
     Args:
         skills: Skill definitions from a single directory.
@@ -633,7 +1007,9 @@ def skills_to_enumeration_results(
             client=f"openclaw:{location_label}",
         )
 
-        tool_infos = [_skill_to_tool_info(s) for s in root_skills]
+        tool_infos: list[ToolInfo] = []
+        for s in root_skills:
+            tool_infos.extend(_skill_to_tool_infos(s))
 
         results.append(EnumerationResult(
             server=server,
@@ -766,12 +1142,25 @@ def scan_openclaw_directory(directory: Path) -> list[EnumerationResult]:
     Unlike scan_openclaw() which auto-discovers locations, this scans
     a user-specified directory. Used when `agentward scan <dir>` is run.
 
+    Handles two cases:
+      - ``agentward scan ~/clawd/skills/``     → scans subdirectories for SKILL.md
+      - ``agentward scan ~/clawd/skills/bankr/`` → directory itself contains SKILL.md
+
     Args:
         directory: Directory to scan for SKILL.md files.
 
     Returns:
         EnumerationResults for any skills found.
     """
+    # Check if the directory itself is a single skill (contains SKILL.md)
+    skill_md = directory / "SKILL.md"
+    if skill_md.exists():
+        try:
+            skill = parse_skill_md(skill_md)
+            return skills_to_enumeration_results([skill], "user-specified")
+        except (ValueError, UnicodeDecodeError):
+            pass  # Fall through to directory scan
+
     skills = scan_skill_directory(directory)
     if not skills:
         return []

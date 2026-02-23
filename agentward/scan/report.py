@@ -59,6 +59,7 @@ _ACCESS_ICONS: dict[DataAccessType, str] = {
     DataAccessType.SHELL: "\U0001f4bb",         # 💻
     DataAccessType.CODE: "\U0001f4dd",          # 📝
     DataAccessType.BROWSER: "\U0001f30d",       # 🌍
+    DataAccessType.FINANCIAL: "\U0001f4b0",     # 💰
     DataAccessType.UNKNOWN: "\u2753",           # ❓
 }
 
@@ -143,6 +144,229 @@ def print_scan_json(scan: ScanResult, console: Console) -> None:
     console.print_json(json.dumps(data, indent=2))
 
 
+def generate_scan_markdown(
+    scan: ScanResult,
+    recommendations: list[Recommendation],
+    chains: list[ChainDetection] | None = None,
+) -> str:
+    """Generate a markdown scan report suitable for sharing on GitHub.
+
+    Includes: timestamp, AgentWard version, summary counts, permission map
+    table, detected chains, and grouped recommendations.
+
+    Args:
+        scan: The complete scan result.
+        recommendations: Generated recommendations.
+        chains: Detected skill chains (optional, computed if not provided).
+
+    Returns:
+        Complete markdown string.
+    """
+    from datetime import datetime, timezone
+
+    import agentward
+
+    if chains is None:
+        from agentward.scan.chains import detect_chains
+
+        chains = detect_chains(scan)
+
+    lines: list[str] = []
+
+    # Header
+    lines.append("# AgentWard Scan Report")
+    lines.append("")
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    lines.append(f"**Generated:** {ts}  ")
+    lines.append(f"**AgentWard version:** {agentward.__version__}  ")
+    total_tools = sum(len(s.tools) for s in scan.servers)
+    lines.append(f"**Tools scanned:** {total_tools}")
+    lines.append("")
+
+    # Risk summary
+    counts: dict[RiskLevel, int] = {
+        RiskLevel.CRITICAL: 0,
+        RiskLevel.HIGH: 0,
+        RiskLevel.MEDIUM: 0,
+        RiskLevel.LOW: 0,
+    }
+    for server_map in scan.servers:
+        for tool_perm in server_map.tools:
+            counts[tool_perm.risk_level] += 1
+
+    risk_parts: list[str] = []
+    risk_emoji = {
+        RiskLevel.CRITICAL: "🔴",
+        RiskLevel.HIGH: "🟠",
+        RiskLevel.MEDIUM: "🟡",
+        RiskLevel.LOW: "🟢",
+    }
+    for level in (RiskLevel.CRITICAL, RiskLevel.HIGH, RiskLevel.MEDIUM, RiskLevel.LOW):
+        if counts[level] > 0:
+            risk_parts.append(f"{risk_emoji[level]} {counts[level]} {level.value.lower()}")
+    if chains:
+        risk_parts.append(f"⚠️ {len(chains)} chain(s)")
+
+    lines.append(f"> {' · '.join(risk_parts)}")
+    lines.append("")
+
+    # Permission map table — collect rows first to compute column widths
+    _md_risk_label = {
+        RiskLevel.CRITICAL: "🔴 CRITICAL",
+        RiskLevel.HIGH: "⚠️ HIGH",
+        RiskLevel.MEDIUM: "⚠️ MEDIUM",
+        RiskLevel.LOW: "✅ LOW",
+    }
+    table_rows: list[tuple[str, str, str, str, str]] = []
+    for server_map in scan.servers:
+        source = _source_badge(server_map)
+        for tool_perm in server_map.tools:
+            caps = _capabilities_label(tool_perm)
+            risk_label = _md_risk_label[tool_perm.risk_level]
+            why = _risk_reason_summary(tool_perm)
+            table_rows.append((source, f"`{tool_perm.tool.name}`", caps, risk_label, why))
+
+    headers = ("Source", "Tool/Skill", "Capabilities", "Risk", "Why")
+    # Compute column widths (min of header width or content)
+    col_widths = [len(h) for h in headers]
+    for row in table_rows:
+        for i, cell in enumerate(row):
+            col_widths[i] = max(col_widths[i], len(cell))
+
+    def _md_row(cells: tuple[str, ...]) -> str:
+        parts = [cell.ljust(col_widths[i]) for i, cell in enumerate(cells)]
+        return "| " + " | ".join(parts) + " |"
+
+    def _md_sep() -> str:
+        return "| " + " | ".join("-" * w for w in col_widths) + " |"
+
+    lines.append("## Permission Map")
+    lines.append("")
+    lines.append(_md_row(headers))
+    lines.append(_md_sep())
+    for row in table_rows:
+        lines.append(_md_row(row))
+    lines.append("")
+
+    # Chains (grouped)
+    if chains:
+        lines.append("## Skill Chains Detected")
+        lines.append("")
+
+        from collections import defaultdict
+
+        chain_groups: dict[tuple[str, str, str], list[ChainDetection]] = defaultdict(list)
+        for chain in chains:
+            key = (
+                _skill_parent(chain.source_server),
+                _skill_parent(chain.target_server),
+                chain.description,
+            )
+            chain_groups[key].append(chain)
+
+        sorted_keys = sorted(
+            chain_groups.keys(),
+            key=lambda k: (
+                0 if any(c.risk == ChainRisk.CRITICAL for c in chain_groups[k]) else 1,
+                k[0],
+                k[1],
+            ),
+        )
+
+        for src, tgt, desc in sorted_keys:
+            group = chain_groups[(src, tgt, desc)]
+            count = len(group)
+            risk = "CRITICAL" if any(c.risk == ChainRisk.CRITICAL for c in group) else "HIGH"
+            if count > 1:
+                lines.append(f"- **{risk}:** `{src}` → `{tgt}` ({count} chains) — {desc}")
+            else:
+                lines.append(f"- **{risk}:** `{group[0].label}` — {desc}")
+        lines.append("")
+
+    # Recommendations (grouped)
+    if recommendations:
+        lines.append("## Recommendations")
+        lines.append("")
+        grouped = _group_recommendations(recommendations)
+        for i, (group, display_target) in enumerate(grouped, 1):
+            rep = group[0]
+            lines.append(f"### {i}. {rep.severity.value} — {display_target}")
+            lines.append("")
+            lines.append(rep.message)
+            lines.append("")
+            if rep.suggested_policy:
+                if len(group) > 1 and "require_approval:" in rep.suggested_policy:
+                    tool_names = []
+                    for r in group:
+                        t = r.target
+                        tool_name = t.rsplit("/", 1)[-1] if "/" in t else t
+                        tool_names.append(tool_name)
+                    merged = "require_approval:\n" + "\n".join(
+                        f"  - {name}" for name in tool_names
+                    )
+                    lines.append("```yaml")
+                    lines.append(merged)
+                    lines.append("```")
+                else:
+                    lines.append("```yaml")
+                    lines.append(rep.suggested_policy)
+                    lines.append("```")
+            lines.append("")
+
+    # Developer fixes — grouped by parent skill, only for HIGH+ tools
+    dev_fixes: list[tuple[str, str, str, str]] = []  # (parent, tool, reason, fix)
+    for server_map in scan.servers:
+        for tool_perm in server_map.tools:
+            if tool_perm.risk_level in (RiskLevel.LOW, RiskLevel.MEDIUM):
+                continue
+            reason = _risk_reason_summary(tool_perm)
+            fix = _dev_fix_for_reasons(tool_perm.risk_reasons)
+            if fix:
+                parent = _skill_parent(tool_perm.tool.name)
+                dev_fixes.append((parent, tool_perm.tool.name, reason, fix))
+
+    if dev_fixes:
+        lines.append("## Fixes for Skill Developers")
+        lines.append("")
+        lines.append("If you maintain these skills, here's how to reduce their risk rating:")
+        lines.append("")
+
+        # Group by parent skill
+        from collections import OrderedDict
+
+        by_parent: OrderedDict[str, list[tuple[str, str, str]]] = OrderedDict()
+        for parent, tool, reason, fix in dev_fixes:
+            by_parent.setdefault(parent, []).append((tool, reason, fix))
+
+        for parent, entries in by_parent.items():
+            lines.append(f"### `{parent}`")
+            lines.append("")
+            # Deduplicate fixes (multiple tools may have the same fix)
+            seen_fixes: set[str] = set()
+            for tool, reason, fix in entries:
+                if fix in seen_fixes:
+                    continue
+                seen_fixes.add(fix)
+                # List the tools this fix applies to
+                affected = [t for t, _r, f in entries if f == fix]
+                if len(affected) > 1:
+                    tool_list = ", ".join(f"`{t}`" for t in affected)
+                    lines.append(f"**Affects:** {tool_list}  ")
+                else:
+                    lines.append(f"**Affects:** `{affected[0]}`  ")
+                lines.append(f"**Issue:** {reason}  ")
+                lines.append(f"**Fix:** {fix}")
+                lines.append("")
+        lines.append("")
+
+    # Footer
+    lines.append("---")
+    lines.append("*Generated by [AgentWard](https://agentward.ai) — open-source permission control plane for AI agents.*")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Unified scan table
 # ---------------------------------------------------------------------------
@@ -156,6 +380,119 @@ def _source_badge(server_map: ServerPermissionMap) -> str:
     if transport == "python":
         return "SDK"
     return "MCP"
+
+
+def _risk_reason_summary(tool_perm: ToolPermission) -> str:
+    """Return a concise primary risk reason for display.
+
+    Filters out internal annotations and returns the most significant
+    reason. Returns empty string for LOW risk tools.
+    """
+    if tool_perm.risk_level == RiskLevel.LOW:
+        return ""
+    # Skip internal annotations — only show substantive reasons
+    meaningful = [
+        r for r in tool_perm.risk_reasons
+        if not r.startswith("Annotations ")
+        and r != "No specific risk signals detected"
+        and r != "Read-only operation"
+    ]
+    if not meaningful:
+        return ""
+    # Return the last (highest-priority) reason, trimmed
+    return meaningful[-1]
+
+
+# Mapping: risk reason substring → developer-facing fix for SKILL.md
+_DEV_FIXES: list[tuple[str, str]] = [
+    (
+        "Financial operations with credential access",
+        "Separate credential management from financial operations into "
+        "distinct skills. Credential-handling capabilities should not share "
+        "a skill with value-transfer operations.",
+    ),
+    (
+        "Financial operations",
+        "Mark read-only capabilities (e.g. balance checks, price lookups) "
+        "explicitly in SKILL.md. Add a `## Security` section documenting "
+        "authentication requirements and value-transfer limits.",
+    ),
+    (
+        "Network access combined with credentials",
+        "Document which external endpoints are called and why. Avoid "
+        "bundling credential storage with network-calling capabilities. "
+        "Consider splitting into a credential-manager skill and a "
+        "network-calling skill.",
+    ),
+    (
+        "Can execute shell commands",
+        "Restrict execution to a specific allowlist of commands. Document "
+        "exactly what gets executed in SKILL.md. Avoid accepting "
+        "arbitrary command strings from agent input.",
+    ),
+    (
+        "Accesses credentials/secrets",
+        "Document which credentials are accessed and their scope. Use "
+        "environment variables or a secret manager instead of inline "
+        "credential storage. Declare minimum required permissions.",
+    ),
+    (
+        "Email access",
+        "Declare read-only if the skill only reads email. If sending is "
+        "required, document the send scope (drafts only, specific "
+        "recipients, etc.) in SKILL.md.",
+    ),
+    (
+        "Messaging access",
+        "Declare read-only if the skill only reads messages. Document "
+        "which channels/conversations the skill accesses.",
+    ),
+    (
+        "Browser access",
+        "Document which URLs/domains the skill navigates to. Avoid "
+        "navigating to URLs from untrusted input without validation.",
+    ),
+    (
+        "Tool name indicates destructive",
+        "Add a `## Destructive Operations` section to SKILL.md listing "
+        "what can be deleted/modified and under what conditions. Consider "
+        "requiring explicit confirmation before destructive actions.",
+    ),
+    (
+        "Tool can modify data",
+        "Separate read and write capabilities into distinct sections in "
+        "SKILL.md. Mark read-only operations explicitly so scanners "
+        "can distinguish them.",
+    ),
+    (
+        "Can modify database",
+        "Document which tables/collections are modified. Declare "
+        "read-only for query-only capabilities.",
+    ),
+    (
+        "Can modify files",
+        "Document which directories/file patterns are written to. "
+        "Restrict write paths in the skill definition.",
+    ),
+]
+
+
+def _dev_fix_for_reasons(risk_reasons: list[str]) -> str:
+    """Return a developer-facing fix suggestion based on risk reasons.
+
+    Matches the highest-priority fix from _DEV_FIXES.
+
+    Args:
+        risk_reasons: The tool's risk_reasons list.
+
+    Returns:
+        Fix suggestion string, or empty string if no match.
+    """
+    for reason in reversed(risk_reasons):
+        for pattern, fix in _DEV_FIXES:
+            if pattern in reason:
+                return fix
+    return ""
 
 
 def _capabilities_label(tool_perm: ToolPermission) -> str:
@@ -283,8 +620,8 @@ def _print_unified_table(scan: ScanResult, console: Console) -> None:
     including border characters. Uses manual box-drawing since Rich's
     Table doesn't support per-row border colors.
     """
-    # Collect rows: (source, tool_label, risk_label, color)
-    rows: list[tuple[str, str, str, str]] = []
+    # Collect rows: (source, tool_label, risk_label, why, color)
+    rows: list[tuple[str, str, str, str, str]] = []
     for server_map in scan.servers:
         source = _source_badge(server_map)
         for tool_perm in server_map.tools:
@@ -292,13 +629,14 @@ def _print_unified_table(scan: ScanResult, console: Console) -> None:
             tool_label = f"{tool_perm.tool.name}  {caps}"
             emoji, _ = _RISK_BADGES[tool_perm.risk_level]
             risk_label = f"{emoji} {tool_perm.risk_level.value}"
-            rows.append((source, tool_label, risk_label, _risk_color(tool_perm.risk_level)))
+            why = _risk_reason_summary(tool_perm)
+            rows.append((source, tool_label, risk_label, why, _risk_color(tool_perm.risk_level)))
 
     if not rows:
         return
 
     _print_colored_table(
-        headers=("Source", "Tool/Skill", "Risk"),
+        headers=("Source", "Tool/Skill", "Risk", "Why"),
         rows=rows,
         console=console,
     )
@@ -309,27 +647,63 @@ def _print_unified_table(scan: ScanResult, console: Console) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _skill_parent(name: str) -> str:
+    """Return the parent skill name (strip capability suffix)."""
+    return name.rsplit(":", 1)[0] if ":" in name else name
+
+
 def _print_chain_analysis(
     chains: list[ChainDetection],
     console: Console,
 ) -> None:
-    """Print the skill chain analysis section.
+    """Print the skill chain analysis section, grouped by parent skills.
 
-    Matches the website format:
-        ⚠ Skill chain detected: email-mgr → web-browser
-          Email content could leak via browsing
+    When capabilities produce many individual chains between the same two
+    parent skills, they are collapsed into a single summary line:
+        ⚠ bankr → coding-agent  (48 chains)
+          Network responses could trigger code execution
 
     Args:
         chains: Detected skill chains.
         console: Rich console.
     """
+    # Group chains by (parent_source, parent_target, description)
+    from collections import defaultdict
+
+    groups: dict[tuple[str, str, str], list[ChainDetection]] = defaultdict(list)
     for chain in chains:
-        risk_clr = _CLR_CRITICAL if chain.risk == ChainRisk.CRITICAL else _CLR_HIGH
-        console.print(
-            f"\u26a0 Skill chain detected: {chain.label}",
-            style=risk_clr,
+        key = (
+            _skill_parent(chain.source_server),
+            _skill_parent(chain.target_server),
+            chain.description,
         )
-        console.print(f"  {chain.description}", style=_CLR_DIM)
+        groups[key].append(chain)
+
+    # Sort: CRITICAL groups first, then by source name
+    sorted_keys = sorted(
+        groups.keys(),
+        key=lambda k: (
+            0 if any(c.risk == ChainRisk.CRITICAL for c in groups[k]) else 1,
+            k[0],
+            k[1],
+        ),
+    )
+
+    for src, tgt, desc in sorted_keys:
+        group = groups[(src, tgt, desc)]
+        risk_clr = _CLR_CRITICAL if any(c.risk == ChainRisk.CRITICAL for c in group) else _CLR_HIGH
+        count = len(group)
+        if count > 1:
+            console.print(
+                f"\u26a0 {src} \u2192 {tgt}  ({count} chains)",
+                style=risk_clr,
+            )
+        else:
+            console.print(
+                f"\u26a0 {group[0].label}",
+                style=risk_clr,
+            )
+        console.print(f"  {desc}", style=_CLR_DIM)
         console.print()
 
 
@@ -387,12 +761,69 @@ def _print_risk_footer(
 # ---------------------------------------------------------------------------
 
 
+def _group_recommendations(
+    recommendations: list[Recommendation],
+) -> list[tuple[list[Recommendation], str]]:
+    """Group recommendations with the same severity and message pattern.
+
+    Capabilities of the same parent skill (e.g. coding-agent:pty_mode_required,
+    coding-agent:claude_code) that produce the same recommendation type are
+    collapsed into a single group.
+
+    Returns:
+        List of (group, display_target) tuples.
+    """
+    from collections import OrderedDict
+
+    # Key: (severity, message-template) where template replaces tool name with parent
+    groups: OrderedDict[tuple[str, str, str], list[Recommendation]] = OrderedDict()
+
+    for rec in recommendations:
+        # Normalize message: strip the tool-specific name to find the pattern
+        # E.g. "Tool 'coding-agent:foo' can execute shell commands..." →
+        #      "can execute shell commands..."
+        msg = rec.message
+        # Extract a message fingerprint by removing the tool-specific part
+        # The message always starts with "Tool 'X'" or "Server 'X'"
+        fingerprint = msg
+        for prefix in ("Tool '", "Server '"):
+            if msg.startswith(prefix):
+                end = msg.index("'", len(prefix))
+                fingerprint = msg[end + 2:]  # skip "' "
+                break
+
+        # Group by parent skill of the target
+        target = rec.target
+        if "/" in target:
+            _, tool_part = target.rsplit("/", 1)
+        else:
+            tool_part = target
+        parent = tool_part.rsplit(":", 1)[0] if ":" in tool_part else tool_part
+
+        key = (rec.severity.value, parent, fingerprint)
+        groups.setdefault(key, []).append(rec)
+
+    result: list[tuple[list[Recommendation], str]] = []
+    for (_sev, parent, _fp), group in groups.items():
+        if len(group) == 1:
+            display_target = group[0].target
+        else:
+            # Use parent name + count
+            display_target = f"{group[0].target.rsplit('/', 1)[0]}/{parent} ({len(group)} tools)"
+        result.append((group, display_target))
+
+    return result
+
+
 def _print_recommendations(
     recommendations: list[Recommendation],
     scan: ScanResult,
     console: Console,
 ) -> None:
     """Print recommendations section with risk explanations.
+
+    Groups similar recommendations (e.g. all coding-agent capabilities with
+    shell access) into a single entry to reduce noise.
 
     Args:
         recommendations: Generated recommendations.
@@ -411,22 +842,39 @@ def _print_recommendations(
 
     panels_shown = 0
     max_panels = 2  # limit attack scenario panels to reduce visual clutter
+    grouped = _group_recommendations(recommendations)
 
-    for i, rec in enumerate(recommendations, 1):
-        severity_style = _severity_style(rec.severity)
+    for i, (group, display_target) in enumerate(grouped, 1):
+        rep = group[0]  # representative recommendation
+        severity_style = _severity_style(rep.severity)
         console.print(
-            f"  {i}. [{severity_style}]{rec.severity.value}[/{severity_style}] "
-            f"[{_CLR_DIM}]({rec.target})[/{_CLR_DIM}]"
+            f"  {i}. [{severity_style}]{rep.severity.value}[/{severity_style}] "
+            f"[{_CLR_DIM}]({display_target})[/{_CLR_DIM}]"
         )
-        console.print(f"     {rec.message}")
-        if rec.suggested_policy:
-            console.print(f"     [{_CLR_DIM}]Suggested policy:[/{_CLR_DIM}]")
-            for line in rec.suggested_policy.split("\n"):
-                console.print(f"       [{_CLR_GREEN}]{line}[/{_CLR_GREEN}]")
+        console.print(f"     {rep.message}")
+        if rep.suggested_policy:
+            # Merge suggested policies for grouped recs
+            if len(group) > 1 and "require_approval:" in rep.suggested_policy:
+                # Combine all tool names under one require_approval block
+                tool_names = []
+                for r in group:
+                    target = r.target
+                    tool_name = target.rsplit("/", 1)[-1] if "/" in target else target
+                    tool_names.append(tool_name)
+                merged = "require_approval:\n" + "\n".join(
+                    f"  - {name}" for name in tool_names
+                )
+                console.print(f"     [{_CLR_DIM}]Suggested policy:[/{_CLR_DIM}]")
+                for line in merged.split("\n"):
+                    console.print(f"       [{_CLR_GREEN}]{line}[/{_CLR_GREEN}]")
+            else:
+                console.print(f"     [{_CLR_DIM}]Suggested policy:[/{_CLR_DIM}]")
+                for line in rep.suggested_policy.split("\n"):
+                    console.print(f"       [{_CLR_GREEN}]{line}[/{_CLR_GREEN}]")
 
         # Show attack scenario panel for the first few CRITICAL recommendations
-        if panels_shown < max_panels and rec.severity == RecommendationSeverity.CRITICAL:
-            explanation = _find_explanation(rec.target, tool_lookup)
+        if panels_shown < max_panels and rep.severity == RecommendationSeverity.CRITICAL:
+            explanation = _find_explanation(rep.target, tool_lookup)
             if explanation is not None:
                 _print_explanation_panel(explanation, console)
                 panels_shown += 1
