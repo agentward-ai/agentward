@@ -1,21 +1,23 @@
-"""macOS native approval dialogs for APPROVE policy decisions.
+"""Approval dialogs for APPROVE policy decisions.
 
-Shows a native macOS dialog via ``osascript`` when a tool call requires
-human approval.  The user sees the tool name, argument preview, risk
-level, and policy reason — enough to make an informed Allow/Deny decision.
+Supports two channels that race in parallel (first response wins):
+
+1. **macOS terminal dialog** — native ``osascript`` dialog on the local machine.
+2. **Telegram bot** — remote inline-keyboard message via the Telegram API
+   proxy (intercepts OpenClaw's ``getUpdates`` responses).
 
 Features:
-  - Session-level caching ("Allow for Interaction" skips future dialogs for that tool)
-  - Concurrency serialization (macOS shows one dialog at a time)
+  - Session-level caching ("Allow for Interaction" skips future dialogs)
+  - Concurrency serialization (one approval at a time)
   - Configurable timeout (default 60s, auto-deny on expiry)
-  - Non-macOS graceful degradation (default deny)
+  - Race: terminal + Telegram simultaneously, first response wins
+  - Non-macOS + no Telegram → fail-secure deny
   - Credential redaction in argument previews
 """
 
 from __future__ import annotations
 
 import asyncio
-import subprocess
 import sys
 import time
 from enum import Enum
@@ -45,20 +47,29 @@ class ApprovalDecision(str, Enum):
 class ApprovalHandler:
     """Manages approval dialogs for the proxy.
 
-    Serializes concurrent dialog requests via an ``asyncio.Lock``
-    (macOS only shows one dialog at a time).  "Allow for Interaction" grants a
-    blanket approval that covers all tools until ``clear_cache()``
-    is called (typically at the start of each new LLM request).
+    Serializes concurrent dialog requests via an ``asyncio.Lock``.
+    "Allow for Interaction" grants a blanket approval that covers all
+    tools until ``clear_cache()`` is called.
+
+    When a ``TelegramApprovalBot`` is provided, both macOS terminal and
+    Telegram channels race in parallel — first response wins.
 
     Args:
         timeout: Seconds before the dialog auto-dismisses (deny).
+        telegram_bot: Optional Telegram bot for remote approvals.
     """
 
-    def __init__(self, timeout: int = 60) -> None:
+    def __init__(
+        self,
+        timeout: int = 60,
+        telegram_bot: Any = None,
+    ) -> None:
         self._timeout = timeout
         self._session_approved: bool = False
         self._dialog_lock = asyncio.Lock()
         self._is_macos: bool = sys.platform == "darwin"
+        self._telegram_bot = telegram_bot
+        self._osascript_proc: asyncio.subprocess.Process | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -70,13 +81,11 @@ class ApprovalHandler:
         arguments: dict[str, Any],
         reason: str,
     ) -> ApprovalDecision:
-        """Show an approval dialog and return the user's decision.
+        """Show approval dialog(s) and return the user's decision.
 
-        Checks the session cache first.  If the tool was previously
-        allowed for the session, returns ``ALLOW_SESSION`` immediately.
-        Otherwise shows a macOS native dialog.
-
-        On non-macOS platforms, returns ``DENY`` (fail-secure).
+        Checks the session cache first.  Then races all available
+        channels (macOS terminal + Telegram) in parallel — first
+        response wins.
 
         Args:
             tool_name: The tool being invoked (e.g. ``web_fetch``).
@@ -90,24 +99,31 @@ class ApprovalHandler:
         if self._session_approved:
             return ApprovalDecision.ALLOW_SESSION
 
-        if not self._is_macos:
+        has_telegram = (
+            self._telegram_bot is not None
+            and self._telegram_bot.is_paired
+        )
+
+        if not self._is_macos and not has_telegram:
             _console.print(
                 f"  [bold red]DENY[/bold red] {tool_name} "
-                "(approval dialogs require macOS)",
+                "(no approval channel available)",
                 highlight=False,
             )
             return ApprovalDecision.DENY
 
         message = _format_dialog_message(tool_name, arguments, reason)
 
-        # Serialize — macOS shows one dialog at a time
+        # Serialize — one approval at a time
         async with self._dialog_lock:
             # Re-check cache (another request may have approved while waiting)
             if self._session_approved:
                 return ApprovalDecision.ALLOW_SESSION
 
             start = time.monotonic()
-            decision = await self._show_dialog(message)
+            decision = await self._race_approval(
+                tool_name, arguments, reason, message,
+            )
             elapsed_ms = int((time.monotonic() - start) * 1000)
 
         # Update session cache — session-wide, covers all tools
@@ -124,11 +140,101 @@ class ApprovalHandler:
         self._session_approved = False
 
     # ------------------------------------------------------------------
-    # Dialog execution
+    # Race logic
+    # ------------------------------------------------------------------
+
+    async def _race_approval(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        reason: str,
+        message: str,
+    ) -> ApprovalDecision:
+        """Race all available approval channels.  First response wins.
+
+        Args:
+            tool_name: The tool name (for Telegram message).
+            arguments: The tool call arguments (for Telegram message).
+            reason: The policy reason (for Telegram message).
+            message: The pre-formatted macOS dialog text.
+
+        Returns:
+            The winning decision.
+        """
+        tasks: list[asyncio.Task[ApprovalDecision]] = []
+
+        if self._is_macos:
+            tasks.append(
+                asyncio.create_task(self._show_dialog(message), name="terminal")
+            )
+
+        if self._telegram_bot is not None and self._telegram_bot.is_paired:
+            tasks.append(
+                asyncio.create_task(
+                    self._telegram_request(tool_name, arguments, reason),
+                    name="telegram",
+                )
+            )
+
+        if not tasks:
+            return ApprovalDecision.DENY
+
+        if len(tasks) == 1:
+            return await tasks[0]
+
+        # Race — first to complete wins
+        done, pending = await asyncio.wait(
+            tasks, return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        # Cancel losers
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        # Get the winner's result
+        winner = done.pop()
+        try:
+            return winner.result()
+        except Exception:
+            # If winner raised, check remaining done tasks
+            for task in done:
+                try:
+                    return task.result()
+                except Exception:
+                    continue
+            return ApprovalDecision.DENY
+
+    async def _telegram_request(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        reason: str,
+    ) -> ApprovalDecision:
+        """Wrapper for Telegram approval that falls back on failure.
+
+        If the Telegram bot returns None (send failure), this raises
+        so the race falls through to the terminal dialog.
+        """
+        result = await self._telegram_bot.request_approval(
+            tool_name, arguments, reason, timeout=self._timeout,
+        )
+        if result is None:
+            raise RuntimeError("Telegram send failed")
+        return result
+
+    # ------------------------------------------------------------------
+    # macOS dialog execution
     # ------------------------------------------------------------------
 
     async def _show_dialog(self, message: str) -> ApprovalDecision:
-        """Execute ``osascript`` in a thread pool and parse the result.
+        """Execute ``osascript`` as an async subprocess and parse the result.
+
+        Uses ``asyncio.create_subprocess_exec`` so the process can be
+        killed cleanly when the Telegram channel wins the race.
 
         Args:
             message: The formatted dialog message text.
@@ -137,30 +243,39 @@ class ApprovalHandler:
             The parsed decision.
         """
         cmd = _build_osascript_command(message, self._timeout)
-        loop = asyncio.get_running_loop()
 
         try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(  # noqa: S603, S607
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=self._timeout + 10,  # buffer beyond dialog timeout
-                ),
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+            self._osascript_proc = proc
+            stdout, _ = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=self._timeout + 10,
+            )
+        except asyncio.CancelledError:
+            # Race lost — kill the dialog
+            if self._osascript_proc is not None:
+                try:
+                    self._osascript_proc.kill()
+                except ProcessLookupError:
+                    pass
+            raise
+        except (asyncio.TimeoutError, FileNotFoundError, OSError) as exc:
             _console.print(
                 f"  [bold red]Dialog error:[/bold red] {exc}",
                 highlight=False,
             )
             return ApprovalDecision.DENY
+        finally:
+            self._osascript_proc = None
 
-        if result.returncode != 0:
-            # osascript error (no GUI session, syntax error, etc.)
+        if proc.returncode != 0:
             return ApprovalDecision.DENY
 
-        return _parse_osascript_output(result.stdout)
+        return _parse_osascript_output(stdout.decode())
 
 
 # ----------------------------------------------------------------------
@@ -279,7 +394,7 @@ def _build_osascript_command(message: str, timeout: int) -> list[str]:
         timeout: Auto-dismiss timeout in seconds.
 
     Returns:
-        The command as a list of strings for subprocess.run.
+        The command as a list of strings for asyncio.create_subprocess_exec.
     """
     safe_message = _escape_for_osascript(message)
     script = (

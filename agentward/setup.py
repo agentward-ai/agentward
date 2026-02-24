@@ -302,6 +302,7 @@ def format_diff(
 
 _DEFAULT_GATEWAY_PORT = 18789
 _DEFAULT_LLM_PROXY_PORT = 18900
+_DEFAULT_TELEGRAM_PROXY_PORT = 18901
 
 # Default upstream URLs per provider prefix.
 _PROVIDER_BASE_URLS: dict[str, str] = {
@@ -436,6 +437,57 @@ def _restore_plist_auth(plist_path: Path, token: str) -> None:
         plistlib.dump(plist, f)
 
 
+def _patch_plist_tls_reject(plist_path: Path, *, disable: bool) -> str | None:
+    """Set NODE_TLS_REJECT_UNAUTHORIZED=0 in the LaunchAgent plist.
+
+    Required for the Telegram CONNECT proxy — undici must accept the
+    self-signed certificate that AgentWard presents during TLS MITM.
+    Only affects localhost traffic.
+
+    Args:
+        plist_path: Path to the .plist file.
+        disable: True to set NODE_TLS_REJECT_UNAUTHORIZED=0 (returns original value).
+
+    Returns:
+        The original value if it was set, or None.
+    """
+    if not disable:
+        return None
+
+    with plist_path.open("rb") as f:
+        plist = plistlib.load(f)
+
+    env = plist.get("EnvironmentVariables", {})
+    original = env.get("NODE_TLS_REJECT_UNAUTHORIZED")
+    env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"
+    plist["EnvironmentVariables"] = env
+
+    with plist_path.open("wb") as f:
+        plistlib.dump(plist, f)
+
+    return original
+
+
+def _restore_plist_tls_reject(plist_path: Path, original_value: str | None) -> None:
+    """Restore NODE_TLS_REJECT_UNAUTHORIZED in the LaunchAgent plist.
+
+    Args:
+        plist_path: Path to the .plist file.
+        original_value: The original value to restore, or None to remove the key.
+    """
+    with plist_path.open("rb") as f:
+        plist = plistlib.load(f)
+
+    env = plist.get("EnvironmentVariables", {})
+    if original_value is None:
+        env.pop("NODE_TLS_REJECT_UNAUTHORIZED", None)
+    else:
+        env["NODE_TLS_REJECT_UNAUTHORIZED"] = original_value
+
+    with plist_path.open("wb") as f:
+        plistlib.dump(plist, f)
+
+
 def _sidecar_path(config_path: Path) -> Path:
     """Return the sidecar file path for a given OpenClaw/ClawdBot config.
 
@@ -446,6 +498,75 @@ def _sidecar_path(config_path: Path) -> Path:
         Path to the sidecar file in the same directory.
     """
     return config_path.parent / _GATEWAY_SIDECAR_NAME
+
+
+def _patch_telegram_proxy(
+    config: dict[str, Any],
+    sidecar_data: dict[str, Any],
+) -> str | None:
+    """Patch Telegram channel proxy to route API calls through AgentWard.
+
+    Sets ``channels.telegram.proxy`` to point at the AgentWard Telegram
+    API proxy so that ``getUpdates`` responses can be intercepted for
+    approval callback extraction.
+
+    If ``sidecar_data`` already contains ``original_telegram_proxy``, that
+    original is reused (idempotent re-wrap).
+
+    Args:
+        config: The ClawdBot config dict (mutated in place).
+        sidecar_data: Existing sidecar data (may contain originals).
+
+    Returns:
+        The original proxy value (string, or None if not set).
+    """
+    channels = config.get("channels", {})
+    telegram_cfg = channels.get("telegram", {})
+
+    if not telegram_cfg.get("enabled", False):
+        return None  # Telegram not enabled — nothing to patch
+
+    if not telegram_cfg.get("botToken"):
+        return None  # No bot token — nothing to patch
+
+    proxy_port = sidecar_data.get("telegram_proxy_port", _DEFAULT_TELEGRAM_PROXY_PORT)
+    proxy_url = f"http://127.0.0.1:{proxy_port}"
+
+    # Determine original value
+    if "original_telegram_proxy" in sidecar_data:
+        original = sidecar_data["original_telegram_proxy"]
+    else:
+        original = telegram_cfg.get("proxy")
+
+    # Patch — walk into nested accounts if present, else patch top-level
+    # OpenClaw Telegram config can have per-account proxy settings under
+    # channels.telegram.accounts.<id>.proxy, but the top-level
+    # channels.telegram.proxy is the simpler (and documented) path.
+    telegram_cfg["proxy"] = proxy_url
+
+    return original
+
+
+def _restore_telegram_proxy(
+    config: dict[str, Any],
+    original_proxy: str | None,
+) -> None:
+    """Restore the original Telegram proxy setting.
+
+    Args:
+        config: The ClawdBot config dict (mutated in place).
+        original_proxy: The original proxy value (None to remove the key).
+    """
+    channels = config.get("channels", {})
+    telegram_cfg = channels.get("telegram", {})
+
+    if not isinstance(telegram_cfg, dict):
+        return
+
+    if original_proxy is None:
+        telegram_cfg.pop("proxy", None)
+    else:
+        telegram_cfg["proxy"] = original_proxy
 
 
 def _patch_model_base_urls(
@@ -611,6 +732,27 @@ def wrap_clawdbot_gateway(
         backend_port = result["gateway"].get("port", original_port + port_offset)
         # Ensure baseUrl patching is still in place (idempotent)
         _patch_model_base_urls(result, sidecar_data)
+        # Ensure Telegram proxy patching is still in place (idempotent)
+        sidecar_changed = False
+        original_telegram_proxy = _patch_telegram_proxy(result, sidecar_data)
+        if "telegram_proxy_port" not in sidecar_data and (
+            result.get("channels", {}).get("telegram", {}).get("proxy")
+        ):
+            sidecar_data["telegram_proxy_port"] = _DEFAULT_TELEGRAM_PROXY_PORT
+            sidecar_data["original_telegram_proxy"] = original_telegram_proxy
+            sidecar_changed = True
+        # Ensure TLS reject patching is in place (for Telegram CONNECT proxy)
+        plist_path_str = sidecar_data.get("plist_path")
+        if plist_path_str and "original_tls_reject" not in sidecar_data:
+            p = Path(plist_path_str)
+            if p.exists():
+                original_tls_reject = _patch_plist_tls_reject(p, disable=True)
+                sidecar_data["original_tls_reject"] = original_tls_reject
+                sidecar_changed = True
+        if sidecar_changed:
+            sidecar.write_text(
+                json.dumps(sidecar_data, indent=2) + "\n", encoding="utf-8"
+            )
         return result, original_port, backend_port
 
     # Deep copy to avoid mutating input
@@ -643,6 +785,15 @@ def wrap_clawdbot_gateway(
         sidecar_data["llm_proxy_port"] = _DEFAULT_LLM_PROXY_PORT
         sidecar_data["original_base_urls"] = original_base_urls
 
+    # Patch Telegram proxy to route API calls through AgentWard
+    original_telegram_proxy = _patch_telegram_proxy(result, sidecar_data)
+    if original_telegram_proxy is not None or (
+        result.get("channels", {}).get("telegram", {}).get("proxy")
+    ):
+        sidecar_data["telegram_proxy_port"] = _DEFAULT_TELEGRAM_PROXY_PORT
+        # Store original even if None (means "was not set")
+        sidecar_data["original_telegram_proxy"] = original_telegram_proxy
+
     # Also patch the LaunchAgent plist (macOS) — the gateway hardcodes the
     # port as --port CLI arg and an env var in the plist, so editing the
     # config JSON alone is not enough.
@@ -655,6 +806,10 @@ def wrap_clawdbot_gateway(
         original_plist_token = _patch_plist_auth(plist_path, disable=True)
         if original_plist_token is not None:
             sidecar_data["original_plist_token"] = original_plist_token
+        # Disable TLS certificate verification so undici accepts our self-signed
+        # cert for the Telegram CONNECT proxy (only affects localhost traffic).
+        original_tls_reject = _patch_plist_tls_reject(plist_path, disable=True)
+        sidecar_data["original_tls_reject"] = original_tls_reject
         sidecar_data["plist_path"] = str(plist_path)
     elif platform.system() == "Darwin":
         from rich.console import Console as _Console
@@ -721,6 +876,10 @@ def unwrap_clawdbot_gateway(
     if original_base_urls:
         _restore_model_base_urls(result, original_base_urls)
 
+    # Restore Telegram proxy if we patched it
+    if "original_telegram_proxy" in sidecar_data:
+        _restore_telegram_proxy(result, sidecar_data["original_telegram_proxy"])
+
     # Restore the LaunchAgent plist port and auth token if we patched them
     plist_str = sidecar_data.get("plist_path")
     if plist_str is not None:
@@ -730,6 +889,9 @@ def unwrap_clawdbot_gateway(
             original_plist_token = sidecar_data.get("original_plist_token")
             if original_plist_token is not None:
                 _restore_plist_auth(plist_path, original_plist_token)
+            # Restore TLS certificate verification
+            if "original_tls_reject" in sidecar_data:
+                _restore_plist_tls_reject(plist_path, sidecar_data["original_tls_reject"])
 
     # Remove sidecar
     sidecar.unlink()
@@ -772,6 +934,23 @@ def get_clawdbot_llm_proxy_config(
 
     llm_port = sidecar_data.get("llm_proxy_port", _DEFAULT_LLM_PROXY_PORT)
     return llm_port, original_base_urls
+
+
+def get_clawdbot_telegram_proxy_port(config_path: Path) -> int | None:
+    """Get the Telegram API proxy port from sidecar, if configured.
+
+    Args:
+        config_path: Path to the OpenClaw/ClawdBot config file.
+
+    Returns:
+        The Telegram proxy port if configured, None otherwise.
+    """
+    sidecar = _sidecar_path(config_path)
+    if not sidecar.exists():
+        return None
+
+    sidecar_data = json.loads(sidecar.read_text(encoding="utf-8"))
+    return sidecar_data.get("telegram_proxy_port")
 
 
 def get_clawdbot_gateway_ports(config_path: Path) -> tuple[int, int] | None:

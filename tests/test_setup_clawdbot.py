@@ -18,8 +18,10 @@ from agentward.setup import (
     _patch_model_base_urls,
     _patch_plist_auth,
     _patch_plist_port,
+    _patch_plist_tls_reject,
     _restore_model_base_urls,
     _restore_plist_auth,
+    _restore_plist_tls_reject,
     get_clawdbot_gateway_ports,
     get_clawdbot_llm_proxy_config,
     is_clawdbot_gateway_wrapped,
@@ -451,6 +453,75 @@ class TestPatchPlistAuth:
         assert "OPENCLAW_GATEWAY_TOKEN" not in plist["EnvironmentVariables"]
 
 
+class TestPatchPlistTlsReject:
+    """Tests for _patch_plist_tls_reject() and _restore_plist_tls_reject()."""
+
+    def test_disable_sets_env_var(self, tmp_path: Path) -> None:
+        plist_path = _write_plist(tmp_path, port=18789)
+        original = _patch_plist_tls_reject(plist_path, disable=True)
+
+        # No previous value
+        assert original is None
+
+        with plist_path.open("rb") as f:
+            plist = plistlib.load(f)
+        assert plist["EnvironmentVariables"]["NODE_TLS_REJECT_UNAUTHORIZED"] == "0"
+
+    def test_disable_returns_existing_value(self, tmp_path: Path) -> None:
+        plist_path = _write_plist(tmp_path, port=18789)
+        # Pre-set a value
+        with plist_path.open("rb") as f:
+            plist = plistlib.load(f)
+        plist["EnvironmentVariables"]["NODE_TLS_REJECT_UNAUTHORIZED"] = "1"
+        with plist_path.open("wb") as f:
+            plistlib.dump(plist, f)
+
+        original = _patch_plist_tls_reject(plist_path, disable=True)
+        assert original == "1"
+
+        with plist_path.open("rb") as f:
+            plist = plistlib.load(f)
+        assert plist["EnvironmentVariables"]["NODE_TLS_REJECT_UNAUTHORIZED"] == "0"
+
+    def test_disable_false_is_noop(self, tmp_path: Path) -> None:
+        plist_path = _write_plist(tmp_path, port=18789)
+        result = _patch_plist_tls_reject(plist_path, disable=False)
+        assert result is None
+
+        with plist_path.open("rb") as f:
+            plist = plistlib.load(f)
+        assert "NODE_TLS_REJECT_UNAUTHORIZED" not in plist["EnvironmentVariables"]
+
+    def test_restore_removes_key_when_none(self, tmp_path: Path) -> None:
+        plist_path = _write_plist(tmp_path, port=18789)
+        # First set it
+        _patch_plist_tls_reject(plist_path, disable=True)
+        # Then restore with None (means it wasn't there before)
+        _restore_plist_tls_reject(plist_path, None)
+
+        with plist_path.open("rb") as f:
+            plist = plistlib.load(f)
+        assert "NODE_TLS_REJECT_UNAUTHORIZED" not in plist["EnvironmentVariables"]
+
+    def test_restore_sets_original_value(self, tmp_path: Path) -> None:
+        plist_path = _write_plist(tmp_path, port=18789)
+        _patch_plist_tls_reject(plist_path, disable=True)
+        _restore_plist_tls_reject(plist_path, "1")
+
+        with plist_path.open("rb") as f:
+            plist = plistlib.load(f)
+        assert plist["EnvironmentVariables"]["NODE_TLS_REJECT_UNAUTHORIZED"] == "1"
+
+    def test_preserves_other_env_vars(self, tmp_path: Path) -> None:
+        plist_path = _write_plist(tmp_path, port=18789)
+        _patch_plist_tls_reject(plist_path, disable=True)
+
+        with plist_path.open("rb") as f:
+            plist = plistlib.load(f)
+        assert plist["EnvironmentVariables"]["CLAWDBOT_GATEWAY_PORT"] == "18789"
+        assert plist["EnvironmentVariables"]["CLAWDBOT_GATEWAY_TOKEN"] == "test-token"
+
+
 class TestWrapUnwrapWithPlist:
     """Tests for wrap/unwrap when a plist file is involved."""
 
@@ -488,29 +559,35 @@ class TestWrapUnwrapWithPlist:
         assert plist["EnvironmentVariables"]["CLAWDBOT_GATEWAY_PORT"] == "18790"
         # Token should be cleared from plist
         assert "CLAWDBOT_GATEWAY_TOKEN" not in plist["EnvironmentVariables"]
+        # TLS reject should be disabled for Telegram CONNECT proxy
+        assert plist["EnvironmentVariables"]["NODE_TLS_REJECT_UNAUTHORIZED"] == "0"
 
         # Original token saved in sidecar
         sidecar = tmp_path / _GATEWAY_SIDECAR_NAME
         sidecar_data = json.loads(sidecar.read_text())
         assert sidecar_data["original_plist_token"] == "test-token"
+        # Original TLS reject saved (None = was not set)
+        assert sidecar_data["original_tls_reject"] is None
 
     def test_unwrap_restores_plist(self, tmp_path: Path) -> None:
         config_path = _write_clawdbot(tmp_path, port=18790)
         plist_path = _write_plist(tmp_path, port=18790)
 
-        # Simulate wrapped state: remove token from plist
+        # Simulate wrapped state: remove token, add TLS reject
         with plist_path.open("rb") as f:
             plist_data = plistlib.load(f)
         plist_data["EnvironmentVariables"].pop("CLAWDBOT_GATEWAY_TOKEN", None)
+        plist_data["EnvironmentVariables"]["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"
         with plist_path.open("wb") as f:
             plistlib.dump(plist_data, f)
 
-        # Create sidecar with plist_path and saved token
+        # Create sidecar with plist_path, saved token, and TLS reject state
         sidecar = tmp_path / _GATEWAY_SIDECAR_NAME
         sidecar.write_text(json.dumps({
             "original_port": 18789,
             "plist_path": str(plist_path),
             "original_plist_token": "test-token",
+            "original_tls_reject": None,
         }))
 
         config = _make_clawdbot_config(port=18790)
@@ -523,6 +600,8 @@ class TestWrapUnwrapWithPlist:
         assert plist["EnvironmentVariables"]["CLAWDBOT_GATEWAY_PORT"] == "18789"
         # Token should be restored
         assert plist["EnvironmentVariables"]["OPENCLAW_GATEWAY_TOKEN"] == "test-token"
+        # TLS reject should be removed (was not set before)
+        assert "NODE_TLS_REJECT_UNAUTHORIZED" not in plist["EnvironmentVariables"]
 
 
 # ---------------------------------------------------------------------------

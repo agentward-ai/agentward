@@ -120,9 +120,13 @@ Rewrites your MCP configs so every tool call routes through the AgentWard proxy.
 # MCP stdio proxy
 agentward inspect --policy agentward.yaml -- npx @modelcontextprotocol/server-filesystem /tmp
 
-# HTTP gateway proxy
+# HTTP gateway proxy (start proxy first, then restart OpenClaw)
 agentward inspect --gateway openclaw --policy agentward.yaml
+# In another terminal:
+openclaw gateway restart
 ```
+
+> **Start order matters for OpenClaw:** The AgentWard proxy must be running *before* OpenClaw restarts, because OpenClaw connects to external services (like Telegram) immediately on startup. If the proxy isn't up yet, those connections fail silently.
 
 Every tool call is now intercepted, evaluated against your policy, and either allowed, blocked, or flagged for approval. Full audit trail logged.
 
@@ -187,6 +191,17 @@ Agent Host                    AgentWard                     Tool Server
 | `approve` | Tool call held for human approval before forwarding |
 | `log` | Tool call forwarded, but logged with extra detail |
 | `redact` | Tool call forwarded with sensitive data stripped |
+
+## Remote Approval via Telegram
+
+If you use OpenClaw with Telegram, AgentWard can send approval requests to your Telegram chat — so you can approve or deny tool calls from your phone when you're away from your machine.
+
+```bash
+# After starting the proxy, send /start to your OpenClaw bot on Telegram
+# to pair your chat. You'll see "Telegram paired" in the proxy output.
+```
+
+Once paired, any tool call with `action: approve` in your policy will show an inline keyboard in Telegram with **Allow Once**, **Allow Session**, and **Deny** buttons. Both the local macOS dialog and Telegram race in parallel — whichever you respond to first wins.
 
 ## What AgentWard Is NOT
 

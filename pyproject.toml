@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentward"
-version = "0.2.5"
+version = "0.2.6"
 description = "Open-source permission control plane for AI agents. Scan, enforce, and audit every tool call."
 readme = "README.md"
 license = "Apache-2.0"

@@ -268,8 +268,13 @@ def _run_gateway_proxy(
 
     from agentward.proxy.approval import ApprovalHandler
     from agentward.proxy.http import HttpProxy
+    from agentward.proxy.telegram_approval import try_create_bot
     from agentward.scan.openclaw import find_clawdbot_config
-    from agentward.setup import get_clawdbot_gateway_ports, get_clawdbot_llm_proxy_config
+    from agentward.setup import (
+        get_clawdbot_gateway_ports,
+        get_clawdbot_llm_proxy_config,
+        get_clawdbot_telegram_proxy_port,
+    )
 
     config_path = find_clawdbot_config()
     if config_path is None:
@@ -295,11 +300,19 @@ def _run_gateway_proxy(
     listen_port, backend_port = ports
     backend_url = f"http://127.0.0.1:{backend_port}"
 
-    # Create approval handler for APPROVE decisions
+    # Create approval handler for APPROVE decisions (with Telegram if available)
+    telegram_proxy_port = get_clawdbot_telegram_proxy_port(config_path)
+    if telegram_proxy_port is not None:
+        telegram_bot = try_create_bot(config_path, proxy_port=telegram_proxy_port)
+    else:
+        telegram_bot = try_create_bot(config_path)
     approval_timeout = 60
     if policy_engine is not None:
         approval_timeout = policy_engine.policy.approval_timeout
-    approval_handler = ApprovalHandler(timeout=approval_timeout)
+    approval_handler = ApprovalHandler(
+        timeout=approval_timeout,
+        telegram_bot=telegram_bot,
+    )
 
     http_proxy = HttpProxy(
         backend_url=backend_url,
@@ -335,18 +348,34 @@ def _run_gateway_proxy(
             loop = asyncio.get_running_loop()
             for sig in (_signal.SIGINT, _signal.SIGTERM):
                 loop.add_signal_handler(sig, shutdown.set)
-            await asyncio.gather(
-                http_proxy.run(shutdown_event=shutdown),
-                llm_proxy.run(shutdown_event=shutdown),
-            )
+            if telegram_bot is not None:
+                await telegram_bot.start()
+            try:
+                await asyncio.gather(
+                    http_proxy.run(shutdown_event=shutdown),
+                    llm_proxy.run(shutdown_event=shutdown),
+                )
+            finally:
+                if telegram_bot is not None:
+                    await telegram_bot.stop()
 
         try:
             asyncio.run(_run_both())
         except KeyboardInterrupt:
             pass
     else:
+
+        async def _run_http_only() -> None:
+            if telegram_bot is not None:
+                await telegram_bot.start()
+            try:
+                await http_proxy.run()
+            finally:
+                if telegram_bot is not None:
+                    await telegram_bot.stop()
+
         try:
-            asyncio.run(http_proxy.run())
+            asyncio.run(_run_http_only())
         except KeyboardInterrupt:
             pass
 
