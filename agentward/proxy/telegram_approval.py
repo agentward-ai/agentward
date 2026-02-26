@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import ssl
 import tempfile
 import uuid
@@ -67,8 +68,12 @@ def _generate_self_signed_cert() -> tuple[str, str]:
     Returns:
         Tuple of (cert_pem_path, key_pem_path) as temp file paths.
     """
-    cert_path = Path(tempfile.mktemp(suffix=".pem", prefix="aw_tg_cert_"))
-    key_path = Path(tempfile.mktemp(suffix=".pem", prefix="aw_tg_key_"))
+    cert_fd, cert_path_str = tempfile.mkstemp(suffix=".pem", prefix="aw_tg_cert_")
+    key_fd, key_path_str = tempfile.mkstemp(suffix=".pem", prefix="aw_tg_key_")
+    os.close(cert_fd)
+    os.close(key_fd)
+    cert_path = Path(cert_path_str)
+    key_path = Path(key_path_str)
 
     try:
         from cryptography import x509

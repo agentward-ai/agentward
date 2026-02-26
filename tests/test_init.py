@@ -551,9 +551,9 @@ class TestRunInit:
             patches[5],
             patches[6],
             patch("agentward.init.typer.confirm", side_effect=[True, False]),
+            patch("agentward.init.wrap_openclaw_gateway", return_value=False),
         ):
-            with pytest.raises(click.exceptions.Exit):
-                run_init(console=console, policy_path=policy_path)
+            run_init(console=console, policy_path=policy_path)
 
         # Original file untouched
         assert policy_path.read_text(encoding="utf-8") == "old policy"
@@ -634,7 +634,7 @@ class TestRunInit:
         output = console.file.getvalue()  # type: ignore[attr-defined]
         assert "boundaries, not blindfolds" in output
 
-    def test_openclaw_restart_failed_prints_manual_instructions(self, tmp_path: Path) -> None:
+    def test_openclaw_restart_failed_proceeds_to_proxy(self, tmp_path: Path) -> None:
         import io
 
         console = Console(stderr=True, file=io.StringIO())
@@ -652,12 +652,14 @@ class TestRunInit:
             patches[6],
             patch("agentward.init.wrap_openclaw_gateway", return_value=True),
             patch("agentward.init.restart_openclaw_gateway", return_value=False),
+            patch("agentward.init.start_proxy") as mock_proxy,
         ):
             run_init(console=console, yes=True, policy_path=policy_path)
 
         output = console.file.getvalue()  # type: ignore[attr-defined]
-        assert "Could not restart" in output
-        assert "openclaw gateway restart" in output
+        assert "health check failed" in output
+        # Proxy should still be started even when restart fails
+        mock_proxy.assert_called_once()
 
     def test_no_openclaw_still_writes_policy(self, tmp_path: Path) -> None:
         import io

@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Docs — AgentWard</title>
+  <meta name="description" content="Full CLI reference for AgentWard: scan, configure, setup, inspect, comply, init commands, policy YAML format, and troubleshooting guide."/>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iOCIgZmlsbD0iIzBhMGEwYSIvPgogIDxwYXRoIGQ9Ik0yNCA0TDYgMTJ2MTJjMCAxMS4xIDcuNyAyMS41IDE4IDI0IDEwLjMtMi41IDE4LTEyLjkgMTgtMjRWMTJMMjQgNHoiIGZpbGw9IiMxMTEiIHN0cm9rZT0iIzAwZmY4OCIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgPHBhdGggZD0iTTE4IDI0bDQgNCA4LTgiIHN0cm9rZT0iIzAwZmY4OCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgZmlsbD0ibm9uZSIvPgo8L3N2Zz4=">
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --green:#00ff88;--green2:#00cc6a;--green-dim:#00ff8820;--green-border:#00ff8830;
+      --bg:#080808;--bg1:#0d0d0d;--bg2:#111;
+      --border:#1c1c1c;--border2:#242424;
+      --text:#d8d8d8;--muted:#666;--muted2:#444;--white:#f0f0f0;
+      --red:#ff4444;--yellow:#ffcc00;--orange:#ff8c42;
+      --font-sans:'IBM Plex Sans',system-ui,sans-serif;
+      --font-mono:'IBM Plex Mono',monospace;
+    }
+    html{scroll-behavior:smooth}
+    body{background:var(--bg);color:var(--text);font-family:var(--font-sans);min-height:100vh;line-height:1.6;display:flex;flex-direction:column}
+    ::selection{background:var(--green-dim)}
+    a{color:var(--green);text-decoration:none}
+    a:hover{color:var(--green2)}
+
+    nav{position:sticky;top:0;z-index:200;height:52px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;background:rgba(8,8,8,0.94);backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
+    .nav-logo{display:flex;align-items:center;gap:10px;color:var(--white);font-weight:600;font-size:15px;letter-spacing:-0.3px}
+    .nav-links{display:flex;align-items:center;gap:2px}
+    .nav-links a{padding:5px 12px;border-radius:6px;font-size:13px;font-weight:500;color:var(--muted);transition:color .15s,background .15s}
+    .nav-links a:hover{color:var(--white);background:var(--bg2)}
+    .nav-links a.active{color:var(--green);background:var(--green-dim)}
+    .nav-gh{display:flex;align-items:center;gap:7px;padding:6px 14px;border-radius:7px;background:var(--green);color:var(--bg)!important;font-size:12.5px;font-weight:600;margin-left:8px;transition:background .15s}
+    .nav-gh:hover{background:var(--green2)!important}
+    @media(max-width:600px){.nav-links a:not(.nav-gh){display:none}}
+
+    /* Layout */
+    .doc-layout{display:flex;flex:1;max-width:1080px;margin:0 auto;width:100%}
+    .sidebar{
+      width:220px;flex-shrink:0;padding:32px 0 32px 24px;
+      position:sticky;top:52px;height:calc(100vh - 52px);overflow-y:auto;
+    }
+    .sidebar-section{margin-bottom:24px}
+    .sidebar-label{font-family:var(--font-mono);font-size:9.5px;font-weight:600;color:var(--muted2);letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;padding-left:8px}
+    .sidebar a{display:block;padding:5px 8px;border-radius:5px;font-size:12.5px;color:var(--muted);transition:color .15s,background .15s;border-left:2px solid transparent}
+    .sidebar a:hover{color:var(--white);background:var(--bg1)}
+    .sidebar a.active{color:var(--green);background:var(--green-dim);border-left-color:var(--green)}
+    .doc-content{flex:1;padding:40px 24px 80px;min-width:0}
+
+    /* Doc elements */
+    .page-title{font-size:clamp(24px,3.5vw,34px);font-weight:700;color:var(--white);letter-spacing:-0.8px;margin-bottom:10px}
+    .page-sub{font-size:15px;color:var(--muted);line-height:1.7;margin-bottom:40px}
+    .doc-section{margin-bottom:56px}
+    .doc-section+.doc-section{border-top:1px solid var(--border);padding-top:48px}
+    .eyebrow{font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--green);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px}
+    h2{font-size:clamp(18px,2.5vw,22px);font-weight:700;color:var(--white);letter-spacing:-0.4px;margin-bottom:12px}
+    h3{font-size:16px;font-weight:600;color:var(--white);margin:24px 0 8px}
+    p{font-size:14px;color:var(--muted);line-height:1.75;margin-bottom:12px}
+    p:last-child{margin-bottom:0}
+    ul{margin:8px 0 16px 0;display:flex;flex-direction:column;gap:5px}
+    li{font-size:13.5px;color:#888;padding-left:16px;position:relative;line-height:1.6}
+    li::before{content:'—';position:absolute;left:0;color:var(--muted2)}
+
+    /* Code */
+    code{font-family:var(--font-mono);font-size:12px;background:var(--bg2);border:1px solid var(--border2);padding:2px 7px;border-radius:4px;color:var(--green)}
+    pre{
+      font-family:var(--font-mono);font-size:12.5px;
+      background:#050505;border:1px solid var(--border2);border-radius:10px;
+      padding:18px 20px;color:var(--green);
+      overflow-x:auto;line-height:1.85;margin:14px 0;
+      position:relative;
+    }
+    pre .dim{color:var(--muted2)}
+    pre .w{color:var(--white)}
+    pre .y{color:var(--yellow)}
+    pre .r{color:var(--red)}
+    pre .o{color:var(--orange)}
+    pre .b{color:#5eead4}
+    .pre-label{
+      position:absolute;top:0;right:0;
+      font-family:var(--font-mono);font-size:9px;font-weight:600;color:var(--muted2);
+      background:var(--bg1);padding:3px 10px;border-radius:0 10px 0 6px;
+      border-left:1px solid var(--border2);border-bottom:1px solid var(--border2);
+      letter-spacing:1px;
+    }
+
+    /* Command block */
+    .cmd-block{background:var(--bg1);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:24px}
+    .cmd-header{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+    .cmd-name{font-family:var(--font-mono);font-size:14px;font-weight:600;color:var(--green)}
+    .cmd-badge{font-family:var(--font-mono);font-size:9.5px;font-weight:600;padding:2px 8px;border-radius:4px}
+    .cmd-badge.live{background:var(--green-dim);color:var(--green);border:1px solid var(--green-border)}
+    .cmd-desc{font-size:13.5px;color:var(--muted);padding:14px 20px 0}
+    .cmd-body{padding:0 20px 18px}
+    .option-table{width:100%;border-collapse:collapse;margin-top:12px;font-size:12.5px}
+    .option-table th{text-align:left;padding:6px 8px;color:var(--muted2);font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:1px;border-bottom:1px solid var(--border)}
+    .option-table td{padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+    .option-table tr:last-child td{border-bottom:none}
+    .option-table td:first-child{font-family:var(--font-mono);font-size:11.5px;color:var(--green);white-space:nowrap}
+    .option-table td:last-child{color:#888;line-height:1.5}
+
+    /* FAQ / Troubleshooting */
+    details{border:1px solid var(--border);border-radius:9px;margin-bottom:8px;overflow:hidden;background:var(--bg1);transition:border-color .2s}
+    details:hover{border-color:var(--border2)}
+    details[open]{border-color:var(--green-border)}
+    summary{list-style:none;padding:14px 18px;cursor:pointer;color:#bbb;font-size:13.5px;font-weight:500;display:flex;align-items:center;justify-content:space-between;gap:12px;user-select:none}
+    summary::-webkit-details-marker{display:none}
+    summary::after{content:'+';color:var(--green);font-size:18px;font-weight:300;flex-shrink:0}
+    details[open] summary::after{content:'−'}
+    details[open] summary{color:var(--white);border-bottom:1px solid var(--border)}
+    .faq-body{padding:16px 18px;font-size:13px;line-height:1.75;color:#777}
+    .faq-body p{margin-bottom:8px}
+    .faq-body p:last-child{margin-bottom:0}
+    .symptom{color:var(--orange);font-weight:600}
+    .fix{color:var(--green);font-weight:600}
+    .cause{color:var(--muted);font-weight:600}
+
+    /* YAML example */
+    .yaml-block{
+      background:#050505;border:1px solid var(--border2);border-radius:10px;
+      padding:20px 22px;font-family:var(--font-mono);font-size:12px;
+      line-height:1.85;overflow-x:auto;margin:14px 0;
+      white-space:pre;
+    }
+    .yaml-key{color:#5eead4}
+    .yaml-val{color:var(--green)}
+    .yaml-bool-t{color:var(--green)}
+    .yaml-bool-f{color:var(--red)}
+    .yaml-cmt{color:var(--muted2)}
+    .yaml-str{color:var(--yellow)}
+
+    footer{border-top:1px solid var(--border);padding:24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+    .footer-logo{display:flex;align-items:center;gap:8px;color:var(--muted2);font-size:13px}
+    .footer-links{display:flex;gap:16px;font-size:13px}
+    .footer-links a{color:var(--muted);transition:color .15s}
+    .footer-links a:hover{color:var(--green)}
+    .footer-right{font-size:12px;color:var(--muted2);font-family:var(--font-mono)}
+    @media(max-width:700px){.sidebar{display:none}.doc-layout{display:block}}
+    @media(max-width:600px){footer{flex-direction:column;text-align:center}}
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="nav-logo">
+    <svg width="24" height="24" viewBox="0 0 48 48" fill="none">
+      <path d="M24 4L6 12v12c0 11.1 7.7 21.5 18 24 10.3-2.5 18-12.9 18-24V12L24 4z" fill="#0d1a0d" stroke="#00ff88" stroke-width="2.5"/>
+      <path d="M17 24l5 5 9-9" stroke="#00ff88" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    AgentWard
+  </a>
+  <div class="nav-links">
+    <a href="index.html">Home</a>
+    <a href="how-it-works.html">How It Works</a>
+    <a href="docs.html" class="active">Docs</a>
+    <a href="compare.html">Compare</a>
+    <a href="https://github.com/agentward-ai/agentward" target="_blank" rel="noopener" class="nav-gh">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      GitHub
+    </a>
+  </div>
+</nav>
+
+<div class="doc-layout">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">Getting Started</div>
+      <a href="#install" class="active">Installation</a>
+      <a href="#init">agentward init</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">CLI Commands</div>
+      <a href="#scan">agentward scan</a>
+      <a href="#configure">agentward configure</a>
+      <a href="#setup">agentward setup</a>
+      <a href="#inspect">agentward inspect</a>
+      <a href="#comply">agentward comply</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Configuration</div>
+      <a href="#policy-yaml">Policy YAML</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Troubleshooting</div>
+      <a href="#ts-clawdbot">ClawdBot Gateway</a>
+      <a href="#ts-http">HTTP Proxy</a>
+      <a href="#ts-mcp">MCP Stdio</a>
+    </div>
+  </aside>
+
+  <!-- CONTENT -->
+  <main class="doc-content">
+    <h1 class="page-title">CLI Reference</h1>
+    <p class="page-sub">Full documentation for all AgentWard commands, the policy YAML format, and troubleshooting guide.</p>
+
+    <!-- INSTALL -->
+    <div class="doc-section" id="install">
+      <div class="eyebrow">Installation</div>
+      <h2>Get started in 30 seconds.</h2>
+      <pre>pip install agentward</pre>
+      <p>Requires Python 3.11+. No API key. Everything runs locally. Mac and Linux supported.</p>
+    </div>
+
+    <!-- INIT -->
+    <div class="doc-section" id="init">
+      <div class="eyebrow">Quick Start</div>
+      <h2>agentward init</h2>
+      <p>The recommended way to start. Runs the full pipeline interactively in one command: scan → configure → setup → inspect. Discovers your tools, shows a risk summary, generates a policy, wires enforcement into your agent host, and starts the proxy — all in ~10 seconds.</p>
+      <pre>agentward init</pre>
+    </div>
+
+    <!-- SCAN -->
+    <div class="doc-section" id="scan">
+      <div class="eyebrow">Stage 1</div>
+      <div class="cmd-block">
+        <div class="cmd-header">
+          <span class="cmd-name">agentward scan</span>
+          <span class="cmd-badge live">LIVE</span>
+        </div>
+        <div class="cmd-desc">
+          <p>Static analysis of all tool sources. Auto-discovers MCP configs, scans Python source files, and queries live MCP servers via subprocess + JSON-RPC handshake. Outputs a risk-rated permission map with use-case-aware recommendations.</p>
+        </div>
+        <div class="cmd-body">
+          <pre>agentward scan                          <span class="dim"># auto-discover all sources</span>
+agentward scan ~/.cursor/mcp.json       <span class="dim"># scan specific MCP config</span>
+agentward scan ~/project/               <span class="dim"># scan directory (MCP + Python + OpenClaw)</span>
+agentward scan --json > report.json     <span class="dim"># machine-readable output</span>
+agentward scan --format html            <span class="dim"># shareable HTML report with score badge</span>
+agentward scan --ci --format sarif      <span class="dim"># SARIF for GitHub Security tab</span></pre>
+          <table class="option-table">
+            <tr><th>OPTION</th><th>DESCRIPTION</th></tr>
+            <tr><td>--json</td><td>Raw JSON output for piping into other tools</td></tr>
+            <tr><td>--format html</td><td>Shareable HTML report with risk score badge</td></tr>
+            <tr><td>--format sarif</td><td>SARIF output for GitHub Security tab integration</td></tr>
+            <tr><td>--ci</td><td>CI mode — exit code 1 if CRITICAL risks found</td></tr>
+            <tr><td>--timeout N</td><td>MCP server enumeration timeout in seconds (default: 15)</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONFIGURE -->
+    <div class="doc-section" id="configure">
+      <div class="eyebrow">Stage 2</div>
+      <div class="cmd-block">
+        <div class="cmd-header">
+          <span class="cmd-name">agentward configure</span>
+          <span class="cmd-badge live">LIVE</span>
+        </div>
+        <div class="cmd-desc">
+          <p>Generates a smart-default <code>agentward.yaml</code> policy file based on scan results and detected use-case patterns. Runs the full scan pipeline internally, then produces security-aware defaults tailored to what's actually installed.</p>
+        </div>
+        <div class="cmd-body">
+          <pre>agentward configure                         <span class="dim"># auto-discover and generate</span>
+agentward configure ~/clawd/skills/          <span class="dim"># generate from OpenClaw skills dir</span>
+agentward configure -o my-policy.yaml        <span class="dim"># custom output path</span></pre>
+          <table class="option-table">
+            <tr><th>OPTION</th><th>DESCRIPTION</th></tr>
+            <tr><td>-o / --output PATH</td><td>Output path for generated policy (default: ./agentward.yaml)</td></tr>
+            <tr><td>--timeout N</td><td>MCP server enumeration timeout in seconds</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETUP -->
+    <div class="doc-section" id="setup">
+      <div class="eyebrow">Stage 3a</div>
+      <div class="cmd-block">
+        <div class="cmd-header">
+          <span class="cmd-name">agentward setup</span>
+          <span class="cmd-badge live">LIVE</span>
+        </div>
+        <div class="cmd-desc">
+          <p>Wires AgentWard enforcement into your existing tool infrastructure. Two modes: MCP mode rewrites server commands in agent host config files; Gateway mode swaps the ClawdBot port so AgentWard sits as an HTTP reverse proxy.</p>
+        </div>
+        <div class="cmd-body">
+          <pre>agentward setup --policy agentward.yaml        <span class="dim"># wrap all discovered MCP configs</span>
+agentward setup --config ~/.cursor/mcp.json    <span class="dim"># wrap specific config file</span>
+agentward setup --gateway clawdbot             <span class="dim"># swap ClawdBot gateway port</span>
+agentward setup --gateway clawdbot --undo      <span class="dim"># restore original port</span>
+agentward setup --dry-run --policy agentward.yaml  <span class="dim"># preview changes only</span></pre>
+          <table class="option-table">
+            <tr><th>OPTION</th><th>DESCRIPTION</th></tr>
+            <tr><td>-c / --config PATH</td><td>Target a specific MCP config file</td></tr>
+            <tr><td>-p / --policy PATH</td><td>Policy file to enforce (default: ./agentward.yaml)</td></tr>
+            <tr><td>-l / --log PATH</td><td>Audit log file path</td></tr>
+            <tr><td>--undo</td><td>Restore original configuration</td></tr>
+            <tr><td>--dry-run</td><td>Preview changes without writing files</td></tr>
+            <tr><td>-g / --gateway NAME</td><td>Gateway mode — supports: clawdbot</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- INSPECT -->
+    <div class="doc-section" id="inspect">
+      <div class="eyebrow">Stage 3b — Runtime</div>
+      <div class="cmd-block">
+        <div class="cmd-header">
+          <span class="cmd-name">agentward inspect</span>
+          <span class="cmd-badge live">LIVE</span>
+        </div>
+        <div class="cmd-desc">
+          <p>Starts the runtime proxy with live policy enforcement. Stdio mode runs as an MCP proxy between agent host and server subprocess. HTTP mode runs as a reverse proxy between clients and the ClawdBot gateway.</p>
+        </div>
+        <div class="cmd-body">
+          <pre>agentward inspect --policy agentward.yaml -- npx server   <span class="dim"># stdio proxy</span>
+agentward inspect --gateway clawdbot --policy agentward.yaml  <span class="dim"># HTTP proxy</span>
+agentward inspect -- npx server                              <span class="dim"># passthrough (logging only)</span>
+agentward inspect --policy agentward.yaml --dry-run -- npx s  <span class="dim"># observe without blocking</span></pre>
+          <table class="option-table">
+            <tr><th>OPTION</th><th>DESCRIPTION</th></tr>
+            <tr><td>-p / --policy PATH</td><td>Policy file to enforce</td></tr>
+            <tr><td>-l / --log PATH</td><td>Audit log file path (JSON Lines format)</td></tr>
+            <tr><td>-g / --gateway NAME</td><td>HTTP gateway mode — supports: clawdbot</td></tr>
+            <tr><td>--dry-run</td><td>Observe-only: log what would be blocked without blocking</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- COMPLY -->
+    <div class="doc-section" id="comply">
+      <div class="eyebrow">Stage 4</div>
+      <div class="cmd-block">
+        <div class="cmd-header">
+          <span class="cmd-name">agentward comply</span>
+          <span class="cmd-badge live">LIVE</span>
+        </div>
+        <div class="cmd-desc">
+          <p>Evaluates current policy against regulatory frameworks and generates compliance delta reports with specific gaps and auto-fix suggestions. With <code>--fix</code>, generates a corrected policy file with all required changes applied.</p>
+        </div>
+        <div class="cmd-body">
+          <pre>agentward comply --framework hipaa              <span class="dim"># compliance delta report</span>
+agentward comply --framework hipaa --fix        <span class="dim"># auto-generate compliant config</span>
+agentward comply --framework hipaa --json       <span class="dim"># JSON output for CI</span>
+agentward comply --framework hipaa --policy custom.yaml  <span class="dim"># custom policy path</span></pre>
+          <table class="option-table">
+            <tr><th>OPTION</th><th>DESCRIPTION</th></tr>
+            <tr><td>-f / --framework NAME</td><td>Compliance framework: hipaa (default) · sox · gdpr · pci-dss (coming)</td></tr>
+            <tr><td>--fix</td><td>Generate a corrected policy file with all required changes</td></tr>
+            <tr><td>-p / --policy PATH</td><td>Policy file to evaluate (default: ./agentward.yaml)</td></tr>
+            <tr><td>-o / --output PATH</td><td>Output path for fixed policy file</td></tr>
+            <tr><td>--json</td><td>Machine-readable JSON output</td></tr>
+          </table>
+          <h3>HIPAA Controls (8 checks)</h3>
+          <ul>
+            <li>Access Control §164.312(a)(1) — skill-level access restrictions</li>
+            <li>Data Boundary §164.312(a)(1) — PHI containment within designated zones</li>
+            <li>Audit Controls §164.312(b) — structured audit trail requirements</li>
+            <li>Integrity §164.312(c)(1) — data modification controls</li>
+            <li>Authentication §164.312(d) — identity verification gates</li>
+            <li>Transmission Security §164.312(e)(1) — data-in-transit controls</li>
+            <li>Information Access Management §164.308(a)(4) — least-privilege enforcement</li>
+            <li>Zero-Trust Default — best practice: <code>default_action: block</code></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- POLICY YAML -->
+    <div class="doc-section" id="policy-yaml">
+      <div class="eyebrow">Configuration</div>
+      <h2>Policy YAML Format</h2>
+      <p>The <code>agentward.yaml</code> file is the single source of truth for all enforcement rules. It's framework-agnostic — the same file is used by both the stdio proxy and the HTTP proxy.</p>
+
+      <div class="yaml-block"><span class="yaml-cmt"># agentward.yaml — generated by `agentward configure`, edit as needed</span>
+<span class="yaml-key">version</span>: <span class="yaml-str">"1.0"</span>
+<span class="yaml-cmt"># Block everything not explicitly allowed (zero-trust mode)</span>
+<span class="yaml-key">default_action</span>: <span class="yaml-val">block</span>
+
+<span class="yaml-key">skills</span>:
+  <span class="yaml-key">email-manager</span>:
+    <span class="yaml-key">gmail</span>:
+      <span class="yaml-key">read</span>: <span class="yaml-bool-t">true</span>
+      <span class="yaml-key">send</span>: <span class="yaml-bool-f">false</span>        <span class="yaml-cmt"># can read, cannot send</span>
+      <span class="yaml-key">delete</span>: <span class="yaml-bool-f">false</span>
+      <span class="yaml-key">draft</span>: <span class="yaml-bool-t">true</span>         <span class="yaml-cmt"># creates drafts for human review</span>
+      <span class="yaml-key">filters</span>:
+        <span class="yaml-key">exclude_labels</span>: [<span class="yaml-str">"Finance"</span>, <span class="yaml-str">"Medical"</span>]
+    <span class="yaml-key">google_calendar</span>:
+      <span class="yaml-key">denied</span>: <span class="yaml-bool-t">true</span>         <span class="yaml-cmt"># email skill has zero calendar access</span>
+
+  <span class="yaml-key">finance-tracker</span>:
+    <span class="yaml-key">gmail</span>:
+      <span class="yaml-key">read</span>: <span class="yaml-bool-t">true</span>
+      <span class="yaml-key">filters</span>:
+        <span class="yaml-key">only_from</span>: [<span class="yaml-str">"chase.com"</span>, <span class="yaml-str">"amex.com"</span>]
+    <span class="yaml-key">filesystem</span>:
+      <span class="yaml-key">read</span>: [<span class="yaml-str">"~/Documents/Finance/"</span>]
+      <span class="yaml-key">write</span>: <span class="yaml-bool-f">false</span>
+    <span class="yaml-key">network</span>:
+      <span class="yaml-key">outbound</span>: <span class="yaml-bool-f">false</span>  <span class="yaml-cmt"># financial data never leaves machine</span>
+
+<span class="yaml-cmt"># Cross-skill chaining rules</span>
+<span class="yaml-key">skill_chaining</span>:
+  - <span class="yaml-val">email-manager cannot trigger web-researcher</span>
+  - <span class="yaml-val">finance-tracker cannot trigger any other skill</span>
+  - <span class="yaml-val">web-researcher cannot trigger shell-executor</span>
+
+<span class="yaml-cmt"># Require human approval before executing</span>
+<span class="yaml-key">require_approval</span>:
+  - <span class="yaml-val">send_email</span>
+  - <span class="yaml-val">delete_file</span>
+  - <span class="yaml-val">outbound_network_with_pii</span>
+  - <span class="yaml-val">shell_command_with_sudo</span>
+
+<span class="yaml-cmt"># HIPAA data boundary zones</span>
+<span class="yaml-key">data_boundaries</span>:
+  <span class="yaml-key">hipaa_zone</span>:
+    <span class="yaml-key">skills</span>: [<span class="yaml-val">ehr-connector</span>, <span class="yaml-val">clinical-notes</span>]
+    <span class="yaml-key">classification</span>: <span class="yaml-val">phi</span>
+    <span class="yaml-key">rules</span>:
+      - <span class="yaml-val">phi_data cannot flow outside hipaa_zone</span>
+    <span class="yaml-key">on_violation</span>: <span class="yaml-val">block_and_notify</span></div>
+    </div>
+
+    <!-- TROUBLESHOOTING: CLAWDBOT -->
+    <div class="doc-section" id="ts-clawdbot">
+      <div class="eyebrow">Troubleshooting</div>
+      <h2>ClawdBot Gateway</h2>
+
+      <details>
+        <summary>Correct restart command for ClawdBot</summary>
+        <div class="faq-body">
+          <p>ClawdBot does NOT support <code>clawdbot stop</code>, <code>clawdbot start</code>, or <code>clawdbot restart</code> as standalone commands. The correct command is:</p>
+          <pre>clawdbot gateway restart</pre>
+          <p>Also avoid <code>clawdbot reset</code> — that cancels the current operation, it does not restart the gateway.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>"Address already in use" (OSError Errno 48) on port 18789</summary>
+        <div class="faq-body">
+          <p><span class="symptom">Symptom:</span> AgentWard proxy fails to start with <code>OSError: [Errno 48] address already in use</code> on port 18789.</p>
+          <p><span class="cause">Root cause:</span> ClawdBot is still listening on port 18789 because it wasn't restarted after <code>agentward setup --gateway clawdbot</code> swapped the port.</p>
+          <p><span class="fix">Fix:</span></p>
+          <pre>agentward setup --gateway clawdbot      <span class="dim"># if not done yet</span>
+clawdbot gateway restart                <span class="dim"># move ClawdBot to new port</span>
+lsof -i :18790                          <span class="dim"># verify: should show node</span>
+lsof -i :18789                          <span class="dim"># verify: should be empty</span>
+agentward inspect --gateway clawdbot --policy agentward.yaml</pre>
+        </div>
+      </details>
+
+      <details>
+        <summary>ClawdBot still binds old port after config edit</summary>
+        <div class="faq-body">
+          <p><span class="symptom">Symptom:</span> After editing <code>clawdbot.json</code> to change the port, ClawdBot still binds to the old port after restart.</p>
+          <p><span class="cause">Root cause:</span> ClawdBot uses a macOS LaunchAgent plist at <code>~/Library/LaunchAgents/com.clawdbot.gateway.plist</code> that hardcodes the port in TWO places — <code>ProgramArguments</code> and <code>EnvironmentVariables</code>. ClawdBot reads from the plist at launch, not from <code>clawdbot.json</code>.</p>
+          <p><span class="fix">Fix:</span> Run <code>agentward setup --gateway clawdbot</code> — it patches both files automatically. If debugging manually, check both <code>clawdbot.json</code> and the plist.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Proxy starts but forwards to itself (infinite loop)</summary>
+        <div class="faq-body">
+          <p><span class="cause">Root cause:</span> A stale <code>.agentward-gateway.json</code> sidecar file from a previous run.</p>
+          <p><span class="fix">Fix:</span></p>
+          <pre>rm ~/.clawdbot/.agentward-gateway.json
+agentward setup --gateway clawdbot
+clawdbot gateway restart
+agentward inspect --gateway clawdbot --policy agentward.yaml</pre>
+        </div>
+      </details>
+
+      <details>
+        <summary>ClawdBot UI blank / connection error through proxy</summary>
+        <div class="faq-body">
+          <p><span class="cause">Root cause (historical):</span> The HTTP proxy was not forwarding WebSocket upgrade requests. ClawdBot's React SPA communicates with the gateway over WebSocket.</p>
+          <p><span class="fix">Current state:</span> Fixed. The proxy now detects WebSocket upgrade headers (<code>Upgrade: websocket</code> + <code>Connection: upgrade</code>) and proxies WebSocket traffic bidirectionally. No action needed unless you see this after code changes.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Policy enforcement not triggering on tool calls</summary>
+        <div class="faq-body">
+          <p>ClawdBot's tool invocation endpoint is <code>POST /tools-invoke</code> (with a hyphen), NOT <code>/tools/invoke</code> (with a slash). If policy enforcement isn't triggering, verify the proxy is intercepting the correct path.</p>
+        </div>
+      </details>
+    </div>
+
+    <!-- TROUBLESHOOTING: HTTP -->
+    <div class="doc-section" id="ts-http">
+      <div class="eyebrow">Troubleshooting</div>
+      <h2>HTTP Proxy</h2>
+
+      <details>
+        <summary>"Error handling request from 127.0.0.1"</summary>
+        <div class="faq-body">
+          <p><span class="cause">Root cause (historical):</span> Two bugs: <code>request.json()</code> consumed the body then <code>request.read()</code> returned empty bytes when forwarding; and <code>web.StreamResponse</code> with copied <code>Content-Length</code> header caused mismatches.</p>
+          <p><span class="fix">Current state:</span> Fixed. Proxy reads raw body once with <code>request.read()</code>, parses with <code>json.loads()</code>, passes cached <code>raw_body</code> to <code>_forward_request()</code>. Uses <code>web.Response</code> (not <code>StreamResponse</code>).</p>
+        </div>
+      </details>
+    </div>
+
+    <!-- TROUBLESHOOTING: MCP -->
+    <div class="doc-section" id="ts-mcp">
+      <div class="eyebrow">Troubleshooting</div>
+      <h2>MCP Stdio Proxy</h2>
+
+      <details>
+        <summary>Server subprocess exits immediately</summary>
+        <div class="faq-body">
+          <p>Test the server command standalone first:</p>
+          <pre>npx -y @modelcontextprotocol/server-filesystem /tmp</pre>
+          <p>If it requires specific env vars or paths, pass them through the agentward command. AgentWard inherits the calling environment.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Agent stopped using a tool after I re-enabled it in policy</summary>
+        <div class="faq-body">
+          <p><span class="symptom">Symptom:</span> You blocked a tool, then removed the block from <code>agentward.yaml</code> and restarted the proxy. The agent still avoids using the tool.</p>
+          <p><span class="cause">Root cause:</span> Not AgentWard. When a tool is blocked, AgentWard injects a message like <code>[AgentWard: blocked tool 'browser']</code> into the LLM response. The LLM sees this in its conversation history and "remembers" the restriction — so even after you re-enable it, the LLM avoids the tool because it thinks it's still blocked.</p>
+          <p><span class="fix">Fix:</span> Start a new chat session after changing your policy. A fresh conversation has no memory of the previous block. Confirm AgentWard is not blocking by checking proxy output — if you see <code>ALLOW</code>, the tool is allowed through.</p>
+        </div>
+      </details>
+    </div>
+
+  </main>
+</div>
+
+<footer>
+  <div class="footer-logo">
+    <svg width="18" height="18" viewBox="0 0 48 48" fill="none">
+      <path d="M24 4L6 12v12c0 11.1 7.7 21.5 18 24 10.3-2.5 18-12.9 18-24V12L24 4z" fill="#0d1a0d" stroke="#00ff88" stroke-width="2"/>
+      <path d="M17 24l5 5 9-9" stroke="#00ff88" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    AgentWard
+  </div>
+  <div class="footer-links">
+    <a href="index.html">Home</a>
+    <a href="how-it-works.html">How It Works</a>
+    <a href="compare.html">Compare</a>
+    <a href="https://github.com/agentward-ai/agentward" target="_blank">GitHub</a>
+  </div>
+  <span class="footer-right">Apache 2.0 · Open Source</span>
+</footer>
+
+<script>
+// Highlight active sidebar link on scroll
+const sections = document.querySelectorAll('[id]');
+const links = document.querySelectorAll('.sidebar a');
+window.addEventListener('scroll',()=>{
+  let current='';
+  sections.forEach(s=>{if(s.getBoundingClientRect().top<120)current=s.id});
+  links.forEach(l=>{l.classList.toggle('active',l.getAttribute('href')==='#'+current)});
+},{passive:true});
+</script>
+</body>
+</html>

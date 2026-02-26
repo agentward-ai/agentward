@@ -1,0 +1,9 @@
+This file contains no personally identifiable information.
+It is a plain text document about software architecture.
+
+The system uses a microservices pattern with three main components:
+1. API Gateway — handles routing and authentication
+2. Core Service — business logic and data processing
+3. Storage Layer — PostgreSQL database with Redis cache
+
+Version 2.0 was released on January 15th, 2026.

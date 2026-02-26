@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Compare — AgentWard vs Cisco, Snyk, Caterpillar, SecureClaw</title>
+  <meta name="description" content="How AgentWard compares to Cisco Skill Scanner, Caterpillar, Snyk mcp-scan, and SecureClaw — static scanners vs runtime enforcement."/>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iOCIgZmlsbD0iIzBhMGEwYSIvPgogIDxwYXRoIGQ9Ik0yNCA0TDYgMTJ2MTJjMCAxMS4xIDcuNyAyMS41IDE4IDI0IDEwLjMtMi41IDE4LTEyLjkgMTgtMjRWMTJMMjQgNHoiIGZpbGw9IiMxMTEiIHN0cm9rZT0iIzAwZmY4OCIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgPHBhdGggZD0iTTE4IDI0bDQgNCA4LTgiIHN0cm9rZT0iIzAwZmY4OCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgZmlsbD0ibm9uZSIvPgo8L3N2Zz4=">
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --green:#00ff88;--green2:#00cc6a;--green-dim:#00ff8820;--green-border:#00ff8830;
+      --bg:#080808;--bg1:#0d0d0d;--bg2:#111;
+      --border:#1c1c1c;--border2:#242424;
+      --text:#d8d8d8;--muted:#666;--muted2:#444;--white:#f0f0f0;
+      --red:#ff4444;--yellow:#ffcc00;--orange:#ff8c42;
+      --font-sans:'IBM Plex Sans',system-ui,sans-serif;
+      --font-mono:'IBM Plex Mono',monospace;
+    }
+    html{scroll-behavior:smooth}
+    body{background:var(--bg);color:var(--text);font-family:var(--font-sans);min-height:100vh;line-height:1.6}
+    ::selection{background:var(--green-dim)}
+    a{color:var(--green);text-decoration:none}
+    a:hover{color:var(--green2)}
+
+    nav{position:sticky;top:0;z-index:200;height:52px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;background:rgba(8,8,8,0.94);backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
+    .nav-logo{display:flex;align-items:center;gap:10px;color:var(--white);font-weight:600;font-size:15px;letter-spacing:-0.3px}
+    .nav-links{display:flex;align-items:center;gap:2px}
+    .nav-links a{padding:5px 12px;border-radius:6px;font-size:13px;font-weight:500;color:var(--muted);transition:color .15s,background .15s}
+    .nav-links a:hover{color:var(--white);background:var(--bg2)}
+    .nav-links a.active{color:var(--green);background:var(--green-dim)}
+    .nav-gh{display:flex;align-items:center;gap:7px;padding:6px 14px;border-radius:7px;background:var(--green);color:var(--bg)!important;font-size:12.5px;font-weight:600;margin-left:8px;transition:background .15s}
+    .nav-gh:hover{background:var(--green2)!important}
+    @media(max-width:600px){.nav-links a:not(.nav-gh){display:none}}
+
+    .page-hero{padding:64px 24px 48px;max-width:900px;margin:0 auto}
+    .eyebrow{font-family:var(--font-mono);font-size:10.5px;font-weight:600;color:var(--green);letter-spacing:2px;text-transform:uppercase;margin-bottom:14px}
+    .page-title{font-size:clamp(26px,4vw,40px);font-weight:700;color:var(--white);letter-spacing:-1px;margin-bottom:14px}
+    .page-sub{font-size:16px;color:var(--muted);line-height:1.7;max-width:600px}
+    .section{max-width:900px;margin:0 auto;padding:56px 24px}
+    .section+.section{border-top:1px solid var(--border)}
+    h2{font-size:clamp(18px,2.5vw,24px);font-weight:700;color:var(--white);letter-spacing:-0.5px;margin-bottom:10px}
+    p{font-size:14px;color:var(--muted);line-height:1.75;margin-bottom:12px}
+
+    /* Main comparison table */
+    .table-wrap{margin-top:28px;overflow-x:auto;border:1px solid var(--border);border-radius:12px}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    thead th{
+      padding:12px 16px;text-align:left;
+      border-bottom:2px solid var(--border2);
+      font-family:var(--font-mono);font-size:10.5px;font-weight:600;
+      letter-spacing:1px;white-space:nowrap;background:var(--bg1);
+    }
+    thead th:first-child{color:var(--muted);width:220px}
+    thead th:not(:first-child){text-align:center;color:var(--muted2)}
+    thead th.ours{color:var(--green)!important;background:linear-gradient(180deg,#0c1a0c,var(--bg1))}
+    tbody tr:hover td{background:#0c0c0c}
+    tbody td{padding:10px 16px;border-bottom:1px solid var(--border);vertical-align:middle}
+    tbody tr:last-child td{border-bottom:none}
+    tbody td:first-child{font-size:13px;font-weight:500;color:#bbb}
+    tbody td:not(:first-child){text-align:center;font-family:var(--font-mono);font-size:12px;white-space:nowrap}
+    tbody td.ours{background:var(--green-dim)!important;color:var(--green)!important;font-weight:600}
+    .sym-yes{color:var(--green)}
+    .sym-no{color:var(--muted2)}
+    .sym-partial{color:var(--orange)}
+    .sym-soon{color:var(--yellow)}
+    tbody tr:hover td.ours{background:#00ff8828!important}
+    .row-group td{padding:14px 16px 6px;font-family:var(--font-mono);font-size:9.5px;font-weight:600;color:var(--muted2);letter-spacing:2px;text-transform:uppercase;border-bottom:none;background:var(--bg)!important}
+
+    /* Positioning cards */
+    .pos-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-top:24px}
+    .pos-card{background:var(--bg1);border:1px solid var(--border);border-radius:12px;padding:22px}
+    .pos-card h4{font-size:15px;font-weight:600;color:var(--white);margin-bottom:8px}
+    .pos-card p{font-size:13px;color:var(--muted);line-height:1.65;margin-bottom:0}
+    .pos-tag{display:inline-block;font-family:var(--font-mono);font-size:9.5px;font-weight:600;padding:2px 8px;border-radius:4px;margin-bottom:10px;letter-spacing:0.5px}
+    .pos-tag.scan-only{background:#ff444420;color:var(--red);border:1px solid #ff444435}
+    .pos-tag.guardrails{background:#ffcc0020;color:var(--yellow);border:1px solid #ffcc0035}
+    .pos-tag.iam{background:#5eead420;color:#5eead4;border:1px solid #5eead435}
+    .pos-tag.us{background:var(--green-dim);color:var(--green);border:1px solid var(--green-border)}
+
+    /* What AgentWard is NOT */
+    .not-list{display:flex;flex-direction:column;gap:12px;margin-top:24px}
+    .not-item{display:flex;align-items:flex-start;gap:14px;background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:16px 20px}
+    .not-x{font-size:18px;flex-shrink:0;margin-top:1px;opacity:0.6}
+    .not-item h5{font-size:13.5px;font-weight:600;color:#bbb;margin-bottom:3px}
+    .not-item p{font-size:12.5px;color:var(--muted);margin-bottom:0;line-height:1.6}
+
+    /* CTA */
+    .cta-strip{text-align:center;border-top:1px solid var(--border);padding:56px 24px}
+    .cta-strip h2{font-size:clamp(20px,3vw,28px);font-weight:700;color:var(--white);letter-spacing:-0.5px;margin-bottom:8px}
+    .cta-strip p{color:var(--muted);font-size:14.5px;margin-bottom:24px}
+    .btn-copy{display:inline-flex;align-items:center;gap:10px;padding:12px 22px;border-radius:9px;background:var(--bg2);border:1px solid var(--border2);cursor:pointer;font-family:var(--font-mono);font-size:14px;color:var(--green);font-weight:500;transition:border-color .15s}
+    .btn-copy:hover{border-color:#333}
+    .btn-primary{display:inline-flex;align-items:center;gap:8px;padding:12px 22px;border-radius:9px;background:var(--green);color:var(--bg);font-weight:600;font-size:14px;transition:background .15s;margin-left:10px}
+    .btn-primary:hover{background:var(--green2);color:var(--bg)}
+
+    footer{border-top:1px solid var(--border);padding:24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+    .footer-logo{display:flex;align-items:center;gap:8px;color:var(--muted2);font-size:13px}
+    .footer-links{display:flex;gap:16px;font-size:13px}
+    .footer-links a{color:var(--muted);transition:color .15s}
+    .footer-links a:hover{color:var(--green)}
+    .footer-right{font-size:12px;color:var(--muted2);font-family:var(--font-mono)}
+    @media(max-width:600px){footer{flex-direction:column;text-align:center}}
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="nav-logo">
+    <svg width="24" height="24" viewBox="0 0 48 48" fill="none">
+      <path d="M24 4L6 12v12c0 11.1 7.7 21.5 18 24 10.3-2.5 18-12.9 18-24V12L24 4z" fill="#0d1a0d" stroke="#00ff88" stroke-width="2.5"/>
+      <path d="M17 24l5 5 9-9" stroke="#00ff88" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    AgentWard
+  </a>
+  <div class="nav-links">
+    <a href="index.html">Home</a>
+    <a href="how-it-works.html">How It Works</a>
+    <a href="docs.html">Docs</a>
+    <a href="compare.html" class="active">Compare</a>
+    <a href="https://github.com/agentward-ai/agentward" target="_blank" rel="noopener" class="nav-gh">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      GitHub
+    </a>
+  </div>
+</nav>
+
+<div class="page-hero">
+  <div class="eyebrow">Comparison</div>
+  <h1 class="page-title">AgentWard vs. the field</h1>
+  <p class="page-sub">The existing tools scan before installation, then walk away. AgentWard enforces at runtime — continuously, in code, outside the LLM context window.</p>
+</div>
+
+<!-- COMPARISON TABLE -->
+<div class="section" style="padding-top:0">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Capability</th>
+          <th>Cisco Scanner</th>
+          <th>Caterpillar</th>
+          <th>Snyk mcp-scan</th>
+          <th>SecureClaw</th>
+          <th class="ours">AgentWard</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="row-group"><td colspan="6">Core Capabilities</td></tr>
+        <tr>
+          <td>Static scanning</td>
+          <td class="sym-yes">✓</td>
+          <td class="sym-yes">✓</td>
+          <td class="sym-yes">✓</td>
+          <td class="sym-yes">✓</td>
+          <td class="ours sym-yes">✓</td>
+        </tr>
+        <tr>
+          <td>Runtime enforcement</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-partial">Proxy†</td>
+          <td class="sym-partial">Plugin‡</td>
+          <td class="ours sym-yes">✓</td>
+        </tr>
+        <tr>
+          <td>Declarative policy (YAML)</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="ours sym-yes">✓</td>
+        </tr>
+        <tr>
+          <td>Skill chaining control</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="ours sym-yes">✓</td>
+        </tr>
+        <tr>
+          <td>Data flow classification</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-partial">PII†</td>
+          <td class="sym-no">✗</td>
+          <td class="ours sym-yes">✓</td>
+        </tr>
+        <tr>
+          <td>Structured audit trail</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="ours sym-yes">✓</td>
+        </tr>
+        <tr>
+          <td>Human-in-the-loop approval</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="ours sym-yes">✓</td>
+        </tr>
+
+        <tr class="row-group"><td colspan="6">Enforcement Model</td></tr>
+        <tr>
+          <td>Enforced in code (not prompts)</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-partial">Partial†</td>
+          <td class="sym-no">✗</td>
+          <td class="ours sym-yes">✓</td>
+        </tr>
+        <tr>
+          <td>Outside LLM context window</td>
+          <td>—</td>
+          <td>—</td>
+          <td class="sym-partial">Partial</td>
+          <td class="sym-no">✗</td>
+          <td class="ours sym-yes">✓</td>
+        </tr>
+        <tr>
+          <td>Prompt-injection resistant</td>
+          <td>—</td>
+          <td>—</td>
+          <td class="sym-partial">Partial</td>
+          <td class="sym-no">✗</td>
+          <td class="ours sym-yes">✓</td>
+        </tr>
+
+        <tr class="row-group"><td colspan="6">Coverage</td></tr>
+        <tr>
+          <td>OpenClaw skills</td>
+          <td class="sym-yes">✓</td>
+          <td class="sym-yes">✓</td>
+          <td class="sym-yes">✓</td>
+          <td class="sym-yes">✓</td>
+          <td class="ours sym-yes">✓</td>
+        </tr>
+        <tr>
+          <td>MCP servers</td>
+          <td class="sym-partial">~</td>
+          <td class="sym-partial">~</td>
+          <td class="sym-yes">✓</td>
+          <td class="sym-partial">OC only</td>
+          <td class="ours sym-yes">✓</td>
+        </tr>
+        <tr>
+          <td>Python SDK tools</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="ours sym-yes">✓</td>
+        </tr>
+
+        <tr class="row-group"><td colspan="6">Compliance</td></tr>
+        <tr>
+          <td>Compliance mapping</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-partial">OWASP</td>
+          <td class="ours sym-yes">✓ HIPAA</td>
+        </tr>
+        <tr>
+          <td>SOX / GDPR / PCI-DSS</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="ours sym-soon">Soon</td>
+        </tr>
+        <tr>
+          <td>Auto-fix compliant policy</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
+          <td class="ours sym-yes">✓</td>
+        </tr>
+
+        <tr class="row-group"><td colspan="6">Open Source</td></tr>
+        <tr>
+          <td>Fully open source</td>
+          <td class="sym-no">✗</td>
+          <td class="sym-yes">✓</td>
+          <td class="sym-partial">Partial</td>
+          <td class="sym-no">✗</td>
+          <td class="ours sym-yes">✓ Apache 2.0</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:14px;font-size:12px;color:var(--muted2)">† Snyk: proxy mode available but limited to MCP; PII detection is advisory. ‡ SecureClaw: injects policy rules as natural language into LLM context — vulnerable to prompt injection by design.</p>
+</div>
+
+<!-- HOW THEY DIFFER -->
+<div class="section">
+  <div class="eyebrow">Positioning</div>
+  <h2>Where each tool lives</h2>
+  <p>These tools aren't exactly competing — they address different layers of the stack. AgentWard is the only one focused on runtime enforcement at the tool-call level.</p>
+  <div class="pos-grid">
+    <div class="pos-card">
+      <div class="pos-tag scan-only">Scan-and-walk-away</div>
+      <h4>Cisco / Caterpillar / Snyk</h4>
+      <p>Static analysis at install time. Excellent for discovering vulnerabilities before deployment. Nothing happens at runtime — the enforcement responsibility shifts to you.</p>
+    </div>
+    <div class="pos-card">
+      <div class="pos-tag guardrails">Prompt-based guardrails</div>
+      <h4>SecureClaw / NeMo Guardrails</h4>
+      <p>Injects restriction rules as natural language into the LLM context. The LLM reads them and tries to comply — but these rules live <em>inside</em> the context window and can be bypassed by prompt injection or agent reasoning errors.</p>
+    </div>
+    <div class="pos-card">
+      <div class="pos-tag iam">IAM systems</div>
+      <h4>AWS IAM / RBAC / ACLs</h4>
+      <p>Control access at the identity and infrastructure level. Excellent for who-can-call-what at the service boundary. AgentWard complements IAM — it adds per-tool-call policy enforcement at the agent layer, not the infra layer.</p>
+    </div>
+    <div class="pos-card">
+      <div class="pos-tag us">Runtime enforcement</div>
+      <h4>AgentWard</h4>
+      <p>Code-level enforcement in a transparent proxy, enforcing at every tool call, completely outside the LLM context window. The LLM never sees the policy rules and cannot override them under any prompt injection attack.</p>
+    </div>
+  </div>
+</div>
+
+<!-- WHAT AGENTWARD IS NOT -->
+<div class="section">
+  <div class="eyebrow">Scope</div>
+  <h2>What AgentWard is not</h2>
+  <p>Being clear about scope matters. AgentWard is specifically the tool-call enforcement layer. It doesn't try to be everything.</p>
+  <div class="not-list">
+    <div class="not-item">
+      <span class="not-x">✗</span>
+      <div>
+        <h5>Not another static scanner</h5>
+        <p>Cisco Skill Scanner, Caterpillar, and Snyk mcp-scan all scan at install time and produce useful reports. AgentWard can ingest their scan results as input — it doesn't duplicate that work, it adds the runtime layer they don't have.</p>
+      </div>
+    </div>
+    <div class="not-item">
+      <span class="not-x">✗</span>
+      <div>
+        <h5>Not a guardrails framework</h5>
+        <p>NeMo Guardrails and Guardrails AI focus on LLM input/output validation. AgentWard focuses on tool calls — what the agent actually does in the world, not what it says.</p>
+      </div>
+    </div>
+    <div class="not-item">
+      <span class="not-x">✗</span>
+      <div>
+        <h5>Not an IAM replacement</h5>
+        <p>AgentWard complements your existing IAM. IAM controls infrastructure-level access. AgentWard adds agent-layer enforcement: per-skill, per-tool, per-call policy evaluation that IAM can't see.</p>
+      </div>
+    </div>
+    <div class="not-item">
+      <span class="not-x">✗</span>
+      <div>
+        <h5>Not a model safety tool</h5>
+        <p>Making the LLM itself safe is Anthropic's and OpenAI's problem. AgentWard assumes the model layer is handled and focuses exclusively on the tool/skill layer — what actions the agent is permitted to take.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CTA -->
+<div class="cta-strip">
+  <h2>Ready to try it?</h2>
+  <p>5 seconds to see what your agent's tools can actually access.</p>
+  <div>
+    <button class="btn-copy" onclick="copyCmd()"><span style="opacity:.35">$</span> pip install agentward</button>
+    <a href="https://github.com/agentward-ai/agentward" target="_blank" rel="noopener" class="btn-primary">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      GitHub Repo
+    </a>
+  </div>
+</div>
+
+<footer>
+  <div class="footer-logo">
+    <svg width="18" height="18" viewBox="0 0 48 48" fill="none">
+      <path d="M24 4L6 12v12c0 11.1 7.7 21.5 18 24 10.3-2.5 18-12.9 18-24V12L24 4z" fill="#0d1a0d" stroke="#00ff88" stroke-width="2"/>
+      <path d="M17 24l5 5 9-9" stroke="#00ff88" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    AgentWard
+  </div>
+  <div class="footer-links">
+    <a href="index.html">Home</a>
+    <a href="how-it-works.html">How It Works</a>
+    <a href="docs.html">Docs</a>
+    <a href="https://github.com/agentward-ai/agentward" target="_blank">GitHub</a>
+  </div>
+  <span class="footer-right">Apache 2.0 · Open Source</span>
+</footer>
+
+<script>
+function copyCmd(){
+  navigator.clipboard&&navigator.clipboard.writeText('pip install agentward');
+}
+</script>
+</body>
+</html>

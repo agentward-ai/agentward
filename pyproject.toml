@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentward"
-version = "0.2.6"
+version = "0.3.0"
 description = "Open-source permission control plane for AI agents. Scan, enforce, and audit every tool call."
 readme = "README.md"
 license = "Apache-2.0"
@@ -29,6 +29,12 @@ dependencies = [
     "pyyaml>=6.0",
     "rich>=13.0",
     "aiohttp>=3.9",
+]
+
+[project.optional-dependencies]
+sanitize = [
+    "pypdf>=4.0",
+    "spacy>=3.7",
 ]
 
 [project.scripts]

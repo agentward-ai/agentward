@@ -232,6 +232,176 @@ class SensitiveContentConfig(BaseModel):
     )
 
 
+class ApprovalCondition(BaseModel):
+    """A single condition on a tool argument value.
+
+    Supports:
+      - contains: argument string contains this substring
+      - not_contains: argument string does NOT contain this substring
+      - equals: argument value equals this exactly
+      - matches: argument string matches this regex pattern
+    """
+
+    contains: str | None = None
+    not_contains: str | None = None
+    equals: Any | None = None
+    matches: str | None = None
+
+    @model_validator(mode="after")
+    def at_least_one_condition(self) -> "ApprovalCondition":
+        """Ensure at least one condition is set."""
+        if all(
+            v is None
+            for v in (self.contains, self.not_contains, self.equals, self.matches)
+        ):
+            msg = (
+                "Approval condition must specify at least one of: "
+                "contains, not_contains, equals, matches"
+            )
+            raise ValueError(msg)
+        return self
+
+    def check(self, value: Any) -> bool:
+        """Check if a value matches this condition.
+
+        All specified sub-conditions must pass (AND logic).
+
+        Args:
+            value: The argument value to check.
+
+        Returns:
+            True if all conditions match.
+        """
+        import re
+
+        str_value = str(value) if value is not None else ""
+
+        if self.contains is not None and self.contains not in str_value:
+            return False
+        if self.not_contains is not None and self.not_contains in str_value:
+            return False
+        if self.equals is not None and value != self.equals:
+            return False
+        if self.matches is not None and not re.search(self.matches, str_value):
+            return False
+        return True
+
+
+class ConditionalApproval(BaseModel):
+    """A conditional approval rule: require approval only when conditions match.
+
+    YAML format:
+      - tool: gmail_send
+        when:
+          to:
+            contains: "@external.com"
+
+    If the tool name matches but the conditions don't match, the tool call
+    proceeds without requiring approval.
+    """
+
+    tool: str
+    when: dict[str, ApprovalCondition] = Field(default_factory=dict)
+
+    def matches(self, tool_name: str, arguments: dict[str, Any] | None) -> bool:
+        """Check if this rule applies to the given tool call.
+
+        Args:
+            tool_name: The MCP tool name.
+            arguments: The tool call arguments.
+
+        Returns:
+            True if the tool name matches AND all conditions are satisfied.
+        """
+        if tool_name != self.tool:
+            return False
+        if not self.when:
+            return True  # No conditions = always matches (same as plain string)
+        if arguments is None:
+            return False  # Has conditions but no arguments to check
+
+        for arg_name, condition in self.when.items():
+            arg_value = arguments.get(arg_name)
+            if not condition.check(arg_value):
+                return False
+        return True
+
+
+class ApprovalRule(BaseModel):
+    """Union type for require_approval entries.
+
+    Accepts either a plain string (tool name) or a dict with conditional rules.
+    """
+
+    tool_name: str | None = None
+    conditional: ConditionalApproval | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_approval_rule(cls, data: Any) -> dict[str, Any]:
+        """Parse from string or dict."""
+        if isinstance(data, str):
+            return {"tool_name": data}
+        if isinstance(data, dict):
+            # Programmatic construction: ApprovalRule(tool_name="...")
+            if "tool_name" in data:
+                return data
+            # YAML deserialization: {tool: "...", when: {...}}
+            if "tool" in data:
+                return {"conditional": data}
+        msg = (
+            f"Approval rule must be a tool name string or a dict with 'tool' key, "
+            f"got {type(data).__name__}: {data!r}"
+        )
+        raise ValueError(msg)
+
+    def __eq__(self, other: object) -> bool:
+        """Support equality with plain strings for backward compatibility.
+
+        This allows `"tool_name" in policy.require_approval` to work even
+        though the list contains ApprovalRule objects.
+        """
+        if isinstance(other, str):
+            return self.tool_name == other
+        if isinstance(other, ApprovalRule):
+            return (
+                self.tool_name == other.tool_name
+                and self.conditional == other.conditional
+            )
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        """Hash by tool_name for set/dict compatibility."""
+        return hash(self.tool_name)
+
+    def matches(self, tool_name: str, arguments: dict[str, Any] | None) -> bool:
+        """Check if this rule requires approval for the given tool call.
+
+        Args:
+            tool_name: The MCP tool name.
+            arguments: The tool call arguments.
+
+        Returns:
+            True if approval is required.
+        """
+        if self.tool_name is not None:
+            return tool_name == self.tool_name
+        if self.conditional is not None:
+            return self.conditional.matches(tool_name, arguments)
+        return False
+
+
+class DefaultAction(str, Enum):
+    """Default action for tools that don't match any policy rule.
+
+    ALLOW: Passthrough — unknown tools are allowed (default, minimizes breakage).
+    BLOCK: Zero-trust — only explicitly allowed tools can execute.
+    """
+
+    ALLOW = "allow"
+    BLOCK = "block"
+
+
 class AgentWardPolicy(BaseModel):
     """Top-level policy model for agentward.yaml.
 
@@ -241,6 +411,7 @@ class AgentWardPolicy(BaseModel):
     """
 
     version: str
+    default_action: DefaultAction = DefaultAction.ALLOW
     skills: dict[str, dict[str, ResourcePermissions]] = Field(default_factory=dict)
     skill_chaining: list[ChainingRule] = Field(default_factory=list)
     chaining_mode: ChainingMode = ChainingMode.CONTENT
@@ -250,7 +421,7 @@ class AgentWardPolicy(BaseModel):
         "in a single agent turn. When set, any chain exceeding this depth is blocked "
         "regardless of individual chaining rules. None means unlimited.",
     )
-    require_approval: list[str] = Field(default_factory=list)
+    require_approval: list[ApprovalRule] = Field(default_factory=list)
     approval_timeout: int = Field(
         default=60,
         description="Timeout in seconds for approval dialogs. "

@@ -236,6 +236,7 @@ def generate_init_policy(
     """
     from agentward.policy.schema import (
         AgentWardPolicy,
+        ApprovalRule,
         ChainingMode,
         ResourcePermissions,
     )
@@ -262,13 +263,17 @@ def generate_init_policy(
                 )
 
     # Upgrade: add HIGH tools to require_approval if not already there
-    approval_set = set(policy.require_approval)
+    approval_names = {
+        r.tool_name for r in policy.require_approval if r.tool_name is not None
+    }
     for server_map in scan.servers:
         for tool in server_map.tools:
             if tool.risk_level == RiskLevel.HIGH:
-                if tool.tool.name not in approval_set:
-                    policy.require_approval.append(tool.tool.name)
-                    approval_set.add(tool.tool.name)
+                if tool.tool.name not in approval_names:
+                    policy.require_approval.append(
+                        ApprovalRule(tool_name=tool.tool.name)
+                    )
+                    approval_names.add(tool.tool.name)
 
     # Set chaining mode to content (strictest useful default)
     policy.chaining_mode = ChainingMode.CONTENT
@@ -398,18 +403,23 @@ def restart_openclaw_gateway(console: Console) -> bool:
         return True
 
     # Health check failed — but the gateway may actually be running on
-    # the swapped backend port.  Verify before giving up.
+    # the swapped backend port.  Poll with retries since it may take a
+    # few seconds after the restart command returns.
     config_path = find_clawdbot_config()
     if config_path is not None:
         ports = get_clawdbot_gateway_ports(config_path)
         if ports is not None:
+            import time
+
             _listen_port, backend_port = ports
-            if _is_port_listening(backend_port):
-                console.print(
-                    f"  [{_CLR_GREEN}]✓[/{_CLR_GREEN}]  OpenClaw gateway restarted (port {backend_port})",
-                    highlight=False,
-                )
-                return True
+            for attempt in range(10):
+                if _is_port_listening(backend_port):
+                    console.print(
+                        f"  [{_CLR_GREEN}]✓[/{_CLR_GREEN}]  OpenClaw gateway restarted (port {backend_port})",
+                        highlight=False,
+                    )
+                    return True
+                time.sleep(1)
 
     stderr = result.stderr.strip()
     if stderr:
@@ -526,6 +536,31 @@ def start_proxy(console: Console, policy_path: Path) -> None:
             approval_handler=approval_handler,
         )
 
+        async def _start_telegram(bot: Any) -> bool:
+            """Start Telegram bot, auto-freeing stale port if needed."""
+            from agentward.proxy.http import _force_free_port
+
+            try:
+                await bot.start()
+                return True
+            except OSError:
+                # Port likely held by stale process — try to free it
+                if hasattr(bot, "_proxy_port") and _force_free_port(bot._proxy_port):
+                    try:
+                        await bot.start()
+                        return True
+                    except OSError as exc:
+                        console.print(
+                            f"  [{_CLR_MEDIUM}]⚠[/{_CLR_MEDIUM}] Telegram proxy unavailable: {exc}",
+                            highlight=False,
+                        )
+                        return False
+                console.print(
+                    f"  [{_CLR_MEDIUM}]⚠[/{_CLR_MEDIUM}] Telegram proxy port in use, skipping.",
+                    highlight=False,
+                )
+                return False
+
         async def _run_both() -> None:
             import signal as _signal
 
@@ -533,15 +568,16 @@ def start_proxy(console: Console, policy_path: Path) -> None:
             loop = asyncio.get_running_loop()
             for sig in (_signal.SIGINT, _signal.SIGTERM):
                 loop.add_signal_handler(sig, shutdown.set)
+            tg_started = False
             if telegram_bot is not None:
-                await telegram_bot.start()
+                tg_started = await _start_telegram(telegram_bot)
             try:
                 await asyncio.gather(
                     http_proxy.run(shutdown_event=shutdown),
                     llm_proxy.run(shutdown_event=shutdown),
                 )
             finally:
-                if telegram_bot is not None:
+                if tg_started and telegram_bot is not None:
                     await telegram_bot.stop()
 
         try:
@@ -551,12 +587,13 @@ def start_proxy(console: Console, policy_path: Path) -> None:
     else:
 
         async def _run_http_only() -> None:
+            tg_started = False
             if telegram_bot is not None:
-                await telegram_bot.start()
+                tg_started = await _start_telegram(telegram_bot)
             try:
                 await http_proxy.run()
             finally:
-                if telegram_bot is not None:
+                if tg_started and telegram_bot is not None:
                     await telegram_bot.stop()
 
         try:
@@ -683,27 +720,55 @@ def run_init(
             raise typer.Exit(0)
 
     # ------------------------------------------------------------------
-    # Step 5: Check for existing policy file
+    # Step 5: Generate policy (needed for diff before write decision)
     # ------------------------------------------------------------------
+    policy = generate_init_policy(scan_result, chains)
+
+    # ------------------------------------------------------------------
+    # Step 5b: Check for existing policy file — show diff if present
+    # ------------------------------------------------------------------
+    skip_write = False
     if not dry_run and output_path.exists():
-        if not yes:
+        # Try to show what would change
+        try:
+            from agentward.policy.diff import diff_policies, render_diff
+            from agentward.policy.loader import load_policy
+
+            existing_policy = load_policy(output_path)
+            diff = diff_policies(existing_policy, policy)
+            if not diff.is_empty:
+                console.print(
+                    f"\n[bold]Existing policy at {output_path} — changes:[/bold]",
+                    highlight=False,
+                )
+                render_diff(diff, console)
+            else:
+                console.print(
+                    f"\n[dim]Existing policy at {output_path} is identical to "
+                    "the recommended policy. No changes needed.[/dim]",
+                    highlight=False,
+                )
+                skip_write = True
+        except Exception:
+            # If we can't load/diff the old policy, fall back to simple prompt
+            pass
+
+        if not skip_write and not yes:
             try:
                 overwrite = typer.confirm(
-                    f"Policy file already exists ({output_path}). Overwrite?",
+                    f"Overwrite {output_path} with the new policy?",
                     default=False,
                 )
             except typer.Abort:
                 overwrite = False
 
             if not overwrite:
-                console.print("\n[dim]No changes made.[/dim]", highlight=False)
-                raise typer.Exit(0)
+                console.print("\n[dim]Policy unchanged.[/dim]", highlight=False)
+                skip_write = True
 
     # ------------------------------------------------------------------
-    # Step 6: Generate and write policy
+    # Step 6: Write policy (or show dry-run preview)
     # ------------------------------------------------------------------
-    policy = generate_init_policy(scan_result, chains)
-
     if dry_run:
         # Show what would be written
         console.print(f"\n[bold]Policy that would be written to {output_path}:[/bold]")
@@ -720,26 +785,41 @@ def run_init(
         )
         raise typer.Exit(0)
 
-    # Write the policy
-    try:
-        write_policy(policy, output_path)
-    except PermissionError:
-        console.print(
-            f"[bold red]Error:[/bold red] Permission denied writing to {output_path}",
-            highlight=False,
-        )
-        raise typer.Exit(1)
-    except OSError as e:
-        console.print(
-            f"[bold red]Error:[/bold red] Cannot write to {output_path}: {e}",
-            highlight=False,
-        )
-        raise typer.Exit(1)
+    if not skip_write:
+        # Write the policy
+        try:
+            write_policy(policy, output_path)
+        except PermissionError:
+            console.print(
+                f"[bold red]Error:[/bold red] Permission denied writing to {output_path}",
+                highlight=False,
+            )
+            raise typer.Exit(1)
+        except OSError as e:
+            console.print(
+                f"[bold red]Error:[/bold red] Cannot write to {output_path}: {e}",
+                highlight=False,
+            )
+            raise typer.Exit(1)
 
-    console.print(
-        f"\n[{_CLR_GREEN}]✓[/{_CLR_GREEN}]  Policy written to [bold]{output_path}[/bold]",
-        highlight=False,
-    )
+        console.print(
+            f"\n[{_CLR_GREEN}]✓[/{_CLR_GREEN}]  Policy written to [bold]{output_path}[/bold]",
+            highlight=False,
+        )
+
+    # Save HTML scan report alongside the policy
+    try:
+        from agentward.scan.html_report import generate_scan_html
+
+        html_path = output_path.parent / "agentward-report.html"
+        html_content = generate_scan_html(scan_result, recommendations, chains=chains)
+        html_path.write_text(html_content, encoding="utf-8")
+        console.print(
+            f"[{_CLR_GREEN}]✓[/{_CLR_GREEN}]  Scan report saved to [bold]{html_path}[/bold]",
+            highlight=False,
+        )
+    except Exception:
+        pass  # HTML report is a bonus — don't fail init over it
 
     # Show what the policy will enforce per tool
     _print_enforcement_summary(console, scan_result, policy)
@@ -768,16 +848,10 @@ def run_init(
     restarted = restart_openclaw_gateway(console)
     if not restarted:
         console.print(
-            f"  [{_CLR_MEDIUM}]⚠[/{_CLR_MEDIUM}]  Could not restart OpenClaw gateway automatically.",
+            f"  [{_CLR_MEDIUM}]⚠[/{_CLR_MEDIUM}] Gateway restart health check failed — "
+            "proceeding anyway (proxy will retry connection).",
             highlight=False,
         )
-        console.print(
-            f"     Run [bold]openclaw gateway restart[/bold] manually, then:\n"
-            f"     [dim]agentward inspect --gateway openclaw --policy {output_path}[/dim]",
-            highlight=False,
-        )
-        console.print("")
-        return
 
     # ------------------------------------------------------------------
     # Step 9: Start the proxy (blocking foreground process)

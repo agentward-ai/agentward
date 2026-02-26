@@ -54,6 +54,7 @@ class AuditLogger:
         arguments: dict[str, Any],
         result: EvaluationResult,
         chain_violation: bool = False,
+        dry_run: bool = False,
     ) -> None:
         """Log a tool call and its policy decision.
 
@@ -62,6 +63,7 @@ class AuditLogger:
             arguments: The tool call arguments.
             result: The evaluation result from the policy engine.
             chain_violation: Whether this was blocked due to a chaining rule.
+            dry_run: If True, the decision was observed but not enforced.
         """
         entry = {
             "timestamp": _now_iso(),
@@ -74,18 +76,27 @@ class AuditLogger:
         }
         if chain_violation:
             entry["chain_violation"] = True
+        if dry_run:
+            entry["dry_run"] = True
         self._write_entry(entry)
 
         # Human-readable stderr output
+        dry_tag = " [bold #5eead4](dry-run)[/bold #5eead4]" if dry_run else ""
         if chain_violation and result.decision == PolicyDecision.BLOCK:
             _console.print(
-                f"  [bold red]✗ CHAIN BLOCK[/bold red] {tool_name}",
+                f"  [bold red]✗ CHAIN BLOCK[/bold red]{dry_tag} {tool_name}",
                 highlight=False,
             )
             _console.print(f"    [dim]{result.reason}[/dim]", highlight=False)
         elif result.decision == PolicyDecision.BLOCK:
             _console.print(
-                f"  [bold red]✗ BLOCK[/bold red] {tool_name}",
+                f"  [bold red]✗ BLOCK[/bold red]{dry_tag} {tool_name}",
+                highlight=False,
+            )
+            _console.print(f"    [dim]{result.reason}[/dim]", highlight=False)
+        elif result.decision == PolicyDecision.APPROVE and dry_run:
+            _console.print(
+                f"  [bold #ffcc00]⚠ APPROVE[/bold #ffcc00]{dry_tag} {tool_name}",
                 highlight=False,
             )
             _console.print(f"    [dim]{result.reason}[/dim]", highlight=False)
@@ -97,7 +108,7 @@ class AuditLogger:
         else:
             decision_style = _decision_style(result.decision)
             _console.print(
-                f"  [{decision_style}]{result.decision.value}[/{decision_style}] {tool_name}",
+                f"  [{decision_style}]{result.decision.value}[/{decision_style}]{dry_tag} {tool_name}",
                 highlight=False,
             )
             _console.print(f"    [dim]{result.reason}[/dim]", highlight=False)

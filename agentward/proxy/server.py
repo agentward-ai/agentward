@@ -77,6 +77,7 @@ class StdioProxy:
         server_env: dict[str, str] | None = None,
         chain_tracker: ChainTracker | None = None,
         policy_path: Path | None = None,
+        dry_run: bool = False,
     ) -> None:
         self._server_command = server_command
         self._policy_engine = policy_engine
@@ -84,6 +85,7 @@ class StdioProxy:
         self._server_env = server_env
         self._chain_tracker = chain_tracker
         self._policy_path = policy_path
+        self._dry_run = dry_run
 
         self._process: asyncio.subprocess.Process | None = None
         self._shutting_down = False
@@ -205,8 +207,11 @@ class StdioProxy:
 
         All other messages pass through unchanged.
         """
-        assert self._process is not None
-        assert self._process.stdin is not None
+        if self._process is None or self._process.stdin is None:
+            _console.print(
+                "[bold red]Cannot forward to server: process not started[/bold red]",
+            )
+            return
 
         while not self._shutting_down:
             line = await client_reader.readline()
@@ -242,36 +247,60 @@ class StdioProxy:
                 continue
 
             if is_tool_call(msg):
-                assert isinstance(msg, JSONRPCRequest)
+                if not isinstance(msg, JSONRPCRequest):
+                    _console.print(
+                        "[bold red]Dropped tools/call with unexpected message type[/bold red]",
+                    )
+                    continue
                 try:
                     tool_name, arguments = extract_tool_info(msg)
                 except ProtocolError:
-                    # Malformed tools/call — forward as-is, let server handle it
-                    self._process.stdin.write(line)
-                    await self._process.stdin.drain()
+                    # Malformed tools/call — block to prevent policy bypass
+                    _console.print(
+                        "[bold red]Blocked malformed tools/call "
+                        "(could not extract tool info)[/bold red]",
+                    )
+                    error_resp = make_error_response(
+                        msg.id,
+                        POLICY_BLOCKED,
+                        "AgentWard: malformed tools/call — could not extract tool name/arguments",
+                    )
+                    _write_to_stdout(serialize_message(error_resp))
                     continue
 
                 result = self._evaluate_tool_call(tool_name, arguments)
 
                 if result.decision == PolicyDecision.BLOCK:
-                    self._audit_logger.log_tool_call(tool_name, arguments, result)
-                    error_resp = make_error_response(
-                        msg.id,
-                        POLICY_BLOCKED,
-                        f"AgentWard policy blocked: {result.reason}",
-                    )
-                    _write_to_stdout(serialize_message(error_resp))
-                    continue
+                    if self._dry_run:
+                        self._audit_logger.log_tool_call(
+                            tool_name, arguments, result, dry_run=True,
+                        )
+                        # Dry-run: don't actually block — fall through to forward
+                    else:
+                        self._audit_logger.log_tool_call(tool_name, arguments, result)
+                        error_resp = make_error_response(
+                            msg.id,
+                            POLICY_BLOCKED,
+                            f"AgentWard policy blocked: {result.reason}",
+                        )
+                        _write_to_stdout(serialize_message(error_resp))
+                        continue
 
                 if result.decision == PolicyDecision.APPROVE:
-                    self._audit_logger.log_tool_call(tool_name, arguments, result)
-                    error_resp = make_error_response(
-                        msg.id,
-                        APPROVAL_REQUIRED,
-                        f"AgentWard: Human approval required. {result.reason}",
-                    )
-                    _write_to_stdout(serialize_message(error_resp))
-                    continue
+                    if self._dry_run:
+                        self._audit_logger.log_tool_call(
+                            tool_name, arguments, result, dry_run=True,
+                        )
+                        # Dry-run: don't actually gate — fall through to forward
+                    else:
+                        self._audit_logger.log_tool_call(tool_name, arguments, result)
+                        error_resp = make_error_response(
+                            msg.id,
+                            APPROVAL_REQUIRED,
+                            f"AgentWard: Human approval required. {result.reason}",
+                        )
+                        _write_to_stdout(serialize_message(error_resp))
+                        continue
 
                 # ALLOW or LOG — check chaining rules before forwarding
                 if self._chain_tracker is not None:
@@ -279,16 +308,23 @@ class StdioProxy:
                         tool_name, arguments
                     )
                     if chain_result is not None and chain_result.decision == PolicyDecision.BLOCK:
-                        self._audit_logger.log_tool_call(
-                            tool_name, arguments, chain_result, chain_violation=True,
-                        )
-                        error_resp = make_error_response(
-                            msg.id,
-                            POLICY_BLOCKED,
-                            f"AgentWard chain blocked: {chain_result.reason}",
-                        )
-                        _write_to_stdout(serialize_message(error_resp))
-                        continue
+                        if self._dry_run:
+                            self._audit_logger.log_tool_call(
+                                tool_name, arguments, chain_result,
+                                chain_violation=True, dry_run=True,
+                            )
+                            # Dry-run: don't actually block chain
+                        else:
+                            self._audit_logger.log_tool_call(
+                                tool_name, arguments, chain_result, chain_violation=True,
+                            )
+                            error_resp = make_error_response(
+                                msg.id,
+                                POLICY_BLOCKED,
+                                f"AgentWard chain blocked: {chain_result.reason}",
+                            )
+                            _write_to_stdout(serialize_message(error_resp))
+                            continue
                     self._chain_tracker.record_call(
                         tool_name, arguments, request_id=msg.id
                     )
@@ -306,8 +342,11 @@ class StdioProxy:
 
         Also logs tool call responses for audit purposes.
         """
-        assert self._process is not None
-        assert self._process.stdout is not None
+        if self._process is None or self._process.stdout is None:
+            _console.print(
+                "[bold red]Cannot read from server: process not started[/bold red]",
+            )
+            return
 
         while not self._shutting_down:
             line = await self._process.stdout.readline()
@@ -343,8 +382,11 @@ class StdioProxy:
         Server stderr is diagnostic output — never goes to our stdout
         (which is reserved for MCP protocol messages).
         """
-        assert self._process is not None
-        assert self._process.stderr is not None
+        if self._process is None or self._process.stderr is None:
+            _console.print(
+                "[bold red]Cannot read server stderr: process not started[/bold red]",
+            )
+            return
 
         while not self._shutting_down:
             line = await self._process.stderr.readline()

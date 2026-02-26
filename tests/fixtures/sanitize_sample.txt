@@ -1,0 +1,20 @@
+Patient: John Smith
+DOB: 03/15/1985
+SSN: 123-45-6789
+
+Contact: john.smith@example.com
+Phone: +1 (555) 123-4567
+Address: 742 Evergreen Terrace Dr
+
+Payment on file: 4111 1111 1111 1111
+Expiry 01/30, CVV: 123
+
+Provider notes:
+API key for portal: sk-abcdefghijklmnopqrstuvwxyz1234567890abcdefghij
+Internal IP: 192.168.1.100
+
+Routing number: 021000021
+Passport: AB1234567
+Driver's license: D12345678
+
+No PII here — just a plain sentence about the weather.

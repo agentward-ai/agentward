@@ -1,0 +1,25 @@
+{
+  "name": "AgentWard Sanitize",
+  "slug": "sanitize",
+  "tagline": "Detect and redact PII from text files — 15 categories, zero dependencies.",
+  "description": "Scans files for personally identifiable information (PII) including credit cards, SSNs, emails, phone numbers, API keys, addresses, medical license numbers, insurance IDs, and more. Replaces each instance with a numbered placeholder. All processing is local — no data leaves your machine.",
+  "category": "security",
+  "tags": [
+    "pii",
+    "redaction",
+    "sanitize",
+    "privacy",
+    "hipaa",
+    "security",
+    "compliance",
+    "data-protection"
+  ],
+  "version": "1.0.0",
+  "license": "MIT",
+  "homepage": "https://github.com/agentward-ai/agentward",
+  "support_url": "https://github.com/agentward-ai/agentward/issues",
+  "author": {
+    "name": "AgentWard",
+    "url": "https://agentward.ai"
+  }
+}

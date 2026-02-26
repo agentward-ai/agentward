@@ -9,7 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from agentward.policy.schema import AgentWardPolicy, PolicyDecision, ResourcePermissions
+from agentward.policy.schema import (
+    AgentWardPolicy,
+    DefaultAction,
+    PolicyDecision,
+    ResourcePermissions,
+)
 
 
 @dataclass(frozen=True)
@@ -93,11 +98,24 @@ class PolicyEngine:
             An EvaluationResult with the decision and reasoning.
         """
         # Check require_approval — takes priority over resource-level permissions
-        if tool_name in self._policy.require_approval:
-            return EvaluationResult(
-                decision=PolicyDecision.APPROVE,
-                reason=f"Tool '{tool_name}' requires human approval before execution.",
-            )
+        for rule in self._policy.require_approval:
+            if rule.matches(tool_name, arguments):
+                if rule.conditional is not None and rule.conditional.when:
+                    # Conditional rule matched — include condition info in reason
+                    conditions = ", ".join(
+                        f"{k}: {v.contains or v.not_contains or v.equals or v.matches}"
+                        for k, v in rule.conditional.when.items()
+                    )
+                    reason = (
+                        f"Tool '{tool_name}' requires human approval "
+                        f"(condition matched: {conditions})."
+                    )
+                else:
+                    reason = f"Tool '{tool_name}' requires human approval before execution."
+                return EvaluationResult(
+                    decision=PolicyDecision.APPROVE,
+                    reason=reason,
+                )
 
         # Try to match tool name against skill/resource/action hierarchy
         match = self._match_tool(tool_name, skill_filter=self._skill_context)
@@ -107,7 +125,13 @@ class PolicyEngine:
                 tool_name, skill_name, resource_name, action, permissions
             )
 
-        # No match — default to ALLOW (passthrough for unknown tools)
+        # No match — use the configured default action
+        if self._policy.default_action == DefaultAction.BLOCK:
+            return EvaluationResult(
+                decision=PolicyDecision.BLOCK,
+                reason=f"No policy rule matches tool '{tool_name}'. "
+                f"Blocked by default (default_action: block).",
+            )
         return EvaluationResult(
             decision=PolicyDecision.ALLOW,
             reason=f"No policy rule matches tool '{tool_name}'. Allowing by default.",

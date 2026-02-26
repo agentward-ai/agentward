@@ -211,21 +211,25 @@ async def _enumerate_stdio(server: ServerConfig) -> EnumerationResult:
         process.stdin.write(serialize_message(init_request))
         await process.stdin.drain()
 
-        # Read initialize response
-        init_line = await process.stdout.readline()
-        if not init_line:
-            return EnumerationResult(
-                server=server,
-                enumeration_method="failed",
-                error="Server closed connection before responding to initialize.",
-            )
+        # Read initialize response (may need to skip notifications)
+        init_msg: JSONRPCResponse | None = None
+        for _ in range(50):
+            init_line = await process.stdout.readline()
+            if not init_line:
+                break
+            try:
+                parsed = parse_message(init_line)
+                if isinstance(parsed, JSONRPCResponse) and parsed.id == 1:
+                    init_msg = parsed
+                    break
+            except ProtocolError:
+                continue
 
-        init_msg = parse_message(init_line)
-        if not isinstance(init_msg, JSONRPCResponse):
+        if init_msg is None:
             return EnumerationResult(
                 server=server,
                 enumeration_method="failed",
-                error=f"Expected initialize response, got {type(init_msg).__name__}.",
+                error="Server closed connection or sent no valid initialize response.",
             )
 
         capabilities = _parse_capabilities(init_msg.result)

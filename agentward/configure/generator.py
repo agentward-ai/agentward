@@ -19,6 +19,7 @@ import yaml
 from agentward.policy.schema import (
     AgentWardPolicy,
     ChainingRule,
+    DefaultAction,
     ResourcePermissions,
 )
 from agentward.scan.permissions import (
@@ -37,7 +38,7 @@ _POLICY_VERSION = "1.0"
 # at the API level using these tool names, so the policy must use them.
 _OPENCLAW_SKILL_TO_TOOL: dict[str, str] = {
     "coding-agent": "exec",
-    "web-browse": "browser",
+    "web-browse": "web_fetch",
     "web-search": "web_search",
     "memory": "memory_search",
     "file-manager": "read",
@@ -411,6 +412,10 @@ def _policy_to_dict(policy: AgentWardPolicy) -> dict:
     """
     data: dict = {"version": policy.version}
 
+    # Default action (omit if "allow" — it's the default)
+    if policy.default_action != DefaultAction.ALLOW:
+        data["default_action"] = policy.default_action.value
+
     # Skills section
     if policy.skills:
         skills_dict: dict = {}
@@ -430,7 +435,32 @@ def _policy_to_dict(policy: AgentWardPolicy) -> dict:
 
     # Require approval
     if policy.require_approval:
-        data["require_approval"] = list(policy.require_approval)
+        approval_list: list[str | dict] = []
+        for rule in policy.require_approval:
+            if rule.tool_name is not None:
+                approval_list.append(rule.tool_name)
+            elif rule.conditional is not None:
+                entry: dict = {"tool": rule.conditional.tool}
+                if rule.conditional.when:
+                    when_dict: dict = {}
+                    for arg_name, cond in rule.conditional.when.items():
+                        cond_dict: dict = {}
+                        if cond.contains is not None:
+                            cond_dict["contains"] = cond.contains
+                        if cond.not_contains is not None:
+                            cond_dict["not_contains"] = cond.not_contains
+                        if cond.equals is not None:
+                            cond_dict["equals"] = cond.equals
+                        if cond.matches is not None:
+                            cond_dict["matches"] = cond.matches
+                        when_dict[arg_name] = cond_dict
+                    entry["when"] = when_dict
+                approval_list.append(entry)
+        data["require_approval"] = approval_list
+
+    # Approval timeout (omit if default 60s)
+    if policy.approval_timeout != 60:
+        data["approval_timeout"] = policy.approval_timeout
 
     # Skill chain depth
     if policy.skill_chain_depth is not None:

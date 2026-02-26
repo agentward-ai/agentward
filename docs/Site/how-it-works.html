@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>How It Works — AgentWard</title>
+  <meta name="description" content="AgentWard architecture: MCP stdio proxy, HTTP reverse proxy, policy engine, and four-stage product model explained."/>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iOCIgZmlsbD0iIzBhMGEwYSIvPgogIDxwYXRoIGQ9Ik0yNCA0TDYgMTJ2MTJjMCAxMS4xIDcuNyAyMS41IDE4IDI0IDEwLjMtMi41IDE4LTEyLjkgMTgtMjRWMTJMMjQgNHoiIGZpbGw9IiMxMTEiIHN0cm9rZT0iIzAwZmY4OCIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgPHBhdGggZD0iTTE4IDI0bDQgNCA4LTgiIHN0cm9rZT0iIzAwZmY4OCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgZmlsbD0ibm9uZSIvPgo8L3N2Zz4=">
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --green:#00ff88;--green2:#00cc6a;--green-dim:#00ff8820;--green-border:#00ff8830;
+      --bg:#080808;--bg1:#0d0d0d;--bg2:#111;--bg3:#161616;
+      --border:#1c1c1c;--border2:#242424;
+      --text:#d8d8d8;--muted:#666;--muted2:#444;--white:#f0f0f0;
+      --red:#ff4444;--yellow:#ffcc00;--orange:#ff8c42;
+      --font-sans:'IBM Plex Sans',system-ui,sans-serif;
+      --font-mono:'IBM Plex Mono',monospace;
+    }
+    html{scroll-behavior:smooth}
+    body{background:var(--bg);color:var(--text);font-family:var(--font-sans);min-height:100vh;line-height:1.6}
+    ::selection{background:var(--green-dim)}
+    a{color:var(--green);text-decoration:none}
+    a:hover{color:var(--green2)}
+
+    nav{position:sticky;top:0;z-index:200;height:52px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;background:rgba(8,8,8,0.94);backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
+    .nav-logo{display:flex;align-items:center;gap:10px;color:var(--white);font-weight:600;font-size:15px;letter-spacing:-0.3px}
+    .nav-links{display:flex;align-items:center;gap:2px}
+    .nav-links a{padding:5px 12px;border-radius:6px;font-size:13px;font-weight:500;color:var(--muted);transition:color .15s,background .15s}
+    .nav-links a:hover{color:var(--white);background:var(--bg2)}
+    .nav-links a.active{color:var(--green);background:var(--green-dim)}
+    .nav-gh{display:flex;align-items:center;gap:7px;padding:6px 14px;border-radius:7px;background:var(--green);color:var(--bg)!important;font-size:12.5px;font-weight:600;margin-left:8px;transition:background .15s}
+    .nav-gh:hover{background:var(--green2)!important}
+    @media(max-width:600px){.nav-links a:not(.nav-gh){display:none}}
+
+    .page-hero{padding:64px 24px 48px;max-width:860px;margin:0 auto}
+    .eyebrow{font-family:var(--font-mono);font-size:10.5px;font-weight:600;color:var(--green);letter-spacing:2px;text-transform:uppercase;margin-bottom:14px}
+    .page-title{font-size:clamp(26px,4vw,40px);font-weight:700;color:var(--white);letter-spacing:-1px;margin-bottom:14px}
+    .page-sub{font-size:16px;color:var(--muted);line-height:1.7;max-width:580px}
+
+    .section{max-width:860px;margin:0 auto;padding:56px 24px}
+    .section+.section{border-top:1px solid var(--border)}
+    .section-title{font-size:clamp(18px,2.5vw,24px);font-weight:700;color:var(--white);letter-spacing:-0.5px;margin-bottom:10px}
+    .section-body{font-size:14.5px;color:var(--muted);line-height:1.75}
+
+    /* Architecture diagram */
+    .arch-diagram{
+      margin-top:32px;background:var(--bg1);border:1px solid var(--border2);
+      border-radius:12px;overflow:hidden;
+    }
+    .arch-diagram svg{width:100%;height:auto;display:block}
+
+    /* Mode cards */
+    .mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:24px}
+    @media(max-width:640px){.mode-grid{grid-template-columns:1fr}}
+    .mode-card{background:var(--bg1);border:1px solid var(--border);border-radius:12px;padding:26px}
+    .mode-card.compile{border-left:3px solid #5eead4}
+    .mode-card.runtime{border-left:3px solid var(--green)}
+    .mode-label{font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px}
+    .mode-label.compile{color:#5eead4}
+    .mode-label.runtime{color:var(--green)}
+    .mode-card h3{font-size:17px;font-weight:700;color:var(--white);margin-bottom:8px}
+    .mode-card p{font-size:13.5px;color:var(--muted);line-height:1.7;margin-bottom:14px}
+    .cmd-list{display:flex;flex-direction:column;gap:6px}
+    .cmd-item{
+      display:flex;align-items:flex-start;gap:10px;
+      background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:10px 14px;
+    }
+    .cmd-name{font-family:var(--font-mono);font-size:12px;color:var(--green);white-space:nowrap;min-width:160px}
+    .cmd-desc{font-size:12px;color:var(--muted);line-height:1.5}
+
+    /* Stage detail cards */
+    .stage-list{display:flex;flex-direction:column;gap:16px;margin-top:24px}
+    .stage-detail{background:var(--bg1);border:1px solid var(--border);border-radius:12px;padding:28px;position:relative}
+    .stage-detail:hover{border-color:var(--border2)}
+    .stage-num-badge{
+      display:inline-flex;align-items:center;gap:8px;margin-bottom:14px;
+    }
+    .snb-n{
+      width:28px;height:28px;border-radius:50%;
+      background:var(--green-dim);border:1px solid var(--green-border);
+      display:flex;align-items:center;justify-content:center;
+      font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--green);
+    }
+    .snb-cmd{font-family:var(--font-mono);font-size:12.5px;color:var(--green);background:var(--bg);border:1px solid var(--border2);padding:3px 10px;border-radius:5px}
+    .snb-status{font-family:var(--font-mono);font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px}
+    .snb-status.live{background:#00ff8815;color:var(--green);border:1px solid var(--green-border)}
+    .snb-status.soon{background:#ffcc0015;color:var(--yellow);border:1px solid #ffcc0030}
+    .stage-detail h3{font-size:18px;font-weight:700;color:var(--white);margin-bottom:8px}
+    .stage-detail p{font-size:14px;color:var(--muted);line-height:1.7;margin-bottom:12px}
+    .detail-list{list-style:none;display:flex;flex-direction:column;gap:6px}
+    .detail-list li{font-size:13px;color:#999;padding-left:16px;position:relative;line-height:1.6}
+    .detail-list li::before{content:'—';position:absolute;left:0;color:var(--muted2)}
+
+    /* Proxy modes */
+    .proxy-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:24px}
+    @media(max-width:640px){.proxy-grid{grid-template-columns:1fr}}
+    .proxy-card{background:var(--bg1);border:1px solid var(--border2);border-radius:12px;padding:24px}
+    .proxy-card h4{font-size:15px;font-weight:600;color:var(--white);margin-bottom:8px}
+    .proxy-card p{font-size:13px;color:var(--muted);line-height:1.65}
+    .proxy-tag{display:inline-block;font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--green);background:var(--green-dim);border:1px solid var(--green-border);padding:2px 8px;border-radius:4px;margin-bottom:10px}
+
+    /* Key principle callout */
+    .callout{
+      background:linear-gradient(145deg,#0c1c10,#0d0d0d);
+      border:1px solid var(--green-border);border-radius:12px;
+      padding:24px 28px;margin-top:20px;position:relative;overflow:hidden;
+    }
+    .callout::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--green),transparent)}
+    .callout p{font-size:14.5px;color:#ccc;line-height:1.7}
+    .callout strong{color:var(--green)}
+
+    footer{border-top:1px solid var(--border);padding:24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+    .footer-logo{display:flex;align-items:center;gap:8px;color:var(--muted2);font-size:13px}
+    .footer-links{display:flex;gap:16px;font-size:13px}
+    .footer-links a{color:var(--muted);transition:color .15s}
+    .footer-links a:hover{color:var(--green)}
+    .footer-right{font-size:12px;color:var(--muted2);font-family:var(--font-mono)}
+    @media(max-width:600px){footer{flex-direction:column;text-align:center}}
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="nav-logo">
+    <svg width="24" height="24" viewBox="0 0 48 48" fill="none">
+      <path d="M24 4L6 12v12c0 11.1 7.7 21.5 18 24 10.3-2.5 18-12.9 18-24V12L24 4z" fill="#0d1a0d" stroke="#00ff88" stroke-width="2.5"/>
+      <path d="M17 24l5 5 9-9" stroke="#00ff88" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    AgentWard
+  </a>
+  <div class="nav-links">
+    <a href="index.html">Home</a>
+    <a href="how-it-works.html" class="active">How It Works</a>
+    <a href="docs.html">Docs</a>
+    <a href="compare.html">Compare</a>
+    <a href="https://github.com/agentward-ai/agentward" target="_blank" rel="noopener" class="nav-gh">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      GitHub
+    </a>
+  </div>
+</nav>
+
+<div class="page-hero">
+  <div class="eyebrow">Architecture</div>
+  <h1 class="page-title">How AgentWard Works</h1>
+  <p class="page-sub">AgentWard sits between your agent and its tools as a transparent proxy, enforcing declarative policies at the code level — completely outside the LLM context window.</p>
+</div>
+
+<!-- KEY PRINCIPLE -->
+<div class="section" style="padding-top:0">
+  <div class="callout">
+    <p><strong>The key principle:</strong> Policies are enforced in middleware, in code, before the tool call reaches the underlying server. The LLM never sees the policy rules and cannot override them — even under prompt injection or agent reasoning errors.</p>
+  </div>
+</div>
+
+<!-- TWO OPERATIONAL MODES -->
+<div class="section">
+  <div class="eyebrow">Two Modes</div>
+  <h2 class="section-title">Compile-time analysis. Runtime enforcement.</h2>
+  <p class="section-body">Both use the same <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg2);border:1px solid var(--border2);padding:2px 7px;border-radius:4px;color:var(--green)">agentward.yaml</code> policy file. They serve different purposes and run at different times.</p>
+  <div class="mode-grid">
+    <div class="mode-card compile">
+      <div class="mode-label compile">Compile-Time · Static Analysis</div>
+      <h3>Before your agent runs</h3>
+      <p>Scans skill definitions, MCP configs, and tool declarations. Generates permission maps, smart-default policies, and compliance delta reports.</p>
+      <div class="cmd-list">
+        <div class="cmd-item">
+          <span class="cmd-name">agentward scan</span>
+          <span class="cmd-desc">Discover and risk-rate all tools</span>
+        </div>
+        <div class="cmd-item">
+          <span class="cmd-name">agentward configure</span>
+          <span class="cmd-desc">Generate policy YAML from scan</span>
+        </div>
+        <div class="cmd-item">
+          <span class="cmd-name">agentward comply</span>
+          <span class="cmd-desc">Evaluate against HIPAA / SOX / GDPR</span>
+        </div>
+      </div>
+    </div>
+    <div class="mode-card runtime">
+      <div class="mode-label runtime">Runtime · Live Enforcement</div>
+      <h3>While your agent runs</h3>
+      <p>MCP or HTTP proxy intercepts every tool call in real time. Evaluates against policies: ALLOW, BLOCK, REDACT, APPROVE, LOG. Generates structured audit trail.</p>
+      <div class="cmd-list">
+        <div class="cmd-item">
+          <span class="cmd-name">agentward inspect</span>
+          <span class="cmd-desc">Start the enforcement proxy</span>
+        </div>
+        <div class="cmd-item">
+          <span class="cmd-name">agentward status</span>
+          <span class="cmd-desc">Live stats from running proxy</span>
+        </div>
+        <div class="cmd-item">
+          <span class="cmd-name">agentward audit</span>
+          <span class="cmd-desc">View structured decision logs</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ARCHITECTURE DIAGRAM -->
+<div class="section">
+  <div class="eyebrow">Architecture</div>
+  <h2 class="section-title">Three universal interception points.</h2>
+  <p class="section-body">The same policy YAML works across all three. AgentWard is framework-agnostic — it intercepts at the protocol level, not the application level.</p>
+  <div class="arch-diagram">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 580" font-family="'IBM Plex Mono','SF Mono',monospace">
+      <rect width="960" height="580" fill="#0d0d0d"/>
+
+      <!-- LAYER LABEL: Agent Hosts -->
+      <text x="40" y="52" fill="#444" font-size="10" letter-spacing="3" font-weight="600">AGENT HOSTS</text>
+
+      <!-- Agent host boxes -->
+      <rect x="40" y="64" width="118" height="36" rx="4" fill="#141414" stroke="#2a2a2a" stroke-width="1"/>
+      <text x="99" y="86" text-anchor="middle" fill="#888" font-size="11">Claude Desktop</text>
+
+      <rect x="170" y="64" width="105" height="36" rx="4" fill="#141414" stroke="#2a2a2a" stroke-width="1"/>
+      <text x="222" y="86" text-anchor="middle" fill="#888" font-size="11">Claude Code</text>
+
+      <rect x="287" y="64" width="85" height="36" rx="4" fill="#141414" stroke="#2a2a2a" stroke-width="1"/>
+      <text x="329" y="86" text-anchor="middle" fill="#888" font-size="11">Cursor</text>
+
+      <rect x="384" y="64" width="95" height="36" rx="4" fill="#141414" stroke="#2a2a2a" stroke-width="1"/>
+      <text x="431" y="86" text-anchor="middle" fill="#888" font-size="11">Windsurf</text>
+
+      <rect x="491" y="64" width="85" height="36" rx="4" fill="#141414" stroke="#2a2a2a" stroke-width="1"/>
+      <text x="533" y="86" text-anchor="middle" fill="#888" font-size="11">VS Code</text>
+
+      <rect x="620" y="64" width="110" height="36" rx="4" fill="#141414" stroke="#2a2a2a" stroke-width="1"/>
+      <text x="675" y="86" text-anchor="middle" fill="#888" font-size="11">OpenClaw UI</text>
+
+      <rect x="742" y="64" width="110" height="36" rx="4" fill="#141414" stroke="#2a2a2a" stroke-width="1"/>
+      <text x="797" y="86" text-anchor="middle" fill="#888" font-size="11">API Clients</text>
+
+      <!-- Down arrows -->
+      <line x1="99" y1="100" x2="99" y2="155" stroke="#333" stroke-width="1.5" marker-end="url(#arr-dim)"/>
+      <line x1="222" y1="100" x2="222" y2="155" stroke="#333" stroke-width="1.5" marker-end="url(#arr-dim)"/>
+      <line x1="329" y1="100" x2="329" y2="155" stroke="#333" stroke-width="1.5" marker-end="url(#arr-dim)"/>
+      <line x1="431" y1="100" x2="431" y2="155" stroke="#333" stroke-width="1.5" marker-end="url(#arr-dim)"/>
+      <line x1="533" y1="100" x2="533" y2="155" stroke="#333" stroke-width="1.5" marker-end="url(#arr-dim)"/>
+      <line x1="675" y1="100" x2="675" y2="155" stroke="#333" stroke-width="1.5" marker-end="url(#arr-dim)"/>
+      <line x1="797" y1="100" x2="797" y2="155" stroke="#333" stroke-width="1.5" marker-end="url(#arr-dim)"/>
+
+      <!-- Protocol labels -->
+      <text x="310" y="135" text-anchor="middle" fill="#00ff88" font-size="9" opacity="0.6">JSON-RPC 2.0 (stdio)</text>
+      <text x="736" y="135" text-anchor="middle" fill="#00ff88" font-size="9" opacity="0.6">POST /tools-invoke (HTTP)</text>
+
+      <!-- AGENTWARD BOX -->
+      <rect x="20" y="155" width="920" height="220" rx="6" fill="#0a1a0a" stroke="#00ff88" stroke-width="1.5" opacity="0.9"/>
+      <rect x="20" y="155" width="920" height="32" rx="6" fill="#00ff8818"/>
+      <rect x="20" y="181" width="920" height="6" fill="#0a1a0a"/>
+      <text x="480" y="176" text-anchor="middle" fill="#00ff88" font-size="12" font-weight="600" letter-spacing="1">AGENTWARD — PERMISSION ENFORCEMENT LAYER</text>
+
+      <!-- Stdio Proxy -->
+      <rect x="44" y="200" width="270" height="60" rx="4" fill="#111" stroke="#00ff8840" stroke-width="1"/>
+      <text x="179" y="222" text-anchor="middle" fill="#00ff88" font-size="12" font-weight="600">Stdio Proxy</text>
+      <text x="179" y="240" text-anchor="middle" fill="#446644" font-size="10">MCP JSON-RPC 2.0 · subprocess mgmt</text>
+      <text x="179" y="253" text-anchor="middle" fill="#446644" font-size="10">tools/call · tools/list · resources/read</text>
+
+      <!-- HTTP Proxy -->
+      <rect x="340" y="200" width="270" height="60" rx="4" fill="#111" stroke="#00ff8840" stroke-width="1"/>
+      <text x="475" y="222" text-anchor="middle" fill="#00ff88" font-size="12" font-weight="600">HTTP Reverse Proxy</text>
+      <text x="475" y="240" text-anchor="middle" fill="#446644" font-size="10">Gateway interception + WebSocket</text>
+      <text x="475" y="253" text-anchor="middle" fill="#446644" font-size="10">POST /tools-invoke policy check</text>
+
+      <!-- Policy YAML -->
+      <rect x="636" y="200" width="270" height="60" rx="4" fill="#111" stroke="#333" stroke-width="1"/>
+      <text x="771" y="218" text-anchor="middle" fill="#888" font-size="11" font-weight="600">agentward.yaml</text>
+      <text x="771" y="234" text-anchor="middle" fill="#446644" font-size="10">Declarative policy rules</text>
+      <text x="771" y="248" text-anchor="middle" fill="#446644" font-size="10">ALLOW · BLOCK · REDACT · APPROVE · LOG</text>
+
+      <!-- Policy Engine -->
+      <rect x="44" y="282" width="420" height="46" rx="4" fill="#111" stroke="#00ff8840" stroke-width="1"/>
+      <text x="254" y="301" text-anchor="middle" fill="#00ff88" font-size="12" font-weight="600">Policy Engine</text>
+      <!-- Decision badges -->
+      <rect x="64" y="311" width="56" height="12" rx="6" fill="#00ff8822" stroke="#00ff8840" stroke-width="1"/>
+      <text x="92" y="321" text-anchor="middle" fill="#00ff88" font-size="8" font-weight="700">ALLOW</text>
+      <rect x="130" y="311" width="52" height="12" rx="6" fill="#ff444422" stroke="#ff444440" stroke-width="1"/>
+      <text x="156" y="321" text-anchor="middle" fill="#ff4444" font-size="8" font-weight="700">BLOCK</text>
+      <rect x="192" y="311" width="54" height="12" rx="6" fill="#ffcc0022" stroke="#ffcc0040" stroke-width="1"/>
+      <text x="219" y="321" text-anchor="middle" fill="#ffcc00" font-size="8" font-weight="700">REDACT</text>
+      <rect x="256" y="311" width="58" height="12" rx="6" fill="#ff8c4222" stroke="#ff8c4240" stroke-width="1"/>
+      <text x="285" y="321" text-anchor="middle" fill="#ff8c42" font-size="8" font-weight="700">APPROVE</text>
+      <rect x="324" y="311" width="44" height="12" rx="6" fill="#88888822" stroke="#88888840" stroke-width="1"/>
+      <text x="346" y="321" text-anchor="middle" fill="#888" font-size="8" font-weight="700">LOG</text>
+
+      <!-- Data Classifier -->
+      <rect x="490" y="282" width="200" height="46" rx="4" fill="#111" stroke="#2a2a2a" stroke-width="1"/>
+      <text x="590" y="301" text-anchor="middle" fill="#aaa" font-size="11" font-weight="600">Data Classifier</text>
+      <text x="590" y="318" text-anchor="middle" fill="#446644" font-size="10">SSN · CC · API keys · PHI</text>
+
+      <!-- Audit Logger -->
+      <rect x="710" y="282" width="196" height="46" rx="4" fill="#111" stroke="#2a2a2a" stroke-width="1"/>
+      <text x="808" y="301" text-anchor="middle" fill="#aaa" font-size="11" font-weight="600">Audit Logger</text>
+      <text x="808" y="318" text-anchor="middle" fill="#446644" font-size="10">Structured JSON Lines log</text>
+
+      <!-- Connector lines inside box -->
+      <line x1="771" y1="260" x2="771" y2="282" stroke="#00ff88" stroke-width="1" stroke-dasharray="3,3" opacity="0.4"/>
+      <line x1="590" y1="260" x2="590" y2="282" stroke="#333" stroke-width="1" stroke-dasharray="3,3" opacity="0.6"/>
+
+      <!-- LAYER LABEL: MCP Servers -->
+      <text x="40" y="410" fill="#444" font-size="10" letter-spacing="3" font-weight="600">MCP SERVERS &amp; TOOLS</text>
+
+      <!-- Down arrows from AgentWard -->
+      <line x1="179" y1="375" x2="179" y2="415" stroke="#00ff88" stroke-width="1.5" marker-end="url(#arr-green)"/>
+      <line x1="475" y1="375" x2="475" y2="415" stroke="#00ff88" stroke-width="1.5" marker-end="url(#arr-green)"/>
+
+      <!-- Tool boxes -->
+      <rect x="40" y="420" width="120" height="36" rx="4" fill="#141414" stroke="#2a2a2a"/>
+      <text x="100" y="442" text-anchor="middle" fill="#666" font-size="11">filesystem</text>
+
+      <rect x="175" y="420" width="120" height="36" rx="4" fill="#141414" stroke="#2a2a2a"/>
+      <text x="235" y="442" text-anchor="middle" fill="#666" font-size="11">shell-executor</text>
+
+      <rect x="310" y="420" width="120" height="36" rx="4" fill="#141414" stroke="#2a2a2a"/>
+      <text x="370" y="442" text-anchor="middle" fill="#666" font-size="11">email-manager</text>
+
+      <rect x="445" y="420" width="120" height="36" rx="4" fill="#141414" stroke="#2a2a2a"/>
+      <text x="505" y="442" text-anchor="middle" fill="#666" font-size="11">web-browser</text>
+
+      <rect x="580" y="420" width="120" height="36" rx="4" fill="#141414" stroke="#2a2a2a"/>
+      <text x="640" y="442" text-anchor="middle" fill="#666" font-size="11">github</text>
+
+      <rect x="715" y="420" width="120" height="36" rx="4" fill="#141414" stroke="#2a2a2a"/>
+      <text x="775" y="442" text-anchor="middle" fill="#666" font-size="11">postgres</text>
+
+      <!-- Python SDK label -->
+      <rect x="40" y="480" width="195" height="36" rx="4" fill="#0f0f0f" stroke="#1a1a1a" stroke-dasharray="4,3"/>
+      <text x="137" y="498" text-anchor="middle" fill="#444" font-size="10">Python SDK tools</text>
+      <text x="137" y="511" text-anchor="middle" fill="#333" font-size="9">OpenAI · LangChain · CrewAI</text>
+
+      <!-- Future: Function middleware label -->
+      <rect x="250" y="480" width="180" height="36" rx="4" fill="#0f0f0f" stroke="#1a1a1a" stroke-dasharray="4,3"/>
+      <text x="340" y="498" text-anchor="middle" fill="#444" font-size="10">Function middleware</text>
+      <text x="340" y="511" text-anchor="middle" fill="#333" font-size="9">coming soon</text>
+
+      <!-- Defs -->
+      <defs>
+        <marker id="arr-dim" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0,8 3,0 6" fill="#333"/>
+        </marker>
+        <marker id="arr-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0,8 3,0 6" fill="#00ff88" opacity="0.7"/>
+        </marker>
+      </defs>
+    </svg>
+  </div>
+</div>
+
+<!-- FOUR STAGES DETAIL -->
+<div class="section">
+  <div class="eyebrow">Four Stages</div>
+  <h2 class="section-title">The full pipeline, step by step.</h2>
+  <p class="section-body" style="margin-bottom:0">Each stage can be run independently, or run <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg2);border:1px solid var(--border2);padding:2px 7px;border-radius:4px;color:var(--green)">agentward init</code> to go through all four interactively.</p>
+
+  <div class="stage-list">
+    <!-- Stage 1 -->
+    <div class="stage-detail">
+      <div class="stage-num-badge">
+        <div class="snb-n">1</div>
+        <span class="snb-cmd">agentward scan</span>
+        <span class="snb-status live">LIVE</span>
+      </div>
+      <h3>Scan — Build a permission map</h3>
+      <p>Auto-discovers all tool sources: MCP configs (Claude Desktop, Cursor, Windsurf, VS Code), Python source files (OpenAI, LangChain, CrewAI, Anthropic SDKs), and OpenClaw/ClawdBot skills. Enumerates tools from live MCP servers via subprocess + JSON-RPC handshake. Produces a risk-rated permission map with use-case-aware recommendations.</p>
+      <ul class="detail-list">
+        <li>Per-tool: data access types, external connections, stored credentials, interaction triggers, risk rating (LOW / MEDIUM / HIGH / CRITICAL)</li>
+        <li>Dangerous chain detection: email + browser, shell + network, finance + outbound — 9 built-in patterns</li>
+        <li>Use-case recommendations: "This email skill has write access — set read-only if you only need triage"</li>
+        <li>Outputs: rich CLI table, shareable HTML report, SARIF for GitHub Security tab, JSON for CI pipelines</li>
+      </ul>
+    </div>
+
+    <!-- Stage 2 -->
+    <div class="stage-detail">
+      <div class="stage-num-badge">
+        <div class="snb-n">2</div>
+        <span class="snb-cmd">agentward configure</span>
+        <span class="snb-status live">LIVE</span>
+      </div>
+      <h3>Configure — Generate smart-default policies</h3>
+      <p>Generates an <code style="font-family:var(--font-mono);font-size:12px;background:var(--bg2);border:1px solid var(--border2);padding:1px 6px;border-radius:4px;color:var(--green)">agentward.yaml</code> based on scan results and detected use-case patterns. Tailors defaults to what you actually have installed.</p>
+      <ul class="detail-list">
+        <li>Email + Calendar → read-only email, no cross-skill chaining to browser, require approval for send</li>
+        <li>Dev tools (GitHub, shell) → allow code ops, block files outside project dirs, log all shell commands</li>
+        <li>Finance tools → block all outbound network, restrict reads to finance dirs, no skill chaining</li>
+        <li>Research/browsing → allow web, block email/files/credentials</li>
+      </ul>
+    </div>
+
+    <!-- Stage 3 -->
+    <div class="stage-detail">
+      <div class="stage-num-badge">
+        <div class="snb-n">3</div>
+        <span class="snb-cmd">agentward inspect</span>
+        <span class="snb-status live">LIVE</span>
+      </div>
+      <h3>Inspect — Runtime enforcement proxy</h3>
+      <p>Starts the MCP stdio proxy or HTTP reverse proxy with full policy enforcement. Every tool call is intercepted before it reaches the underlying server.</p>
+      <ul class="detail-list">
+        <li>Policy enforcement: ALLOW / BLOCK / REDACT / APPROVE (human-in-the-loop) / LOG per tool call</li>
+        <li>Data classification: Tier 1 regex (SSN, credit cards, CVV, API keys) always on; Tier 2 distilled transformer (~50ms) optional</li>
+        <li>Skill chaining enforcement: CONTENT mode (detects data flowing between skills) + BLANKET mode (blocks all cross-skill triggers)</li>
+        <li>Human-in-the-loop gates: macOS dialog + Telegram remote approval with session caching</li>
+        <li>Structured JSON Lines audit log with every decision, timestamp, and tool arguments</li>
+        <li>LLM API proxy mode: intercepts Anthropic/OpenAI tool_use calls before the agent acts</li>
+      </ul>
+    </div>
+
+    <!-- Stage 4 -->
+    <div class="stage-detail">
+      <div class="stage-num-badge">
+        <div class="snb-n">4</div>
+        <span class="snb-cmd">agentward comply</span>
+        <span class="snb-status live">LIVE</span>
+      </div>
+      <h3>Comply — Regulatory compliance evaluation</h3>
+      <p>Evaluates your current <code style="font-family:var(--font-mono);font-size:12px;background:var(--bg2);border:1px solid var(--border2);padding:1px 6px;border-radius:4px;color:var(--green)">agentward.yaml</code> against regulatory frameworks and generates a compliance delta report with specific gaps and auto-fix suggestions.</p>
+      <ul class="detail-list">
+        <li>HIPAA Security Rule: 8 controls — Access Control §164.312(a)(1), Data Boundary, Audit Controls, Integrity, Authentication, Transmission Security, Information Access Management, Zero-Trust Default</li>
+        <li><code style="font-family:var(--font-mono);font-size:11px;color:var(--green)">--fix</code> flag: auto-generates a corrected policy YAML with all required changes applied</li>
+        <li>SOX, GDPR, PCI-DSS in progress</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- TWO PROXY MODES -->
+<div class="section">
+  <div class="eyebrow">Proxy Modes</div>
+  <h2 class="section-title">Two interception transports.</h2>
+  <p class="section-body">Both modes use the same policy YAML. Choose based on how your agent connects to its tools.</p>
+  <div class="proxy-grid">
+    <div class="proxy-card">
+      <div class="proxy-tag">MCP STDIO</div>
+      <h4>Stdio Proxy</h4>
+      <p>Sits between the agent host and MCP server subprocess. The agent thinks it's talking directly to the MCP server; the server thinks it's talking to the agent. Every <code style="font-family:var(--font-mono);font-size:11px;color:var(--green)">tools/call</code> is intercepted and evaluated.</p>
+      <p style="margin-top:10px">Works with: Claude Desktop, Claude Code, Cursor, Windsurf, VS Code, OpenClaw</p>
+    </div>
+    <div class="proxy-card">
+      <div class="proxy-tag">HTTP GATEWAY</div>
+      <h4>HTTP Reverse Proxy</h4>
+      <p>Swaps the ClawdBot gateway port so AgentWard listens on the original port and forwards to the gateway on a new port. Intercepts <code style="font-family:var(--font-mono);font-size:11px;color:var(--green)">POST /tools-invoke</code>. All other traffic including WebSocket (for the ClawdBot UI) passes through transparently.</p>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <div class="footer-logo">
+    <svg width="18" height="18" viewBox="0 0 48 48" fill="none">
+      <path d="M24 4L6 12v12c0 11.1 7.7 21.5 18 24 10.3-2.5 18-12.9 18-24V12L24 4z" fill="#0d1a0d" stroke="#00ff88" stroke-width="2"/>
+      <path d="M17 24l5 5 9-9" stroke="#00ff88" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    AgentWard
+  </div>
+  <div class="footer-links">
+    <a href="index.html">Home</a>
+    <a href="docs.html">Docs</a>
+    <a href="compare.html">Compare</a>
+    <a href="https://github.com/agentward-ai/agentward" target="_blank">GitHub</a>
+  </div>
+  <span class="footer-right">Apache 2.0 · Open Source</span>
+</footer>
+
+</body>
+</html>

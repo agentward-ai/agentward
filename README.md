@@ -72,12 +72,12 @@ agentward scan
 
 Auto-discovers MCP configs (Claude Desktop, Cursor, Windsurf, VS Code), Python tool definitions (OpenAI, LangChain, CrewAI), and OpenClaw skills. Outputs a permission map with risk ratings, skill chain analysis, security recommendations, and developer fix guidance. A markdown report (`agentward-report.md`) is saved automatically.
 
-You can also scan a specific skill or directory:
-
 ```bash
 agentward scan ~/clawd/skills/bankr/          # scan a single skill
 agentward scan ~/.cursor/mcp.json             # scan specific MCP config
 agentward scan ~/project/                     # scan directory
+agentward scan --format html                  # shareable HTML report with security score
+agentward scan --format sarif                 # SARIF output for GitHub Security tab
 ```
 
 #### 2. Generate a policy
@@ -91,6 +91,7 @@ Generates a smart-default `agentward.yaml` with security-aware rules based on wh
 ```yaml
 # agentward.yaml (generated)
 version: "1.0"
+default_action: allow               # or "block" for zero-trust (allowlist mode)
 skills:
   filesystem:
     read_file: { action: allow }
@@ -98,8 +99,12 @@ skills:
   shell-executor:
     run_command: { action: block }    # blocked entirely
 require_approval:
-  - send_email
+  - send_email                        # always requires approval
   - delete_file
+  - tool: shell_exec                  # conditional: only sudo commands
+    when:
+      command:
+        contains: sudo
 ```
 
 #### 3. Wire it in
@@ -124,6 +129,9 @@ agentward inspect --policy agentward.yaml -- npx @modelcontextprotocol/server-fi
 agentward inspect --gateway openclaw --policy agentward.yaml
 # In another terminal:
 openclaw gateway restart
+
+# Dry-run mode — observe what would be blocked without enforcing
+agentward inspect --gateway openclaw --policy agentward.yaml --dry-run
 ```
 
 > **Start order matters for OpenClaw:** The AgentWard proxy must be running *before* OpenClaw restarts, because OpenClaw connects to external services (like Telegram) immediately on startup. If the proxy isn't up yet, those connections fail silently.
@@ -145,6 +153,28 @@ agentward map --format mermaid -o graph.md      # export as Mermaid diagram
 ```
 
 Shows servers, tools, data access types, risk levels, and detected skill chains. With `--policy`, overlays ALLOW/BLOCK/APPROVE decisions on the graph.
+
+#### 6. Review audit trail
+
+```bash
+agentward audit                                # read default log (agentward-audit.jsonl)
+agentward audit --log /path/to/audit.jsonl     # specify log path
+agentward audit --decision BLOCK               # filter by decision type
+agentward audit --tool gmail --last 100        # filter by tool name, last 100 entries
+agentward audit --timeline                     # show event timeline
+agentward audit --json                         # machine-readable output
+```
+
+Shows summary stats, decision breakdowns (ALLOW/BLOCK/APPROVE counts), top tools, chain violations, and optionally a chronological timeline.
+
+#### 7. Compare policy changes
+
+```bash
+agentward diff old.yaml new.yaml               # rich diff output
+agentward diff old.yaml new.yaml --json        # JSON for CI
+```
+
+Shows exactly what changed between two policy files — permissions added/removed, approval rules, chaining rules. Each change is classified as **breaking** (tightening enforcement) or **relaxing** (loosening enforcement). Useful for PR reviews.
 
 ## How It Works
 
@@ -174,13 +204,16 @@ Agent Host                    AgentWard                     Tool Server
 
 | Command | Description |
 |---------|-------------|
-| `agentward init` | One-command setup — scan, generate policy, and wire your environment |
-| `agentward scan` | Static analysis — permission maps, risk ratings, skill chains, developer fix guidance |
+| `agentward init` | One-command setup — scan, generate policy, wire environment, start proxy |
+| `agentward scan` | Static analysis — permission maps, risk ratings, skill chains, fix guidance |
 | `agentward configure` | Generate smart-default policy YAML from scan results |
 | `agentward setup` | Wire proxy into MCP configs or gateway ports |
 | `agentward inspect` | Start runtime proxy with live policy enforcement |
+| `agentward audit` | Read audit logs — summary stats, decision breakdowns, event timelines |
 | `agentward map` | Visualize the permission and chaining graph (terminal or Mermaid) |
-| `agentward comply` | Compliance evaluation against regulatory frameworks *(coming soon)* |
+| `agentward diff` | Compare two policy files — shows breaking vs. relaxing changes |
+| `agentward status` | Show live proxy status and current session statistics |
+| `agentward comply` | Evaluate policies against regulatory frameworks (HIPAA) with auto-fix |
 
 ## Policy Actions
 
@@ -202,6 +235,66 @@ If you use OpenClaw with Telegram, AgentWard can send approval requests to your 
 ```
 
 Once paired, any tool call with `action: approve` in your policy will show an inline keyboard in Telegram with **Allow Once**, **Allow Session**, and **Deny** buttons. Both the local macOS dialog and Telegram race in parallel — whichever you respond to first wins.
+
+## PII Sanitization
+
+AgentWard includes a built-in PII detection and redaction engine — available both as a **Python module** in the pip package and as a **standalone zero-dependency skill** for AI agents.
+
+### Python module (`pip install agentward`)
+
+```python
+from agentward.sanitize.detectors.regex_detector import detect_all
+from agentward.sanitize.models import PIICategory
+
+entities = detect_all("SSN: 123-45-6789, email: user@example.com")
+for e in entities:
+    print(f"{e.category.value}: {e.text}")
+```
+
+Optional NER support (spaCy) for person names, organizations, and locations:
+
+```bash
+pip install agentward[sanitize]   # adds spacy + pypdf
+```
+
+### Standalone skill (OpenClaw / Claude Code)
+
+A zero-dependency Python script that agents can call directly — no pip install needed:
+
+```bash
+# Sanitize a file (always use --output to avoid exposing raw PII)
+python scripts/sanitize.py patient-notes.txt --output clean.txt
+
+# Preview mode (detect PII categories without showing raw values)
+python scripts/sanitize.py notes.md --preview
+
+# Filter to specific categories
+python scripts/sanitize.py log.txt --categories ssn,credit_card,email --output clean.txt
+```
+
+Published on [ClawHub](https://clawhub.ai) as the `sanitize` skill. Install via OpenClaw or add to `.claude/commands/` for Claude Code.
+
+### Supported PII categories (15)
+
+| Category | Example |
+|---|---|
+| Credit card (Luhn-validated) | `4111 1111 1111 1111` |
+| SSN | `123-45-6789` |
+| CVV (keyword-anchored) | `CVV: 123` |
+| Expiry date (keyword-anchored) | `exp: 01/30` |
+| API key (provider prefix) | `sk-abc...`, `ghp_...`, `AKIA...` |
+| Email | `user@example.com` |
+| Phone (US/intl) | `+1 (555) 123-4567` |
+| IP address (IPv4) | `192.168.1.100` |
+| Date of birth (keyword-anchored) | `DOB: 03/15/1985` |
+| Passport (keyword-anchored) | `Passport: AB1234567` |
+| Driver's license (keyword-anchored) | `DL: D12345678` |
+| Bank routing (keyword-anchored) | `routing: 021000021` |
+| US mailing address | `742 Evergreen Terrace Dr, Springfield, IL 62704` |
+| Medical license (keyword-anchored) | `License: CA-MD-8827341` |
+| Insurance/member ID (keyword-anchored) | `Member ID: BCB-2847193` |
+
+All processing is local — zero network calls, zero dependencies (stdlib only for the standalone skill).
 
 ## What AgentWard Is NOT
 
@@ -256,9 +349,11 @@ AgentWard is early-stage software. We're being upfront about what works well and
 - `agentward configure` — policy YAML generation from scan results
 - `agentward setup --gateway openclaw` — OpenClaw gateway port swapping + LaunchAgent plist patching
 - `agentward inspect --gateway openclaw` — runtime enforcement of OpenClaw skill calls via LLM API interception (Anthropic provider, streaming mode). This is our most thoroughly tested path.
+- `agentward comply --framework hipaa` — HIPAA compliance evaluation with 8 controls and auto-fix policy generation
+- PII sanitization — 15 categories, regex-based detection with Luhn validation, keyword anchoring, false positive mitigation (1200+ tests)
 
 **Built and unit-tested but not yet end-to-end verified:**
-- MCP stdio proxy (`agentward inspect -- npx server`) — the proxy, protocol parsing, and policy engine are tested in isolation with 780+ unit tests, but we haven't run a full session with Claude Desktop/Cursor through the proxy yet
+- MCP stdio proxy (`agentward inspect -- npx server`) — the proxy, protocol parsing, and policy engine are tested in isolation with 1200+ unit tests, but we haven't run a full session with Claude Desktop/Cursor through the proxy yet
 - OpenAI provider interception (Chat Completions + Responses API) — interceptors are unit-tested but no live OpenAI traffic has flowed through them
 - Skill chaining enforcement — the chain tracker and policy evaluation work in tests, but the real-world interaction patterns haven't been validated
 - `agentward setup` for MCP config wrapping (Claude Desktop, Cursor, Windsurf, VS Code) — config rewriting is tested, but we haven't verified the full setup → restart → use cycle for each host

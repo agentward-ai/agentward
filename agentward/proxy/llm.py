@@ -39,6 +39,7 @@ from agentward.policy.engine import EvaluationResult, PolicyEngine
 from agentward.policy.schema import PolicyDecision
 from agentward.proxy.http import (
     _cleanup_stale_proxy,
+    _force_free_port,
     _identify_port_blocker,
     _remove_pid_file,
     _write_pid_file,
@@ -369,12 +370,17 @@ class AnthropicInterceptor(ToolInterceptor):
         return InterceptAction(type=ActionType.BUFFER)
 
     def finalize(self) -> InterceptAction | None:
-        """If stream ends mid-buffer, flush what we have (fail-open)."""
+        """If stream ends mid-buffer, drop incomplete tool_use (fail-closed)."""
         if self._buffer:
-            events = list(self._buffer)
             self._buffer = []
             self._state = _AnthropicState.IDLE
-            return InterceptAction(type=ActionType.FLUSH, events=events)
+            # Incomplete tool_use block — drop rather than forwarding
+            # un-evaluated content to the agent.
+            replacement = self._make_replacement_text(
+                self._block_index, self._tool_name or "unknown",
+                "Stream ended with incomplete tool_use (dropped by AgentWard)",
+            )
+            return InterceptAction(type=ActionType.BLOCK, replacement=replacement)
         return None
 
     @staticmethod
@@ -565,8 +571,8 @@ class OpenAIChatInterceptor(ToolInterceptor):
             self._tools.clear()
             self._buffer.clear()
             return action
-        elif any_approve:
-            # At least one tool needs approval — return APPROVE
+        elif any_approve and not blocked_names:
+            # At least one tool needs approval, none blocked — return APPROVE
             # Find the first APPROVE result for the dialog
             approve_result = next(
                 (r for r in results if r[2].decision == PolicyDecision.APPROVE), results[0]
@@ -582,9 +588,8 @@ class OpenAIChatInterceptor(ToolInterceptor):
             self._tools.clear()
             self._buffer.clear()
             return action
-        else:
-            # Some allowed, some blocked — for simplicity in v1, flush all
-            # (partial filtering of interleaved chunks is complex)
+        elif not blocked_names:
+            # All tools allowed — flush the buffer
             events = list(self._buffer)
             first_result = results[0] if results else None
             action = InterceptAction(
@@ -597,14 +602,68 @@ class OpenAIChatInterceptor(ToolInterceptor):
             self._tools.clear()
             self._buffer.clear()
             return action
+        else:
+            # Mixed decisions — some allowed, some blocked.
+            # SSE chunks interleave data for ALL tool_call indices,
+            # so we can't selectively filter. Fail closed: block all.
+            reasons = ", ".join(blocked_names)
+            replacement_msg = (
+                f"[AgentWard: blocked response — tool(s) '{reasons}' "
+                f"denied by policy (mixed decisions, failing closed)]"
+            )
+            replacement = _json.dumps(
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": replacement_msg},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                },
+                separators=(",", ":"),
+            )
+            replacement_bytes = f"data: {replacement}\n\n".encode()
+            first_result = results[0] if results else None
+            action = InterceptAction(
+                type=ActionType.BLOCK,
+                replacement=replacement_bytes,
+                tool_name=blocked_names[0] if blocked_names else "",
+                arguments=first_result[1] if first_result else {},
+                result=first_result[2] if first_result else None,
+            )
+            self._tools.clear()
+            self._buffer.clear()
+            return action
 
     def finalize(self) -> InterceptAction | None:
+        """If stream ends mid-buffer, drop incomplete tool_calls (fail-closed)."""
         if self._buffer:
-            events = list(self._buffer)
             self._buffer.clear()
             self._tools.clear()
             self._buffering = False
-            return InterceptAction(type=ActionType.FLUSH, events=events)
+            # Incomplete tool_calls — drop rather than forwarding
+            # un-evaluated content to the agent.
+            replacement_msg = (
+                "[AgentWard: stream ended with incomplete tool_calls "
+                "(dropped by AgentWard)]"
+            )
+            replacement = _json.dumps(
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": replacement_msg},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                },
+                separators=(",", ":"),
+            )
+            return InterceptAction(
+                type=ActionType.BLOCK,
+                replacement=f"data: {replacement}\n\n".encode(),
+            )
         return None
 
 
@@ -719,11 +778,27 @@ class OpenAIResponsesInterceptor(ToolInterceptor):
         return InterceptAction(type=ActionType.FORWARD)
 
     def finalize(self) -> InterceptAction | None:
+        """If stream ends mid-buffer, drop incomplete function_call (fail-closed)."""
         if self._buffer:
-            events = list(self._buffer)
             self._buffer.clear()
             self._buffering = False
-            return InterceptAction(type=ActionType.FLUSH, events=events)
+            # Incomplete function_call — drop rather than forwarding
+            # un-evaluated content to the agent.
+            msg = (
+                "[AgentWard: stream ended with incomplete function_call "
+                "(dropped by AgentWard)]"
+            )
+            replacement = _json.dumps(
+                {
+                    "type": "response.output_text.delta",
+                    "delta": msg,
+                },
+                separators=(",", ":"),
+            )
+            return InterceptAction(
+                type=ActionType.BLOCK,
+                replacement=f"data: {replacement}\n\n".encode(),
+            )
         return None
 
 
@@ -841,7 +916,14 @@ def _filter_blocked_tools(
             filtered.append(tool)
             continue
 
+        # Anthropic: {"name": "foo", ...}
+        # OpenAI Responses: {"type": "function", "name": "foo", ...}
+        # OpenAI Chat: {"type": "function", "function": {"name": "foo", ...}}
         name = tool.get("name", "")
+        if not name:
+            func = tool.get("function")
+            if isinstance(func, dict):
+                name = func.get("name", "")
         if not name:
             filtered.append(tool)
             continue
@@ -853,8 +935,14 @@ def _filter_blocked_tools(
             removed_names.append(name)
             continue
 
-        # Pass 2: runtime classification for unknown tools
-        if "No policy rule matches" in result.reason:
+        # Pass 2: runtime classification for unknown tools.
+        # When no policy rule matched, the engine returns ALLOW with
+        # skill=None and resource=None (the default passthrough).
+        if (
+            result.decision == PolicyDecision.ALLOW
+            and result.skill is None
+            and result.resource is None
+        ):
             risk = _classify_unknown_tool(tool)
             if risk in (RiskLevel.CRITICAL, RiskLevel.HIGH):
                 removed_names.append(name)
@@ -1037,6 +1125,46 @@ def _extract_last_user_text(messages: list[Any]) -> str:
                         parts.append(text)
             return "\n".join(parts)
     return ""
+
+
+def _extract_responses_input(body: dict[str, Any]) -> str:
+    """Extract user text from an OpenAI Responses API request body.
+
+    The Responses API uses ``input`` (string or list of items) and an
+    optional ``instructions`` field instead of a ``messages`` array.
+
+    Args:
+        body: The parsed request body.
+
+    Returns:
+        Concatenated user text, or empty string if nothing found.
+    """
+    parts: list[str] = []
+
+    instructions = body.get("instructions")
+    if isinstance(instructions, str) and instructions:
+        parts.append(instructions)
+
+    input_val = body.get("input")
+    if isinstance(input_val, str):
+        parts.append(input_val)
+    elif isinstance(input_val, list):
+        for item in input_val:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                # Message items: {"role": "user", "content": "..."}
+                content = item.get("content")
+                if isinstance(content, str):
+                    parts.append(content)
+                elif isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "input_text":
+                            text = block.get("text", "")
+                            if isinstance(text, str):
+                                parts.append(text)
+
+    return "\n".join(parts)
 
 
 def _make_canned_response(provider: str, message: str, is_streaming: bool) -> web.Response:
@@ -1271,6 +1399,7 @@ class LlmProxy:
         audit_logger: AuditLogger,
         policy_path: Path | None = None,
         approval_handler: "ApprovalHandler | None" = None,
+        dry_run: bool = False,
     ) -> None:
         self._listen_host = listen_host
         self._listen_port = listen_port
@@ -1279,6 +1408,7 @@ class LlmProxy:
         self._audit_logger = audit_logger
         self._policy_path = policy_path
         self._approval_handler = approval_handler
+        self._dry_run = dry_run
         self._session: ClientSession | None = None
 
     async def run(self, shutdown_event: asyncio.Event | None = None) -> None:
@@ -1298,27 +1428,42 @@ class LlmProxy:
         runner = web.AppRunner(app)
         await runner.setup()
 
+        site = web.TCPSite(runner, self._listen_host, self._listen_port)
         try:
-            site = web.TCPSite(runner, self._listen_host, self._listen_port)
             await site.start()
         except OSError as e:
-            if e.errno == 48:  # Address already in use
-                blocker = _identify_port_blocker(self._listen_port)
-                msg = f"Port {self._listen_port} is already in use"
-                if blocker:
-                    msg += f" by {blocker}"
-                _console.print(
-                    f"[bold red]Error:[/bold red] {msg}",
-                    highlight=False,
-                )
+            if e.errno == 48 or "address already in use" in str(e).lower():
+                # Attempt to kill stale process and retry
+                if _force_free_port(self._listen_port):
+                    try:
+                        await site.start()
+                    except OSError:
+                        _console.print(
+                            f"[bold red]Error:[/bold red] Port {self._listen_port} "
+                            f"still in use after cleanup.",
+                            highlight=False,
+                        )
+                        await runner.cleanup()
+                        return
+                else:
+                    blocker = _identify_port_blocker(self._listen_port)
+                    msg = f"Port {self._listen_port} is already in use"
+                    if blocker:
+                        msg += f" by {blocker}"
+                    _console.print(
+                        f"[bold red]Error:[/bold red] {msg}",
+                        highlight=False,
+                    )
+                    await runner.cleanup()
+                    return
             else:
                 _console.print(
                     f"[bold red]Error:[/bold red] Cannot bind to "
                     f"{self._listen_host}:{self._listen_port}: {e}",
                     highlight=False,
                 )
-            await runner.cleanup()
-            return
+                await runner.cleanup()
+                return
 
         _write_pid_file(self._listen_port)
 
@@ -1389,19 +1534,21 @@ class LlmProxy:
 
         body_modified = False
 
-        if body_json is not None and provider == "anthropic":
-            # 1. Strip blocked/approved tools from the tools array so the
+        if body_json is not None:
+            # 1. Strip blocked/dangerous tools from the tools array so the
             #    LLM never sees them.  This prevents the LLM from calling
-            #    blocked tools, avoiding conversation history corruption.
+            #    blocked tools, avoiding conversation history corruption
+            #    and repeated blocked calls.
+            #    Works for all providers (Anthropic, OpenAI Chat, OpenAI Responses).
             if _filter_blocked_tools(body_json, self._policy_engine, self._audit_logger):
                 body_modified = True
 
             # 2. Sanitize orphaned tool_use / tool_result blocks from
-            #    conversation history.  When we previously blocked a
-            #    tool_use in the response stream, the agent runtime may
-            #    still have the stale ID in its cached messages.
-            if _sanitize_anthropic_messages(body_json):
-                body_modified = True
+            #    conversation history (Anthropic-only — Anthropic requires
+            #    matched tool_use/tool_result pairs).
+            if provider == "anthropic":
+                if _sanitize_anthropic_messages(body_json):
+                    body_modified = True
 
         if body_modified and body_json is not None:
             raw_body = _json.dumps(body_json, separators=(",", ":")).encode()
@@ -1550,45 +1697,63 @@ class LlmProxy:
                             )
 
                 elif action.type == ActionType.APPROVE and action.result is not None:
-                    # Pause the SSE stream and show the approval dialog
-                    approved = await self._request_approval(
-                        action.tool_name, action.arguments, action.result,
-                    )
-                    if approved:
-                        # User approved — classify before flushing
-                        classification = self._classify_tool_args(action.arguments)
-                        if classification.has_sensitive_data:
-                            replacement = _make_sensitive_block_replacement(
-                                provider, action.tool_name, classification.findings,
+                    if self._dry_run:
+                        # Dry-run: log and flush without approval dialog
+                        self._audit_logger.log_tool_call(
+                            action.tool_name, action.arguments, action.result,
+                            dry_run=True,
+                        )
+                        for ev in action.events:
+                            await response.write(ev.raw)
+                    else:
+                        # Pause the SSE stream and show the approval dialog
+                        approved = await self._request_approval(
+                            action.tool_name, action.arguments, action.result,
+                        )
+                        if approved:
+                            # User approved — classify before flushing
+                            classification = self._classify_tool_args(action.arguments)
+                            if classification.has_sensitive_data:
+                                replacement = _make_sensitive_block_replacement(
+                                    provider, action.tool_name, classification.findings,
+                                )
+                                await response.write(replacement)
+                                self._audit_logger.log_sensitive_block(
+                                    action.tool_name, action.arguments, classification.findings,
+                                )
+                            else:
+                                for ev in action.events:
+                                    await response.write(ev.raw)
+                        else:
+                            # User denied — inject replacement text block
+                            replacement = _make_denial_replacement(
+                                provider, action.tool_name,
                             )
                             await response.write(replacement)
-                            self._audit_logger.log_sensitive_block(
-                                action.tool_name, action.arguments, classification.findings,
-                            )
-                        else:
-                            for ev in action.events:
-                                await response.write(ev.raw)
-                    else:
-                        # User denied — inject replacement text block
-                        replacement = _make_denial_replacement(
-                            provider, action.tool_name,
-                        )
-                        await response.write(replacement)
 
                 elif action.type == ActionType.BLOCK:
-                    await response.write(action.replacement)
-                    if action.result:
-                        # Audit logger handles both file + stderr output
-                        self._audit_logger.log_tool_call(
-                            action.tool_name, action.arguments, action.result
-                        )
+                    if self._dry_run:
+                        # Dry-run: log and flush instead of blocking
+                        if action.result:
+                            self._audit_logger.log_tool_call(
+                                action.tool_name, action.arguments, action.result,
+                                dry_run=True,
+                            )
+                        for ev in action.events:
+                            await response.write(ev.raw)
+                    else:
+                        await response.write(action.replacement)
+                        if action.result:
+                            # Audit logger handles both file + stderr output
+                            self._audit_logger.log_tool_call(
+                                action.tool_name, action.arguments, action.result
+                            )
 
-            # Finalize — flush any remaining buffer (fail-open)
+            # Finalize — drop any remaining incomplete buffer (fail-closed)
             final = interceptor.finalize()
             if final is not None:
-                if final.type == ActionType.FLUSH:
-                    for ev in final.events:
-                        await response.write(ev.raw)
+                if final.type == ActionType.BLOCK and final.replacement:
+                    await response.write(final.replacement)
 
         except aiohttp.ClientError as e:
             _console.print(
@@ -1689,7 +1854,15 @@ class LlmProxy:
                     input_args = {}
                 result = self._evaluate(name, input_args)
 
-                if result.decision == PolicyDecision.APPROVE:
+                if self._dry_run and result.decision in (
+                    PolicyDecision.BLOCK, PolicyDecision.APPROVE,
+                ):
+                    # Dry-run: log and pass through without blocking/approval
+                    self._audit_logger.log_tool_call(
+                        name, input_args, result, dry_run=True,
+                    )
+                    filtered.append(block)
+                elif result.decision == PolicyDecision.APPROVE:
                     # Show approval dialog
                     allowed = await self._request_approval(name, input_args, result)
                     if allowed:
@@ -1790,7 +1963,15 @@ class LlmProxy:
 
                 result = self._evaluate(name, args)
 
-                if result.decision == PolicyDecision.APPROVE:
+                if self._dry_run and result.decision in (
+                    PolicyDecision.BLOCK, PolicyDecision.APPROVE,
+                ):
+                    # Dry-run: log and pass through
+                    self._audit_logger.log_tool_call(
+                        name, args, result, dry_run=True,
+                    )
+                    filtered.append(tc)
+                elif result.decision == PolicyDecision.APPROVE:
                     allowed = await self._request_approval(name, args, result)
                     if allowed:
                         classification = self._classify_tool_args(args)
@@ -1875,13 +2056,18 @@ class LlmProxy:
         if not config.enabled:
             return None
 
-        # Extract text from the last user message
+        # Extract text from user input.
+        # Anthropic / OpenAI Chat: body["messages"] (last user message)
+        # OpenAI Responses: body["input"] (string or item list) + body["instructions"]
+        last_user_text = ""
         messages = body.get("messages")
-        if not isinstance(messages, list) or not messages:
-            return None
+        if isinstance(messages, list) and messages:
+            last_user_text = _extract_last_user_text(messages)
 
-        # Scan only the most recent user message (the new input)
-        last_user_text = _extract_last_user_text(messages)
+        if not last_user_text:
+            # Try OpenAI Responses format
+            last_user_text = _extract_responses_input(body)
+
         if not last_user_text:
             return None
 

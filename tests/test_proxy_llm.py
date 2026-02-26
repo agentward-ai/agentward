@@ -406,7 +406,8 @@ class TestAnthropicInterceptor:
         # No rewritten events — just forward the original
         assert len(action.events) == 0
 
-    def test_finalize_flushes_remaining_buffer(self) -> None:
+    def test_finalize_blocks_remaining_buffer(self) -> None:
+        """Truncated stream should fail-closed (BLOCK), not fail-open (FLUSH)."""
         interceptor = AnthropicInterceptor(_allowing_engine())
 
         # Start a tool block but don't finish it
@@ -419,8 +420,8 @@ class TestAnthropicInterceptor:
 
         final = interceptor.finalize()
         assert final is not None
-        assert final.type == ActionType.FLUSH
-        assert len(final.events) == 1
+        assert final.type == ActionType.BLOCK
+        assert final.replacement is not None
 
     def test_finalize_noop_when_idle(self) -> None:
         interceptor = AnthropicInterceptor(_allowing_engine())
@@ -596,7 +597,8 @@ class TestOpenAIChatInterceptor:
 
         assert actions[-1].type == ActionType.FLUSH
 
-    def test_finalize_flushes(self) -> None:
+    def test_finalize_blocks_truncated_stream(self) -> None:
+        """Truncated stream should fail-closed (BLOCK), not fail-open (FLUSH)."""
         interceptor = OpenAIChatInterceptor(_allowing_engine())
 
         # Start buffering but don't finish
@@ -606,7 +608,8 @@ class TestOpenAIChatInterceptor:
 
         final = interceptor.finalize()
         assert final is not None
-        assert final.type == ActionType.FLUSH
+        assert final.type == ActionType.BLOCK
+        assert final.replacement is not None
 
     def test_tool_approve(self) -> None:
         """APPROVE policy returns ActionType.APPROVE."""
@@ -692,7 +695,8 @@ class TestOpenAIResponsesInterceptor:
         action = interceptor.process_event(event)
         assert action.type == ActionType.FORWARD
 
-    def test_finalize_flushes(self) -> None:
+    def test_finalize_blocks_truncated_stream(self) -> None:
+        """Truncated stream should fail-closed (BLOCK), not fail-open (FLUSH)."""
         interceptor = OpenAIResponsesInterceptor(_allowing_engine())
 
         events = _openai_responses_tool_events("test", {})[:2]
@@ -701,7 +705,8 @@ class TestOpenAIResponsesInterceptor:
 
         final = interceptor.finalize()
         assert final is not None
-        assert final.type == ActionType.FLUSH
+        assert final.type == ActionType.BLOCK
+        assert final.replacement is not None
 
     def test_tool_approve(self) -> None:
         """APPROVE policy returns ActionType.APPROVE."""

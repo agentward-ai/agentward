@@ -327,10 +327,13 @@ class TestSetupDryRun:
 # ---------------------------------------------------------------------------
 
 
-class TestComplyGuard:
-    """Verify comply command still raises NotImplementedError."""
+class TestComplyCommand:
+    """Verify comply command works with --framework hipaa."""
 
-    def test_comply_not_implemented(self) -> None:
-        """Comply --framework hipaa → non-zero exit (NotImplementedError)."""
+    def test_comply_runs_without_crash(self) -> None:
+        """Comply --framework hipaa → runs policy-only checks (exit 0 or 1)."""
         result = runner.invoke(app, ["comply", "--framework", "hipaa"])
-        assert result.exit_code != 0
+        # Exit 1 is valid (required controls failed on empty policy),
+        # but it should NOT crash with NotImplementedError
+        assert result.exit_code in (0, 1)
+        assert "NotImplementedError" not in (result.output or "")

@@ -74,7 +74,29 @@ def _cleanup_stale_proxy(port: int) -> bool:
         # Process exists but we can't signal it — don't touch it
         return False
 
-    # Process is alive — kill it
+    # Verify the process is actually an AgentWard process before killing.
+    # PID reuse could cause us to kill an unrelated process.
+    try:
+        import subprocess as _sp
+        cmd_out = _sp.check_output(
+            ["ps", "-p", str(stale_pid), "-o", "command="],
+            text=True, timeout=5,
+        ).strip()
+        if "agentward" not in cmd_out.lower():
+            # PID was reused by an unrelated process — clean up pidfile only
+            _console.print(
+                f"  [dim]Stale PID {stale_pid} is not an AgentWard process "
+                f"({cmd_out[:60]}); removing pidfile only[/dim]",
+                highlight=False,
+            )
+            pid_path.unlink(missing_ok=True)
+            return False
+    except Exception:
+        # ps failed — process might be a zombie or we can't inspect it.
+        # Fall through and attempt cleanup, but only with SIGTERM (no SIGKILL).
+        pass
+
+    # Process is alive and confirmed as AgentWard — kill it
     try:
         _console.print(
             f"  [#ffcc00]Killing stale proxy[/#ffcc00] (PID {stale_pid}) on port {port}",
@@ -150,6 +172,78 @@ def _identify_port_blocker(port: int) -> str | None:
         return desc
     except Exception:
         return None
+
+
+def _force_free_port(port: int) -> bool:
+    """Kill a stale process occupying a port, using lsof as a fallback.
+
+    Used when ``_cleanup_stale_proxy`` (PID-file based) fails but the port
+    is still in use.  Only kills Python processes (assumed to be stale
+    AgentWard proxies).
+
+    Args:
+        port: The TCP port to free.
+
+    Returns:
+        True if the port was freed (or was already free), False if we
+        could not free it.
+    """
+    import os
+    import subprocess
+    import time
+
+    try:
+        result = subprocess.run(
+            ["lsof", "-i", f":{port}", "-sTCP:LISTEN", "-t"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return True  # nothing listening — port is free
+
+        pids = [p.strip() for p in result.stdout.strip().split("\n") if p.strip()]
+
+        for pid_str in pids:
+            pid = int(pid_str)
+            # Only kill Python processes (stale AgentWard)
+            ps_result = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "comm="],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            proc_name = ps_result.stdout.strip() if ps_result.returncode == 0 else ""
+            if "python" not in proc_name.lower():
+                continue
+
+            _console.print(
+                f"  [#ffcc00]Killing stale process[/#ffcc00] (PID {pid}) on port {port}",
+                highlight=False,
+            )
+            try:
+                os.kill(pid, signal.SIGTERM)
+                time.sleep(0.5)
+                try:
+                    os.kill(pid, 0)
+                    os.kill(pid, signal.SIGKILL)
+                    time.sleep(0.3)
+                except ProcessLookupError:
+                    pass
+            except (ProcessLookupError, PermissionError):
+                pass
+
+        # Verify the port is now free
+        time.sleep(0.2)
+        check = subprocess.run(
+            ["lsof", "-i", f":{port}", "-sTCP:LISTEN", "-t"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        return check.returncode != 0 or not check.stdout.strip()
+    except Exception:
+        return False
 
 
 # Headers that must not be forwarded on regular HTTP requests (hop-by-hop).
@@ -230,6 +324,7 @@ class HttpProxy:
         policy_path: Path | None = None,
         chain_tracker: ChainTracker | None = None,
         approval_handler: "ApprovalHandler | None" = None,
+        dry_run: bool = False,
     ) -> None:
         self._backend_url = backend_url.rstrip("/")
         self._listen_host = listen_host
@@ -239,9 +334,17 @@ class HttpProxy:
         self._policy_path = policy_path
         self._chain_tracker = chain_tracker
         self._approval_handler = approval_handler
+        self._dry_run = dry_run
         self._session: ClientSession | None = None
         # Monotonic counter for synthetic request IDs (HTTP has no JSON-RPC ids)
         self._request_counter = itertools.count(1)
+        # Map tool_name → FIFO of counter_ids for WS chaining.
+        # The interception path (client→backend) pushes counter_ids on record_call.
+        self._ws_tool_counter_ids: dict[str, list[int]] = {}
+        # Map tool_use_id → counter_id for exact response matching.
+        # Populated when tool_use content blocks arrive (observation path),
+        # consumed when matching tool_result blocks arrive.
+        self._ws_tool_use_to_counter: dict[str, int] = {}
         # Track seen agent lifecycle events to suppress duplicates.
         # ClawdBot can emit the same start/end event multiple times.
         self._seen_lifecycle: set[str] = set()
@@ -293,27 +396,40 @@ class HttpProxy:
                 await site.start()
             except OSError as e:
                 if e.errno == 48 or "address already in use" in str(e).lower():
-                    # Try to identify what's on the port
-                    blocker = _identify_port_blocker(self._listen_port)
-                    msg = (
-                        f"[bold red]Error:[/bold red] Port {self._listen_port} is already in use.\n"
-                    )
-                    if blocker:
-                        msg += f"\n  Blocked by: {blocker}\n"
-                    msg += (
-                        f"\nPossible fixes:\n"
-                        f"  1. Kill the stale process:  kill $(lsof -ti :{self._listen_port})\n"
-                        f"  2. If OpenClaw is on the wrong port:  openclaw gateway restart\n"
-                        f"  3. Check what's there:  lsof -i :{self._listen_port}"
-                    )
-                    _console.print(msg, highlight=False)
+                    # Attempt to kill the stale process and retry
+                    if _force_free_port(self._listen_port):
+                        try:
+                            await site.start()
+                        except OSError:
+                            _console.print(
+                                f"[bold red]Error:[/bold red] Port {self._listen_port} "
+                                f"still in use after cleanup.",
+                                highlight=False,
+                            )
+                            return
+                    else:
+                        blocker = _identify_port_blocker(self._listen_port)
+                        msg = (
+                            f"[bold red]Error:[/bold red] Port {self._listen_port} "
+                            f"is already in use.\n"
+                        )
+                        if blocker:
+                            msg += f"\n  Blocked by: {blocker}\n"
+                        msg += (
+                            f"\nPossible fixes:\n"
+                            f"  1. Kill the stale process:  kill $(lsof -ti :{self._listen_port})\n"
+                            f"  2. If OpenClaw is on the wrong port:  openclaw gateway restart\n"
+                            f"  3. Check what's there:  lsof -i :{self._listen_port}"
+                        )
+                        _console.print(msg, highlight=False)
+                        return
                 else:
                     _console.print(
                         f"[bold red]Error:[/bold red] Failed to bind to "
                         f"{self._listen_host}:{self._listen_port}: {e}",
                         highlight=False,
                     )
-                return
+                    return
 
             # Record our PID so the next run can clean us up if we don't exit
             _write_pid_file(self._listen_port)
@@ -661,6 +777,8 @@ class HttpProxy:
                     self._chain_tracker.record_call(
                         tool_name, arguments, request_id=counter_id,
                     )
+                    # Track counter_id for response matching in observation path
+                    self._ws_tool_counter_ids.setdefault(tool_name, []).append(counter_id)
 
                 # Passed all checks — log and forward
                 self._audit_logger.log_tool_call(tool_name, arguments, result)
@@ -820,11 +938,30 @@ class HttpProxy:
             # or as dedicated stream types in agent events.
             # Look for tool_use in multiple places:
 
-            # 1. Agent event with stream "tool_use" or "tool"
+            # 1. Agent event with stream "tool_use" or "tool" or "tool_result"
             if stream in ("tool_use", "tool", "tool_result"):
                 tool_name = data.get("name", data.get("command", "unknown"))
                 tool_input = data.get("input", data.get("params", {}))
                 run_id = str(payload.get("runId", ""))[:8]
+
+                if stream == "tool_result":
+                    # Tool result on agent stream — log and record for chaining
+                    is_error = data.get("is_error", False)
+                    _console.print(
+                        f"  [dim #5eead4]TOOL RESULT[/dim #5eead4] {tool_name}"
+                        f"{' [error]' if is_error else ''} [{run_id}]",
+                        highlight=False,
+                    )
+                    if self._chain_tracker is not None:
+                        try:
+                            tuid = data.get("tool_use_id") or data.get("id")
+                            cid = self._ws_tool_use_to_counter.pop(tuid, None) if tuid else None
+                            self._chain_tracker.record_response(
+                                tool_name, data, request_id=cid,
+                            )
+                        except Exception:
+                            pass  # Best-effort chaining recording
+                    return
 
                 # Log as a visible tool call observation
                 _console.print(
@@ -847,6 +984,13 @@ class HttpProxy:
                     tool_input if isinstance(tool_input, dict) else {},
                     result,
                 )
+
+                # Bridge tool_use_id → counter_id for chaining (same as chat-event path)
+                tool_use_id = data.get("id") or data.get("tool_use_id")
+                if tool_use_id and self._chain_tracker is not None:
+                    cid_stack = self._ws_tool_counter_ids.get(tool_name)
+                    if cid_stack:
+                        self._ws_tool_use_to_counter[tool_use_id] = cid_stack.pop(0)
                 return
 
             # 2. Chat event with tool_use content blocks
@@ -884,6 +1028,13 @@ class HttpProxy:
                                     result,
                                 )
 
+                                # Bridge tool_use_id → counter_id for chaining
+                                tool_use_id = block.get("id")
+                                if tool_use_id and self._chain_tracker is not None:
+                                    cid_stack = self._ws_tool_counter_ids.get(tool_name)
+                                    if cid_stack:
+                                        self._ws_tool_use_to_counter[tool_use_id] = cid_stack.pop(0)
+
                             elif isinstance(block, dict) and block.get("type") == "tool_result":
                                 tool_name = block.get("name", block.get("tool_use_id", "unknown"))
                                 is_error = block.get("is_error", False)
@@ -892,6 +1043,18 @@ class HttpProxy:
                                     f"{' [error]' if is_error else ''}",
                                     highlight=False,
                                 )
+                                # Record tool result for content-based chaining.
+                                # Use tool_use_id → counter_id mapping for exact
+                                # matching; fall back to tool_name if unavailable.
+                                if self._chain_tracker is not None:
+                                    try:
+                                        tuid = block.get("tool_use_id")
+                                        cid = self._ws_tool_use_to_counter.pop(tuid, None) if tuid else None
+                                        self._chain_tracker.record_response(
+                                            tool_name, block, request_id=cid,
+                                        )
+                                    except Exception:
+                                        pass  # Best-effort chaining recording
                 return
 
             # Skip assistant text-streaming deltas (too noisy)
@@ -956,20 +1119,31 @@ class HttpProxy:
         result = self._evaluate_tool_call(tool_name, arguments)
 
         if result.decision == PolicyDecision.BLOCK:
-            self._audit_logger.log_tool_call(tool_name, arguments, result)
-            return web.json_response(
-                {
-                    "ok": False,
-                    "error": {
-                        "type": "policy_blocked",
-                        "message": f"AgentWard: {result.reason}",
+            if self._dry_run:
+                self._audit_logger.log_tool_call(
+                    tool_name, arguments, result, dry_run=True,
+                )
+                # Dry-run: don't actually block — fall through to forward
+            else:
+                self._audit_logger.log_tool_call(tool_name, arguments, result)
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": {
+                            "type": "policy_blocked",
+                            "message": f"AgentWard: {result.reason}",
+                        },
                     },
-                },
-                status=403,
-            )
+                    status=403,
+                )
 
         if result.decision == PolicyDecision.APPROVE:
-            if self._approval_handler is not None:
+            if self._dry_run:
+                self._audit_logger.log_tool_call(
+                    tool_name, arguments, result, dry_run=True,
+                )
+                # Dry-run: don't actually gate — fall through to forward
+            elif self._approval_handler is not None:
                 decision = await self._approval_handler.request_approval(
                     tool_name, arguments, result.reason,
                 )
@@ -1010,19 +1184,26 @@ class HttpProxy:
                 tool_name, arguments,
             )
             if chain_result is not None and chain_result.decision == PolicyDecision.BLOCK:
-                self._audit_logger.log_tool_call(
-                    tool_name, arguments, chain_result, chain_violation=True,
-                )
-                return web.json_response(
-                    {
-                        "ok": False,
-                        "error": {
-                            "type": "chain_blocked",
-                            "message": f"AgentWard: {chain_result.reason}",
+                if self._dry_run:
+                    self._audit_logger.log_tool_call(
+                        tool_name, arguments, chain_result,
+                        chain_violation=True, dry_run=True,
+                    )
+                    # Dry-run: don't actually block chain
+                else:
+                    self._audit_logger.log_tool_call(
+                        tool_name, arguments, chain_result, chain_violation=True,
+                    )
+                    return web.json_response(
+                        {
+                            "ok": False,
+                            "error": {
+                                "type": "chain_blocked",
+                                "message": f"AgentWard: {chain_result.reason}",
+                            },
                         },
-                    },
-                    status=403,
-                )
+                        status=403,
+                    )
             request_id = next(self._request_counter)
             self._chain_tracker.record_call(
                 tool_name, arguments, request_id=request_id,
