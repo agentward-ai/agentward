@@ -30,7 +30,7 @@ from sys import platform as _platform
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 import aiohttp
-from aiohttp import ClientSession, web
+from aiohttp import ClientSession, ClientTimeout, web
 from rich.console import Console
 
 from agentward.audit.logger import AuditLogger
@@ -909,7 +909,7 @@ def _filter_blocked_tools(
         return False
 
     filtered: list[dict[str, Any]] = []
-    removed_names: list[str] = []
+    removed: list[tuple[str, EvaluationResult]] = []
 
     for tool in tools:
         if not isinstance(tool, dict):
@@ -932,7 +932,7 @@ def _filter_blocked_tools(
 
         # Pass 1: explicit policy decision (APPROVE stays — gated at execution)
         if result.decision == PolicyDecision.BLOCK:
-            removed_names.append(name)
+            removed.append((name, result))
             continue
 
         # Pass 2: runtime classification for unknown tools.
@@ -945,15 +945,28 @@ def _filter_blocked_tools(
         ):
             risk = _classify_unknown_tool(tool)
             if risk in (RiskLevel.CRITICAL, RiskLevel.HIGH):
-                removed_names.append(name)
+                # Wrap in a BLOCK result for audit logging
+                block_result = EvaluationResult(
+                    decision=PolicyDecision.BLOCK,
+                    reason=f"Tool '{name}' classified as {risk.value} risk by runtime analysis. "
+                           f"Removed from LLM request.",
+                )
+                removed.append((name, block_result))
                 continue
 
         filtered.append(tool)
 
-    if not removed_names:
+    if not removed:
         return False
 
     body["tools"] = filtered
+
+    removed_names = [name for name, _ in removed]
+    removed_set = set(removed_names)
+
+    # Reconcile tool_choice — if it pins a now-removed tool, the upstream
+    # API will 400.  Downgrade to "auto" and warn.
+    _reconcile_tool_choice(body, removed_set)
 
     # Inject a system-level notice so the LLM knows WHY the tools are
     # unavailable and can tell the user, instead of confabulating reasons.
@@ -965,13 +978,55 @@ def _filter_blocked_tools(
     )
     _inject_system_notice(body, notice)
 
-    for name in removed_names:
+    for name, result in removed:
         _console.print(
             f"  [bold red]✗ BLOCK[/bold red] {name}",
             highlight=False,
         )
+        audit_logger.log_tool_call(name, {}, result)
 
     return True
+
+
+def _reconcile_tool_choice(
+    body: dict[str, Any],
+    removed_names: set[str],
+) -> None:
+    """Downgrade tool_choice to ``"auto"`` if it pins a removed tool.
+
+    Handles three API formats:
+
+    - **Anthropic**: ``tool_choice: {"type": "tool", "name": "X"}``
+    - **OpenAI Chat**: ``tool_choice: {"type": "function", "function": {"name": "X"}}``
+    - **OpenAI Responses**: ``tool_choice: {"type": "function", "name": "X"}``
+
+    If ``tool_choice`` is a string (``"auto"``, ``"none"``, ``"required"``,
+    ``"any"``), it refers to no specific tool and is left unchanged.
+
+    Args:
+        body: The parsed request body (mutated in place).
+        removed_names: Set of tool names that were removed.
+    """
+    tc = body.get("tool_choice")
+    if tc is None or not isinstance(tc, dict):
+        return  # String values ("auto", "none", etc.) are fine
+
+    # Anthropic format: {"type": "tool", "name": "blocked_tool"}
+    pinned_name = tc.get("name")
+
+    # OpenAI Chat format: {"type": "function", "function": {"name": "blocked_tool"}}
+    if not pinned_name:
+        func = tc.get("function")
+        if isinstance(func, dict):
+            pinned_name = func.get("name")
+
+    if pinned_name and pinned_name in removed_names:
+        body["tool_choice"] = "auto"
+        _console.print(
+            f"  [yellow]⚠ tool_choice pinned '{pinned_name}' was blocked — "
+            f"downgraded to auto[/yellow]",
+            highlight=False,
+        )
 
 
 def _inject_system_notice(body: dict[str, Any], notice: str) -> None:
@@ -1498,7 +1553,12 @@ class LlmProxy:
 
     async def _get_session(self) -> ClientSession:
         if self._session is None or self._session.closed:
-            self._session = ClientSession()
+            # LLM API calls can take a while (long completions), so use a
+            # generous total timeout.  The connect timeout bounds the initial
+            # TCP/TLS handshake to the upstream API.
+            self._session = ClientSession(
+                timeout=ClientTimeout(total=300, connect=30),
+            )
         return self._session
 
     # ------------------------------------------------------------------

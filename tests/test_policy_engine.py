@@ -54,8 +54,8 @@ class TestToolMatching:
         assert result.skill is None
         assert result.resource is None
 
-    def test_unknown_action_on_known_resource(self, simple_engine: PolicyEngine) -> None:
-        """Action not mentioned in policy → ALLOW by default."""
+    def test_unknown_action_on_known_resource_allow_mode(self, simple_engine: PolicyEngine) -> None:
+        """Action not mentioned in policy → ALLOW when default_action is allow."""
         result = simple_engine.evaluate("gmail_archive", {})
         assert result.decision == PolicyDecision.ALLOW
         assert result.resource == "gmail"

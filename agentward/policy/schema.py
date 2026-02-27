@@ -6,10 +6,11 @@ chaining rules, approval gates, and data boundary zones.
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 
 class PolicyDecision(str, Enum):
@@ -247,9 +248,11 @@ class ApprovalCondition(BaseModel):
     equals: Any | None = None
     matches: str | None = None
 
+    _compiled_regex: re.Pattern[str] | None = PrivateAttr(default=None)
+
     @model_validator(mode="after")
     def at_least_one_condition(self) -> "ApprovalCondition":
-        """Ensure at least one condition is set."""
+        """Ensure at least one condition is set and validate regex patterns."""
         if all(
             v is None
             for v in (self.contains, self.not_contains, self.equals, self.matches)
@@ -259,6 +262,19 @@ class ApprovalCondition(BaseModel):
                 "contains, not_contains, equals, matches"
             )
             raise ValueError(msg)
+
+        # Compile regex at load time — fail fast on invalid patterns
+        # instead of crashing mid-session during proxy evaluation.
+        if self.matches is not None:
+            try:
+                self._compiled_regex = re.compile(self.matches)
+            except re.error as e:
+                msg = (
+                    f"Invalid regex pattern in 'matches': {self.matches!r} — {e}. "
+                    f"Fix this pattern in your policy YAML."
+                )
+                raise ValueError(msg) from e
+
         return self
 
     def check(self, value: Any) -> bool:
@@ -272,8 +288,6 @@ class ApprovalCondition(BaseModel):
         Returns:
             True if all conditions match.
         """
-        import re
-
         str_value = str(value) if value is not None else ""
 
         if self.contains is not None and self.contains not in str_value:
@@ -282,8 +296,17 @@ class ApprovalCondition(BaseModel):
             return False
         if self.equals is not None and value != self.equals:
             return False
-        if self.matches is not None and not re.search(self.matches, str_value):
-            return False
+        if self.matches is not None:
+            pattern = self._compiled_regex
+            if pattern is None:
+                # Fallback: compile on the fly if validator was bypassed
+                # (e.g., model_construct). Treat invalid patterns as non-match.
+                try:
+                    pattern = re.compile(self.matches)
+                except re.error:
+                    return False
+            if not pattern.search(str_value):
+                return False
         return True
 
 

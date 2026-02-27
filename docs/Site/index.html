@@ -205,8 +205,24 @@
     .footer-links a:hover{color:var(--green)}
     .footer-right{font-size:12px;color:var(--muted2);font-family:var(--font-mono)}
 
+    /* ── Mobile nav ── */
+    .nav-hamburger{display:none;background:none;border:none;cursor:pointer;padding:6px}
+    .nav-hamburger svg{display:block}
+    .nav-mobile{
+      display:none;position:absolute;top:52px;left:0;right:0;
+      background:rgba(8,8,8,0.98);backdrop-filter:blur(16px);
+      border-bottom:1px solid var(--border);
+      padding:8px 16px 12px;z-index:199;
+      flex-direction:column;gap:2px;
+    }
+    .nav-mobile.open{display:flex}
+    .nav-mobile a{display:block;padding:10px 14px;border-radius:6px;font-size:14px;font-weight:500;color:var(--muted);transition:color .15s,background .15s}
+    .nav-mobile a:hover{color:var(--white);background:var(--bg2)}
+    .nav-mobile a.active{color:var(--green);background:var(--green-dim)}
+
     @media(max-width:600px){
-      .nav-links a:not(.nav-gh){display:none}
+      .nav-links{display:none}
+      .nav-hamburger{display:block}
       .stat{padding:18px 20px}
       footer{flex-direction:column;text-align:center}
     }
@@ -228,12 +244,24 @@
     <a href="how-it-works.html">How It Works</a>
     <a href="docs.html">Docs</a>
     <a href="compare.html">Compare</a>
+    <a href="about.html">About</a>
     <a href="https://github.com/agentward-ai/agentward" target="_blank" rel="noopener" class="nav-gh">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
       GitHub
     </a>
   </div>
+  <button class="nav-hamburger" onclick="document.getElementById('mobile-menu').classList.toggle('open')" aria-label="Menu">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#999" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
 </nav>
+<div class="nav-mobile" id="mobile-menu">
+  <a href="index.html" class="active">Home</a>
+  <a href="how-it-works.html">How It Works</a>
+  <a href="docs.html">Docs</a>
+  <a href="compare.html">Compare</a>
+  <a href="about.html">About</a>
+  <a href="https://github.com/agentward-ai/agentward" target="_blank" rel="noopener">GitHub</a>
+</div>
 
 <!-- HERO -->
 <section class="hero">
@@ -270,7 +298,7 @@
   <div class="two-up">
     <div class="card">
       <div class="card-label">Existing tools</div>
-      <p>Static scanners that check at install time, then stop watching. <strong>No runtime enforcement. No audit trail. No skill chaining controls.</strong> You're left hoping your prompts hold.</p>
+      <p>Static scanners that check at install time, then stop watching. <strong>No runtime enforcement. No audit trail. No skill chaining controls.</strong> Lateral data movement between tools goes undetected. You're left hoping your prompts hold.</p>
     </div>
     <div class="card-accent">
       <div class="card-label">AgentWard</div>
@@ -283,7 +311,7 @@
 <div class="section-sm" style="padding-top:0">
   <div class="eyebrow">Live Demo</div>
   <h2 class="section-title">See it in action.</h2>
-  <p class="section-body" style="margin-bottom:20px">AgentWard scans every tool your agent can reach, risk-rates them, detects dangerous chains, generates a policy, and wires enforcement — all in seconds.</p>
+  <p class="section-body" style="margin-bottom:20px">AgentWard scans every tool your agent can reach, risk-rates them, detects dangerous skill chains (lateral data movement between tools), generates a policy, and wires enforcement — all in seconds.</p>
   <div class="terminal-wrap">
     <div class="terminal">
       <div class="terminal-bar">
@@ -332,7 +360,7 @@
       <div class="stage-info">
         <div class="stage-cmd">agentward scan</div>
         <h4>Scan</h4>
-        <p>Map every tool your agent can reach. Risk ratings, data access patterns, dangerous skill chains.</p>
+        <p>Map every tool your agent can reach. Risk ratings, data access patterns, dangerous skill chains — lateral movement paths that existing DLP and IAM don't cover.</p>
       </div>
     </a>
     <a href="how-it-works.html" class="stage-card">
@@ -356,7 +384,7 @@
       <div class="stage-info">
         <div class="stage-cmd">agentward comply</div>
         <h4>Comply</h4>
-        <p>Evaluate policies against HIPAA, SOX, GDPR. Auto-generate compliant policy YAML with fixes applied.</p>
+        <p>Evaluate policies against HIPAA, SOX, GDPR, PCI-DSS. Auto-generate compliant policy YAML with fixes applied.</p>
       </div>
     </a>
   </div>
@@ -413,6 +441,7 @@
     <a href="how-it-works.html">How It Works</a>
     <a href="docs.html">Docs</a>
     <a href="compare.html">Compare</a>
+    <a href="about.html">About</a>
     <a href="https://github.com/agentward-ai/agentward" target="_blank">GitHub</a>
   </div>
   <span class="footer-right">Apache 2.0 · Open Source</span>
@@ -455,8 +484,8 @@ const terminalLines = [
   { text: '│  SDK  send_email    smtp,attachments  ⚠  HIGH        │',         color: '#ff8c42', delay: 5400 },
   { text: '└──────────────────────────────────────────────────────┘',         color: '#2a2a2a', delay: 5600 },
   { text: '',                                                                  color: '',        delay: 5800 },
-  { text: '⚠ Skill chain detected: email-mgr → web-browser',                  color: '#ff8c42', delay: 6000 },
-  { text: '  Email content could leak via browsing — exfiltration path',      color: '#664400', delay: 6200 },
+  { text: '⚠ Skill chain detected: email-mgr → web-browser',                   color: '#ff8c42', delay: 6000 },
+  { text: '  Lateral movement — email content could leak via browsing',       color: '#664400', delay: 6200 },
   { text: '',                                                                  color: '',        delay: 6400 },
   { text: '3 critical · 4 high · 1 medium · 1 low',                           color: '#f0f0f0', delay: 6600 },
   { text: '→ Run `agentward configure` to generate policies',                  color: '#00ff88', delay: 7000 },

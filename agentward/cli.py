@@ -1238,6 +1238,9 @@ def comply(
     # Import framework module to trigger registration
     try:
         import agentward.comply.frameworks.hipaa  # noqa: F401
+        import agentward.comply.frameworks.gdpr  # noqa: F401
+        import agentward.comply.frameworks.sox  # noqa: F401
+        import agentward.comply.frameworks.pci_dss  # noqa: F401
     except Exception as e:
         _console.print(
             f"\n[bold red]Error:[/bold red] Failed to load framework modules: {e}",
@@ -1290,7 +1293,7 @@ def comply(
 
     # Render rich output (non-JSON, non-fix mode renders here)
     if not json_output:
-        render_compliance_report(report, _console)
+        render_compliance_report(report, _console, fix_mode=fix)
 
     # Auto-fix mode
     fix_metadata: dict[str, Any] | None = None
@@ -1311,8 +1314,27 @@ def comply(
 
         diff = diff_policies(loaded_policy, fixed_policy)
 
-        # Write fixed policy
-        output_path = output or Path(f"agentward-{framework}.yaml")
+        # Determine output path
+        if output:
+            output_path = output
+        elif not json_output:
+            # Ask user if they want to overwrite the source policy file
+            _console.print()
+            overwrite = typer.confirm(
+                f"Overwrite {policy} with the fixed policy?",
+                default=True,
+            )
+            if overwrite:
+                output_path = policy
+            else:
+                output_path = Path(f"agentward-{framework}.yaml")
+                _console.print(
+                    f"[dim]Writing to {output_path} instead.[/dim]"
+                )
+        else:
+            # JSON mode: no interactive prompt, write to separate file
+            output_path = Path(f"agentward-{framework}.yaml")
+
         try:
             write_policy(fixed_policy, output_path)
         except PermissionError:
@@ -1333,11 +1355,18 @@ def comply(
             if not diff.is_empty:
                 _console.print("[bold]Policy changes to apply:[/bold]\n")
                 render_diff(diff, _console)
-            _console.print(
-                f"\n[bold #00ff88]Fixed policy written to:[/bold #00ff88] {output_path}\n"
-                f"[dim]Review the changes, then apply with: "
-                f"agentward setup --policy {output_path}[/dim]\n"
-            )
+            if output_path == policy:
+                _console.print(
+                    f"\n[bold #00ff88]Policy updated in place:[/bold #00ff88] {output_path}\n"
+                    f"[dim]Apply with: "
+                    f"agentward setup --policy {output_path}[/dim]\n"
+                )
+            else:
+                _console.print(
+                    f"\n[bold #00ff88]Fixed policy written to:[/bold #00ff88] {output_path}\n"
+                    f"[dim]Review the changes, then apply with: "
+                    f"agentward setup --policy {output_path}[/dim]\n"
+                )
     elif fix and not report.findings:
         fix_metadata = {"fix_applied": False, "changes": 0}
         if not json_output:

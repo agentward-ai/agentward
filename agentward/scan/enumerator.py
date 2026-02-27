@@ -213,7 +213,7 @@ async def _enumerate_stdio(server: ServerConfig) -> EnumerationResult:
 
         # Read initialize response (may need to skip notifications)
         init_msg: JSONRPCResponse | None = None
-        for _ in range(50):
+        for _ in range(200):
             init_line = await process.stdout.readline()
             if not init_line:
                 break
@@ -252,7 +252,7 @@ async def _enumerate_stdio(server: ServerConfig) -> EnumerationResult:
 
         # Read tools/list response (may need to skip notifications)
         tools: list[ToolInfo] = []
-        for _ in range(50):  # read up to 50 lines looking for the response
+        for _ in range(200):  # read up to 200 lines looking for the response
             line = await process.stdout.readline()
             if not line:
                 break

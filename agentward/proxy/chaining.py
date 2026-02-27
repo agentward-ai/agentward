@@ -176,10 +176,15 @@ class ChainTracker:
     def _check_depth(self, target_skill: str) -> EvaluationResult | None:
         """Check the global skill_chain_depth limit.
 
-        Counts consecutive skill-to-skill transitions in recent history.
-        A "transition" is when the current call's skill differs from the
-        previous call's skill. If the running count of transitions reaches
-        the configured depth limit, the call is blocked.
+        Counts the **trailing** sequence of distinct skill transitions —
+        i.e., the current unbroken chain at the end of history.  A chain
+        is "broken" when a skill repeats (the agent returns to a skill
+        it already visited in the current chain), at which point the
+        depth counter resets.
+
+        This prevents false positives in long sessions where a user
+        naturally interleaves two skills (A→B→A→B) without running a
+        deep chain.
 
         Returns:
             An EvaluationResult with BLOCK if depth is exceeded, else None.
@@ -188,19 +193,34 @@ class ChainTracker:
         if max_depth is None:
             return None  # No depth limit configured
 
-        # Count consecutive skill transitions in history
-        depth = 0
-        prev_skill: str | None = None
-        for entry in self._history:
+        # Build the trailing chain of distinct skills from history.
+        # Walk backwards, collecting the sequence of skill transitions.
+        # Stop when a skill repeats (loop closed → chain broken).
+        trailing_skills: list[str] = []
+        for entry in reversed(self._history):
             if entry.skill_name is None:
                 continue
-            if prev_skill is not None and entry.skill_name != prev_skill:
-                depth += 1
-            prev_skill = entry.skill_name
+            if trailing_skills and entry.skill_name == trailing_skills[-1]:
+                continue  # Same skill as previous — not a transition
+            if entry.skill_name in trailing_skills:
+                break  # Skill already in chain — loop closed, stop
+            trailing_skills.append(entry.skill_name)
+
+        # trailing_skills is in reverse order: [most_recent, ..., oldest_in_chain]
+        # The depth is len - 1 (transitions between skills)
+        depth = max(0, len(trailing_skills) - 1)
 
         # The upcoming call would add another transition if skill differs
-        if prev_skill is not None and target_skill != prev_skill:
-            depth += 1
+        # from the most recent and isn't already in the chain
+        if trailing_skills:
+            most_recent = trailing_skills[0]
+            if target_skill != most_recent:
+                if target_skill in trailing_skills:
+                    # Returning to a skill in the chain — resets depth
+                    depth = 0
+                else:
+                    depth += 1
+        # If trailing_skills is empty, depth stays 0
 
         if depth > max_depth:
             return EvaluationResult(

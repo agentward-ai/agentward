@@ -252,6 +252,24 @@ class TestUnwrapConfig:
         for name in ("filesystem", "github", "clawdbot"):
             assert restored["mcpServers"][name]["command"] != "agentward"
 
+    def test_unwrap_partial_markers_missing_args(self) -> None:
+        """If _agentward_original_args is missing, unwrap should default to []."""
+        config = {
+            "mcpServers": {
+                "my-server": {
+                    "command": "agentward",
+                    "args": ["inspect", "--", "npx"],
+                    "_agentward_original_command": "npx",
+                    # _agentward_original_args intentionally missing
+                },
+            },
+        }
+        restored, count = unwrap_config(config)
+        assert count == 1
+        server = restored["mcpServers"]["my-server"]
+        assert server["command"] == "npx"
+        assert server["args"] == []
+
 
 # ---------------------------------------------------------------------------
 # Tests: read_config / write_config

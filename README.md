@@ -213,7 +213,7 @@ Agent Host                    AgentWard                     Tool Server
 | `agentward map` | Visualize the permission and chaining graph (terminal or Mermaid) |
 | `agentward diff` | Compare two policy files — shows breaking vs. relaxing changes |
 | `agentward status` | Show live proxy status and current session statistics |
-| `agentward comply` | Evaluate policies against regulatory frameworks (HIPAA) with auto-fix |
+| `agentward comply` | Evaluate policies against regulatory frameworks (HIPAA, SOX, GDPR, PCI-DSS) with auto-fix |
 
 ## Policy Actions
 
@@ -349,8 +349,8 @@ AgentWard is early-stage software. We're being upfront about what works well and
 - `agentward configure` — policy YAML generation from scan results
 - `agentward setup --gateway openclaw` — OpenClaw gateway port swapping + LaunchAgent plist patching
 - `agentward inspect --gateway openclaw` — runtime enforcement of OpenClaw skill calls via LLM API interception (Anthropic provider, streaming mode). This is our most thoroughly tested path.
-- `agentward comply --framework hipaa` — HIPAA compliance evaluation with 8 controls and auto-fix policy generation
-- PII sanitization — 15 categories, regex-based detection with Luhn validation, keyword anchoring, false positive mitigation (1200+ tests)
+- `agentward comply` — regulatory compliance evaluation across HIPAA (§164.312/§164.308), SOX (§404), GDPR (Art. 5–32), and PCI-DSS v4.0 (Req. 1–10), each with 8 controls, auto-fix policy generation (1500+ tests)
+- PII sanitization — 15 categories, regex-based detection with Luhn validation, keyword anchoring, false positive mitigation
 
 **Built and unit-tested but not yet end-to-end verified:**
 - MCP stdio proxy (`agentward inspect -- npx server`) — the proxy, protocol parsing, and policy engine are tested in isolation with 1200+ unit tests, but we haven't run a full session with Claude Desktop/Cursor through the proxy yet

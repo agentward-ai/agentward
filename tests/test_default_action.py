@@ -152,6 +152,32 @@ class TestEngineDefaultBlock:
             result = engine.evaluate(tool)
             assert result.decision == PolicyDecision.BLOCK, f"{tool} should be blocked"
 
+    def test_unlisted_action_on_known_resource_blocked(
+        self, engine: PolicyEngine
+    ) -> None:
+        """Action not mentioned in policy on a matched resource should be BLOCKED in block mode.
+
+        This is the zero-trust principle: only explicitly allowed actions pass.
+        """
+        result = engine.evaluate("gmail_archive")
+        assert result.decision == PolicyDecision.BLOCK
+        assert result.resource == "gmail"
+        assert "not explicitly allowed" in result.reason
+
+    def test_listed_allowed_action_still_works(
+        self, engine: PolicyEngine
+    ) -> None:
+        """Explicitly allowed actions should still pass in block mode."""
+        result = engine.evaluate("gmail_read")
+        assert result.decision == PolicyDecision.ALLOW
+
+    def test_listed_denied_action_still_blocked(
+        self, engine: PolicyEngine
+    ) -> None:
+        """Explicitly denied actions should still be blocked in block mode."""
+        result = engine.evaluate("gmail_send")
+        assert result.decision == PolicyDecision.BLOCK
+
 
 # ---------------------------------------------------------------------------
 # YAML loading with default_action

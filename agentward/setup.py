@@ -184,7 +184,7 @@ def unwrap_config(config: dict[str, Any]) -> tuple[dict[str, Any], int]:
 
         # Restore original command and args
         server_def["command"] = server_def.pop(_MARKER_ORIGINAL_COMMAND)
-        server_def["args"] = server_def.pop(_MARKER_ORIGINAL_ARGS)
+        server_def["args"] = server_def.pop(_MARKER_ORIGINAL_ARGS, [])
         unwrapped_count += 1
 
     return result, unwrapped_count

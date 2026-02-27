@@ -35,12 +35,19 @@ _SEVERITY_ICONS = {
 }
 
 
-def render_compliance_report(report: ComplianceReport, console: Any) -> None:
+def render_compliance_report(
+    report: ComplianceReport,
+    console: Any,
+    *,
+    fix_mode: bool = False,
+) -> None:
     """Render a compliance report to the terminal using rich.
 
     Args:
         report: The compliance evaluation result.
         console: A rich Console instance (stderr-routed).
+        fix_mode: If True, suppress the "Next steps: run --fix" hint
+            (the caller is already applying fixes).
     """
     from rich.panel import Panel
     from rich.table import Table
@@ -156,7 +163,7 @@ def render_compliance_report(report: ComplianceReport, console: Any) -> None:
             console.print()
 
     # --- Next steps ---
-    if report.findings:
+    if report.findings and not fix_mode:
         fixable = sum(1 for f in report.findings if f.fix is not None)
         console.print(
             f"[dim]Next steps: Run [bold]agentward comply --framework "

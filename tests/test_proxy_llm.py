@@ -1268,6 +1268,93 @@ class TestRuntimeClassification:
 
 
 # -----------------------------------------------------------------------
+# _reconcile_tool_choice
+# -----------------------------------------------------------------------
+
+
+class TestReconcileToolChoice:
+    """Tests for tool_choice reconciliation after tool removal."""
+
+    def test_anthropic_pinned_tool_downgraded(self) -> None:
+        """Anthropic format: pinned tool_choice is downgraded to auto."""
+        body = {
+            "tools": [{"name": "search"}],
+            "tool_choice": {"type": "tool", "name": "blocked_tool"},
+        }
+        engine = _make_policy_engine(blocked=["blocked_tool"])
+        logger = AuditLogger()
+        # Add blocked tool to the body so _filter_blocked_tools has something to remove
+        body["tools"].append({"name": "blocked_tool"})
+        _filter_blocked_tools(body, engine, logger)
+        assert body["tool_choice"] == "auto"
+        assert len(body["tools"]) == 1
+
+    def test_openai_chat_pinned_tool_downgraded(self) -> None:
+        """OpenAI Chat format: pinned function is downgraded to auto."""
+        body = {
+            "tools": [
+                {"type": "function", "function": {"name": "blocked_tool"}},
+                {"type": "function", "function": {"name": "search"}},
+            ],
+            "tool_choice": {"type": "function", "function": {"name": "blocked_tool"}},
+        }
+        engine = _make_policy_engine(blocked=["blocked_tool"])
+        logger = AuditLogger()
+        _filter_blocked_tools(body, engine, logger)
+        assert body["tool_choice"] == "auto"
+        assert len(body["tools"]) == 1
+
+    def test_openai_responses_pinned_tool_downgraded(self) -> None:
+        """OpenAI Responses format: pinned function name is downgraded to auto."""
+        body = {
+            "tools": [
+                {"type": "function", "name": "blocked_tool"},
+                {"type": "function", "name": "search"},
+            ],
+            "tool_choice": {"type": "function", "name": "blocked_tool"},
+        }
+        engine = _make_policy_engine(blocked=["blocked_tool"])
+        logger = AuditLogger()
+        _filter_blocked_tools(body, engine, logger)
+        assert body["tool_choice"] == "auto"
+
+    def test_string_tool_choice_unchanged(self) -> None:
+        """String tool_choice values (auto, none, required) are not modified."""
+        body = {
+            "tools": [{"name": "blocked_tool"}, {"name": "search"}],
+            "tool_choice": "required",
+        }
+        engine = _make_policy_engine(blocked=["blocked_tool"])
+        logger = AuditLogger()
+        _filter_blocked_tools(body, engine, logger)
+        assert body["tool_choice"] == "required"
+
+    def test_pinned_non_blocked_tool_unchanged(self) -> None:
+        """Pinning a tool that wasn't blocked leaves tool_choice intact."""
+        body = {
+            "tools": [
+                {"name": "blocked_tool"},
+                {"name": "search"},
+            ],
+            "tool_choice": {"type": "tool", "name": "search"},
+        }
+        engine = _make_policy_engine(blocked=["blocked_tool"])
+        logger = AuditLogger()
+        _filter_blocked_tools(body, engine, logger)
+        assert body["tool_choice"] == {"type": "tool", "name": "search"}
+
+    def test_no_tool_choice_field(self) -> None:
+        """No tool_choice in request body — nothing to reconcile."""
+        body = {
+            "tools": [{"name": "blocked_tool"}, {"name": "search"}],
+        }
+        engine = _make_policy_engine(blocked=["blocked_tool"])
+        logger = AuditLogger()
+        _filter_blocked_tools(body, engine, logger)
+        assert "tool_choice" not in body
+
+
+# -----------------------------------------------------------------------
 # Sensitive content classifier integration tests
 # -----------------------------------------------------------------------
 

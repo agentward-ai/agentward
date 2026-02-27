@@ -34,7 +34,14 @@
     .nav-links a.active{color:var(--green);background:var(--green-dim)}
     .nav-gh{display:flex;align-items:center;gap:7px;padding:6px 14px;border-radius:7px;background:var(--green);color:var(--bg)!important;font-size:12.5px;font-weight:600;margin-left:8px;transition:background .15s}
     .nav-gh:hover{background:var(--green2)!important}
-    @media(max-width:600px){.nav-links a:not(.nav-gh){display:none}}
+    .nav-hamburger{display:none;background:none;border:none;cursor:pointer;padding:6px}
+    .nav-hamburger svg{display:block}
+    .nav-mobile{display:none;position:absolute;top:52px;left:0;right:0;background:rgba(8,8,8,0.98);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:8px 16px 12px;z-index:199;flex-direction:column;gap:2px}
+    .nav-mobile.open{display:flex}
+    .nav-mobile a{display:block;padding:10px 14px;border-radius:6px;font-size:14px;font-weight:500;color:var(--muted);transition:color .15s,background .15s}
+    .nav-mobile a:hover{color:var(--white);background:var(--bg2)}
+    .nav-mobile a.active{color:var(--green);background:var(--green-dim)}
+    @media(max-width:600px){.nav-links{display:none}.nav-hamburger{display:block}}
 
     .page-hero{padding:64px 24px 48px;max-width:900px;margin:0 auto}
     .eyebrow{font-family:var(--font-mono);font-size:10.5px;font-weight:600;color:var(--green);letter-spacing:2px;text-transform:uppercase;margin-bottom:14px}
@@ -121,17 +128,29 @@
     <a href="how-it-works.html">How It Works</a>
     <a href="docs.html">Docs</a>
     <a href="compare.html" class="active">Compare</a>
+    <a href="about.html">About</a>
     <a href="https://github.com/agentward-ai/agentward" target="_blank" rel="noopener" class="nav-gh">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
       GitHub
     </a>
   </div>
+  <button class="nav-hamburger" onclick="document.getElementById('mobile-menu').classList.toggle('open')" aria-label="Menu">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#999" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
 </nav>
+<div class="nav-mobile" id="mobile-menu">
+  <a href="index.html">Home</a>
+  <a href="how-it-works.html">How It Works</a>
+  <a href="docs.html">Docs</a>
+  <a href="compare.html" class="active">Compare</a>
+  <a href="about.html">About</a>
+  <a href="https://github.com/agentward-ai/agentward" target="_blank" rel="noopener">GitHub</a>
+</div>
 
 <div class="page-hero">
   <div class="eyebrow">Comparison</div>
   <h1 class="page-title">AgentWard vs. the field</h1>
-  <p class="page-sub">The existing tools scan before installation, then walk away. AgentWard enforces at runtime — continuously, in code, outside the LLM context window.</p>
+  <p class="page-sub">Most existing tools scan before installation, then walk away. AgentWard and AgentWarden both enforce at runtime — here's how they differ.</p>
 </div>
 
 <!-- COMPARISON TABLE -->
@@ -145,13 +164,15 @@
           <th>Caterpillar</th>
           <th>Snyk mcp-scan</th>
           <th>SecureClaw</th>
+          <th>AgentWarden</th>
           <th class="ours">AgentWard</th>
         </tr>
       </thead>
       <tbody>
-        <tr class="row-group"><td colspan="6">Core Capabilities</td></tr>
+        <tr class="row-group"><td colspan="7">Core Capabilities</td></tr>
         <tr>
           <td>Static scanning</td>
+          <td class="sym-yes">✓</td>
           <td class="sym-yes">✓</td>
           <td class="sym-yes">✓</td>
           <td class="sym-yes">✓</td>
@@ -164,6 +185,7 @@
           <td class="sym-no">✗</td>
           <td class="sym-partial">Proxy†</td>
           <td class="sym-partial">Plugin‡</td>
+          <td class="sym-yes">✓</td>
           <td class="ours sym-yes">✓</td>
         </tr>
         <tr>
@@ -172,10 +194,12 @@
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
+          <td class="sym-yes">✓</td>
           <td class="ours sym-yes">✓</td>
         </tr>
         <tr>
-          <td>Skill chaining control</td>
+          <td>Skill chaining control (lateral movement)</td>
+          <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
@@ -188,6 +212,7 @@
           <td class="sym-no">✗</td>
           <td class="sym-partial">PII†</td>
           <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
           <td class="ours sym-yes">✓</td>
         </tr>
         <tr>
@@ -196,6 +221,7 @@
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
+          <td class="sym-yes">✓</td>
           <td class="ours sym-yes">✓</td>
         </tr>
         <tr>
@@ -204,16 +230,18 @@
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
+          <td class="sym-partial">Admin§</td>
           <td class="ours sym-yes">✓</td>
         </tr>
 
-        <tr class="row-group"><td colspan="6">Enforcement Model</td></tr>
+        <tr class="row-group"><td colspan="7">Enforcement Model</td></tr>
         <tr>
           <td>Enforced in code (not prompts)</td>
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
           <td class="sym-partial">Partial†</td>
           <td class="sym-no">✗</td>
+          <td class="sym-yes">✓</td>
           <td class="ours sym-yes">✓</td>
         </tr>
         <tr>
@@ -222,6 +250,7 @@
           <td>—</td>
           <td class="sym-partial">Partial</td>
           <td class="sym-no">✗</td>
+          <td class="sym-yes">✓</td>
           <td class="ours sym-yes">✓</td>
         </tr>
         <tr>
@@ -230,12 +259,14 @@
           <td>—</td>
           <td class="sym-partial">Partial</td>
           <td class="sym-no">✗</td>
+          <td class="sym-yes">✓</td>
           <td class="ours sym-yes">✓</td>
         </tr>
 
-        <tr class="row-group"><td colspan="6">Coverage</td></tr>
+        <tr class="row-group"><td colspan="7">Coverage</td></tr>
         <tr>
           <td>OpenClaw skills</td>
+          <td class="sym-yes">✓</td>
           <td class="sym-yes">✓</td>
           <td class="sym-yes">✓</td>
           <td class="sym-yes">✓</td>
@@ -248,6 +279,7 @@
           <td class="sym-partial">~</td>
           <td class="sym-yes">✓</td>
           <td class="sym-partial">OC only</td>
+          <td class="sym-yes">✓</td>
           <td class="ours sym-yes">✓</td>
         </tr>
         <tr>
@@ -256,17 +288,19 @@
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
           <td class="ours sym-yes">✓</td>
         </tr>
 
-        <tr class="row-group"><td colspan="6">Compliance</td></tr>
+        <tr class="row-group"><td colspan="7">Compliance</td></tr>
         <tr>
           <td>Compliance mapping</td>
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
           <td class="sym-partial">OWASP</td>
-          <td class="ours sym-yes">✓ HIPAA</td>
+          <td class="sym-partial">OWASP§</td>
+          <td class="ours sym-yes">✓ 4 frameworks</td>
         </tr>
         <tr>
           <td>SOX / GDPR / PCI-DSS</td>
@@ -274,7 +308,8 @@
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
-          <td class="ours sym-soon">Soon</td>
+          <td class="sym-no">✗</td>
+          <td class="ours sym-yes">✓</td>
         </tr>
         <tr>
           <td>Auto-fix compliant policy</td>
@@ -282,22 +317,24 @@
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
           <td class="sym-no">✗</td>
+          <td class="sym-no">✗</td>
           <td class="ours sym-yes">✓</td>
         </tr>
 
-        <tr class="row-group"><td colspan="6">Open Source</td></tr>
+        <tr class="row-group"><td colspan="7">Open Source</td></tr>
         <tr>
           <td>Fully open source</td>
           <td class="sym-no">✗</td>
           <td class="sym-yes">✓</td>
           <td class="sym-partial">Partial</td>
           <td class="sym-no">✗</td>
+          <td class="sym-partial">Partial§</td>
           <td class="ours sym-yes">✓ Apache 2.0</td>
         </tr>
       </tbody>
     </table>
   </div>
-  <p style="margin-top:14px;font-size:12px;color:var(--muted2)">† Snyk: proxy mode available but limited to MCP; PII detection is advisory. ‡ SecureClaw: injects policy rules as natural language into LLM context — vulnerable to prompt injection by design.</p>
+  <p style="margin-top:14px;font-size:12px;color:var(--muted2)">† Snyk: proxy mode available but limited to MCP; PII detection is advisory. ‡ SecureClaw: injects policy rules as natural language into LLM context — vulnerable to prompt injection by design. § AgentWarden: admin approval workflows (not per-call interactive); OWASP/MITRE ATLAS mapping; CLI is open source, cloud enrichment is SaaS.</p>
 </div>
 
 <!-- HOW THEY DIFFER -->
@@ -322,9 +359,14 @@
       <p>Control access at the identity and infrastructure level. Excellent for who-can-call-what at the service boundary. AgentWard complements IAM — it adds per-tool-call policy enforcement at the agent layer, not the infra layer.</p>
     </div>
     <div class="pos-card">
-      <div class="pos-tag us">Runtime enforcement</div>
+      <div class="pos-tag us">Runtime enforcement (fleet)</div>
+      <h4>AgentWarden</h4>
+      <p>Fleet-wide install-time gating and command interception via a Go binary wrapper. Strong on supply-chain scanning (SAST, CVEs, secrets, SBOM) with cloud-enriched trust scoring. Enterprise SaaS model with continuous monitoring and SIEM integration.</p>
+    </div>
+    <div class="pos-card">
+      <div class="pos-tag us">Runtime enforcement (open)</div>
       <h4>AgentWard</h4>
-      <p>Code-level enforcement in a transparent proxy, enforcing at every tool call, completely outside the LLM context window. The LLM never sees the policy rules and cannot override them under any prompt injection attack.</p>
+      <p>Code-level enforcement in a transparent proxy, enforcing at every tool call, completely outside the LLM context window. Fully open-source. Differentiators: skill chaining / lateral movement detection, data flow classification (PII/PHI), multi-framework compliance (HIPAA, SOX, GDPR, PCI-DSS) with auto-fix, and per-call human-in-the-loop approval.</p>
     </div>
   </div>
 </div>
@@ -391,6 +433,7 @@
     <a href="index.html">Home</a>
     <a href="how-it-works.html">How It Works</a>
     <a href="docs.html">Docs</a>
+    <a href="about.html">About</a>
     <a href="https://github.com/agentward-ai/agentward" target="_blank">GitHub</a>
   </div>
   <span class="footer-right">Apache 2.0 · Open Source</span>

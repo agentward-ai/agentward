@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
-from aiohttp import ClientError, ClientSession, ClientWebSocketResponse, web
+from aiohttp import ClientError, ClientSession, ClientTimeout, ClientWebSocketResponse, web
 from rich.console import Console
 
 from agentward.audit.logger import AuditLogger
@@ -206,19 +206,26 @@ def _force_free_port(port: int) -> bool:
 
         for pid_str in pids:
             pid = int(pid_str)
-            # Only kill Python processes (stale AgentWard)
+            # Verify this is an AgentWard process before killing.
+            # Just checking for "python" is too broad — could kill an
+            # unrelated Django server, Jupyter notebook, etc.
             ps_result = subprocess.run(
-                ["ps", "-p", str(pid), "-o", "comm="],
+                ["ps", "-p", str(pid), "-o", "command="],
                 capture_output=True,
                 text=True,
                 timeout=3,
             )
-            proc_name = ps_result.stdout.strip() if ps_result.returncode == 0 else ""
-            if "python" not in proc_name.lower():
+            cmd_line = ps_result.stdout.strip() if ps_result.returncode == 0 else ""
+            if "agentward" not in cmd_line.lower():
+                _console.print(
+                    f"  [dim]Skipping PID {pid} on port {port} "
+                    f"(not an AgentWard process: {cmd_line[:60]})[/dim]",
+                    highlight=False,
+                )
                 continue
 
             _console.print(
-                f"  [#ffcc00]Killing stale process[/#ffcc00] (PID {pid}) on port {port}",
+                f"  [#ffcc00]Killing stale AgentWard process[/#ffcc00] (PID {pid}) on port {port}",
                 highlight=False,
             )
             try:
@@ -465,7 +472,9 @@ class HttpProxy:
     async def _get_session(self) -> ClientSession:
         """Get or create the shared HTTP client session."""
         if self._session is None or self._session.closed:
-            self._session = ClientSession()
+            self._session = ClientSession(
+                timeout=ClientTimeout(total=120, connect=30),
+            )
         return self._session
 
     # ------------------------------------------------------------------

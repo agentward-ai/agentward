@@ -127,7 +127,9 @@ class SkillAnalysis:
 
     phi_skills: set[str] = field(default_factory=set)
     pii_skills: set[str] = field(default_factory=set)
+    personal_data_skills: set[str] = field(default_factory=set)
     financial_skills: set[str] = field(default_factory=set)
+    cardholder_data_skills: set[str] = field(default_factory=set)
     network_skills: set[str] = field(default_factory=set)
     skill_data_types: dict[str, set[DataAccessType]] = field(default_factory=dict)
     skill_write_capable: dict[str, bool] = field(default_factory=dict)
@@ -185,6 +187,153 @@ def _is_phi_by_data_access(data_types: set[DataAccessType]) -> bool:
 
 
 # -----------------------------------------------------------------------
+# Heuristic patterns for personal data skill detection (GDPR)
+# -----------------------------------------------------------------------
+
+_PERSONAL_DATA_NAME_PATTERNS = frozenset({
+    "user", "profile", "customer", "personal", "identity", "account",
+    "contact", "crm", "gdpr", "consent", "subscriber", "member",
+    "employee", "applicant", "tenant", "citizen", "resident",
+})
+
+
+def _is_personal_data_by_name(skill_name: str) -> bool:
+    """Check if a skill name heuristically suggests personal data handling."""
+    lower = skill_name.lower()
+    for pattern in _PERSONAL_DATA_NAME_PATTERNS:
+        if pattern in lower:
+            return True
+    return False
+
+
+def _is_personal_data_by_data_access(data_types: set[DataAccessType]) -> bool:
+    """Check if a skill's data access pattern suggests personal data handling.
+
+    Heuristic: EMAIL or MESSAGING access implies personal data processing.
+    """
+    return DataAccessType.EMAIL in data_types or DataAccessType.MESSAGING in data_types
+
+
+# -----------------------------------------------------------------------
+# Heuristic patterns for financial skill detection (SOX)
+# -----------------------------------------------------------------------
+
+_FINANCIAL_NAME_PATTERNS = frozenset({
+    "finance", "payment", "billing", "invoice", "ledger", "accounting",
+    "treasury", "payroll", "expense", "revenue", "tax",
+    "quickbooks", "xero", "stripe", "plaid", "banking",
+})
+# NOTE: "audit" intentionally excluded — too broad (matches "audit-logger").
+
+
+def _is_financial_by_name(skill_name: str) -> bool:
+    """Check if a skill name heuristically suggests financial data handling."""
+    lower = skill_name.lower()
+    for pattern in _FINANCIAL_NAME_PATTERNS:
+        if pattern in lower:
+            return True
+    return False
+
+
+# -----------------------------------------------------------------------
+# Heuristic patterns for cardholder data skill detection (PCI-DSS)
+# -----------------------------------------------------------------------
+
+_CARDHOLDER_NAME_PATTERNS = frozenset({
+    "payment", "checkout", "stripe", "braintree", "adyen", "square",
+    "cardholder", "pci", "tokenize", "merchant",
+})
+# NOTE: "card" intentionally excluded — too broad (matches "flashcard-app").
+# "cardholder" is specific enough for card-related payment skills.
+
+
+def _is_cardholder_by_name(skill_name: str) -> bool:
+    """Check if a skill name heuristically suggests cardholder data handling."""
+    lower = skill_name.lower()
+    for pattern in _CARDHOLDER_NAME_PATTERNS:
+        if pattern in lower:
+            return True
+    return False
+
+
+def _is_cardholder_by_data_access(data_types: set[DataAccessType]) -> bool:
+    """Check if a skill's data access pattern suggests cardholder data handling.
+
+    Heuristic: FINANCIAL + NETWORK is a common payment processing pattern.
+    """
+    return DataAccessType.FINANCIAL in data_types and DataAccessType.NETWORK in data_types
+
+
+# -----------------------------------------------------------------------
+# Shared helpers for framework check functions
+# -----------------------------------------------------------------------
+
+
+def has_approval_for_skill(policy: AgentWardPolicy, skill: str) -> bool:
+    """Check if any approval rule covers the given skill by name.
+
+    Unlike ``rule.matches(skill, None)``, this also recognizes conditional
+    approval rules whose ``tool`` field matches the skill, regardless of
+    whether the argument conditions can be evaluated.  For compliance
+    purposes, having *any* approval gate on a skill counts.
+    """
+    for rule in policy.require_approval:
+        # Simple (non-conditional) rule: exact tool_name match
+        if rule.tool_name is not None and rule.tool_name == skill:
+            return True
+        # Conditional rule: tool field match is sufficient for compliance
+        if rule.conditional is not None and rule.conditional.tool == skill:
+            return True
+    return False
+
+
+def has_write_restriction_for_skill(policy: AgentWardPolicy, skill: str) -> bool:
+    """Check if the policy restricts writes on a skill's own resource.
+
+    Looks for write restrictions on the resource matching the skill name.
+    Restrictions on unrelated resources do NOT count.
+
+    Counts as restricted if any of:
+    - The resource is ``denied: true``
+    - ``write: false`` is set explicitly
+    - ``delete: false`` is set AND ``write`` is not explicitly ``true``
+    """
+    if skill not in policy.skills:
+        return False
+    for resource_name, perms in policy.skills[skill].items():
+        if resource_name != skill:
+            continue
+        if perms.denied:
+            return True
+        write_val = perms.actions.get("write")
+        delete_val = perms.actions.get("delete")
+        if write_val is False:
+            return True
+        if delete_val is False and write_val is not True:
+            return True
+    return False
+
+
+def has_outbound_block_for_skill(policy: AgentWardPolicy, skill: str) -> bool:
+    """Check if the policy blocks outbound network for a skill.
+
+    Looks for outbound restrictions on either the ``network`` resource
+    or the skill's own resource name.
+    """
+    if skill not in policy.skills:
+        return False
+    for resource_name, perms in policy.skills[skill].items():
+        if resource_name not in ("network", skill):
+            continue
+        outbound = perms.actions.get("outbound")
+        if outbound is False:
+            return True
+        if perms.denied:
+            return True
+    return False
+
+
+# -----------------------------------------------------------------------
 # build_skill_analysis
 # -----------------------------------------------------------------------
 
@@ -197,7 +346,8 @@ def build_skill_analysis(
 
     Merges two sources:
     1. Scan results (heuristic): skill names, data access patterns.
-    2. Policy (explicit): data_boundaries with classification == "phi".
+    2. Policy (explicit): data_boundaries with classification matching
+       framework-specific categories (e.g., "phi", "personal_data").
 
     Args:
         policy: The loaded AgentWard policy.
@@ -234,23 +384,60 @@ def build_skill_analysis(
             if DataAccessType.NETWORK in data_types:
                 analysis.network_skills.add(skill_name)
 
-            # Financial detection
-            if DataAccessType.FINANCIAL in data_types:
+            # Financial detection (SOX)
+            if (
+                DataAccessType.FINANCIAL in data_types
+                or _is_financial_by_name(skill_name)
+            ):
                 analysis.financial_skills.add(skill_name)
+
+            # Cardholder data detection (PCI-DSS)
+            if (
+                _is_cardholder_by_name(skill_name)
+                or _is_cardholder_by_data_access(data_types)
+            ):
+                analysis.cardholder_data_skills.add(skill_name)
 
             # PII detection (email or messaging implies PII handling)
             if DataAccessType.EMAIL in data_types or DataAccessType.MESSAGING in data_types:
                 analysis.pii_skills.add(skill_name)
 
+            # Personal data detection (GDPR) from scan
+            if (
+                _is_personal_data_by_name(skill_name)
+                or _is_personal_data_by_data_access(data_types)
+            ):
+                analysis.personal_data_skills.add(skill_name)
+
     # --- From policy data_boundaries ---
     for _zone_name, boundary in policy.data_boundaries.items():
-        if boundary.classification.lower() in ("phi", "protected_health_information"):
+        classification = boundary.classification.lower()
+        if classification in ("phi", "protected_health_information"):
             for skill in boundary.skills:
                 analysis.phi_skills.add(skill)
                 analysis.all_skills.add(skill)
                 # PHI skills without scan data: assume write-capable
                 # (fail-closed for compliance — if we can't prove it's
                 # read-only, treat it as write-capable)
+                if skill not in analysis.skill_write_capable:
+                    analysis.skill_write_capable[skill] = True
+        if classification in ("personal_data", "pii", "gdpr"):
+            for skill in boundary.skills:
+                analysis.personal_data_skills.add(skill)
+                analysis.all_skills.add(skill)
+                # Personal data skills without scan data: assume write-capable
+                if skill not in analysis.skill_write_capable:
+                    analysis.skill_write_capable[skill] = True
+        if classification in ("financial", "sox"):
+            for skill in boundary.skills:
+                analysis.financial_skills.add(skill)
+                analysis.all_skills.add(skill)
+                if skill not in analysis.skill_write_capable:
+                    analysis.skill_write_capable[skill] = True
+        if classification in ("cardholder_data", "pci", "pci_dss"):
+            for skill in boundary.skills:
+                analysis.cardholder_data_skills.add(skill)
+                analysis.all_skills.add(skill)
                 if skill not in analysis.skill_write_capable:
                     analysis.skill_write_capable[skill] = True
 

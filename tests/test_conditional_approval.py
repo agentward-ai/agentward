@@ -75,6 +75,21 @@ class TestApprovalCondition:
         cond = ApprovalCondition(contains="test")
         assert cond.check(None) is False
 
+    def test_invalid_regex_fails_at_load(self) -> None:
+        """Malformed regex in 'matches' should fail at construction time."""
+        with pytest.raises(ValueError, match="Invalid regex pattern"):
+            ApprovalCondition(matches="[unclosed")
+
+    def test_invalid_regex_via_model_construct_treated_as_non_match(self) -> None:
+        """If validator is bypassed, invalid regex is treated as non-match."""
+        # model_construct bypasses validators — _compiled_regex stays None
+        cond = ApprovalCondition.model_construct(
+            contains=None, not_contains=None, equals=None,
+            matches="[unclosed",
+        )
+        # Should not crash — falls back to compile-on-the-fly, catches re.error
+        assert cond.check("anything") is False
+
     def test_at_least_one_required(self) -> None:
         with pytest.raises(ValueError, match="at least one"):
             ApprovalCondition()
@@ -320,6 +335,22 @@ class TestEngineConditionalApproval:
 
 class TestYamlRoundTrip:
     """Test conditional approval rules survive YAML serialization."""
+
+    def test_invalid_regex_in_yaml_fails_at_load(self, tmp_path: Path) -> None:
+        """Invalid regex in policy YAML fails at load time, not at runtime."""
+        yaml_content = """
+version: "1.0"
+require_approval:
+  - tool: api_call
+    when:
+      url:
+        matches: "[unclosed"
+"""
+        policy_file = tmp_path / "agentward.yaml"
+        policy_file.write_text(yaml_content)
+
+        with pytest.raises(Exception, match="Invalid regex pattern"):
+            load_policy(policy_file)
 
     def test_load_conditional_from_yaml(self, tmp_path: Path) -> None:
         yaml_content = """

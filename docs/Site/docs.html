@@ -34,7 +34,14 @@
     .nav-links a.active{color:var(--green);background:var(--green-dim)}
     .nav-gh{display:flex;align-items:center;gap:7px;padding:6px 14px;border-radius:7px;background:var(--green);color:var(--bg)!important;font-size:12.5px;font-weight:600;margin-left:8px;transition:background .15s}
     .nav-gh:hover{background:var(--green2)!important}
-    @media(max-width:600px){.nav-links a:not(.nav-gh){display:none}}
+    .nav-hamburger{display:none;background:none;border:none;cursor:pointer;padding:6px}
+    .nav-hamburger svg{display:block}
+    .nav-mobile{display:none;position:absolute;top:52px;left:0;right:0;background:rgba(8,8,8,0.98);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:8px 16px 12px;z-index:199;flex-direction:column;gap:2px}
+    .nav-mobile.open{display:flex}
+    .nav-mobile a{display:block;padding:10px 14px;border-radius:6px;font-size:14px;font-weight:500;color:var(--muted);transition:color .15s,background .15s}
+    .nav-mobile a:hover{color:var(--white);background:var(--bg2)}
+    .nav-mobile a.active{color:var(--green);background:var(--green-dim)}
+    @media(max-width:600px){.nav-links{display:none}.nav-hamburger{display:block}}
 
     /* Layout */
     .doc-layout{display:flex;flex:1;max-width:1080px;margin:0 auto;width:100%}
@@ -156,12 +163,24 @@
     <a href="how-it-works.html">How It Works</a>
     <a href="docs.html" class="active">Docs</a>
     <a href="compare.html">Compare</a>
+    <a href="about.html">About</a>
     <a href="https://github.com/agentward-ai/agentward" target="_blank" rel="noopener" class="nav-gh">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
       GitHub
     </a>
   </div>
+  <button class="nav-hamburger" onclick="document.getElementById('mobile-menu').classList.toggle('open')" aria-label="Menu">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#999" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
 </nav>
+<div class="nav-mobile" id="mobile-menu">
+  <a href="index.html">Home</a>
+  <a href="how-it-works.html">How It Works</a>
+  <a href="docs.html" class="active">Docs</a>
+  <a href="compare.html">Compare</a>
+  <a href="about.html">About</a>
+  <a href="https://github.com/agentward-ai/agentward" target="_blank" rel="noopener">GitHub</a>
+</div>
 
 <div class="doc-layout">
   <!-- SIDEBAR -->
@@ -336,27 +355,64 @@ agentward inspect --policy agentward.yaml --dry-run -- npx s  <span class="dim">
         </div>
         <div class="cmd-body">
           <pre>agentward comply --framework hipaa              <span class="dim"># compliance delta report</span>
-agentward comply --framework hipaa --fix        <span class="dim"># auto-generate compliant config</span>
-agentward comply --framework hipaa --json       <span class="dim"># JSON output for CI</span>
-agentward comply --framework hipaa --policy custom.yaml  <span class="dim"># custom policy path</span></pre>
+agentward comply --framework sox --fix          <span class="dim"># auto-generate SOX-compliant config</span>
+agentward comply --framework gdpr --json        <span class="dim"># JSON output for CI</span>
+agentward comply --framework pci-dss --policy custom.yaml  <span class="dim"># custom policy path</span></pre>
           <table class="option-table">
             <tr><th>OPTION</th><th>DESCRIPTION</th></tr>
-            <tr><td>-f / --framework NAME</td><td>Compliance framework: hipaa (default) · sox · gdpr · pci-dss (coming)</td></tr>
+            <tr><td>-f / --framework NAME</td><td>Compliance framework: hipaa (default) · sox · gdpr · pci-dss</td></tr>
             <tr><td>--fix</td><td>Generate a corrected policy file with all required changes</td></tr>
             <tr><td>-p / --policy PATH</td><td>Policy file to evaluate (default: ./agentward.yaml)</td></tr>
             <tr><td>-o / --output PATH</td><td>Output path for fixed policy file</td></tr>
             <tr><td>--json</td><td>Machine-readable JSON output</td></tr>
           </table>
-          <h3>HIPAA Controls (8 checks)</h3>
+
+          <h3>HIPAA — Security Rule (8 controls)</h3>
           <ul>
-            <li>Access Control §164.312(a)(1) — skill-level access restrictions</li>
+            <li>Access Control §164.312(a)(1) — PHI skill-level access restrictions</li>
             <li>Data Boundary §164.312(a)(1) — PHI containment within designated zones</li>
-            <li>Audit Controls §164.312(b) — structured audit trail requirements</li>
-            <li>Integrity §164.312(c)(1) — data modification controls</li>
-            <li>Authentication §164.312(d) — identity verification gates</li>
-            <li>Transmission Security §164.312(e)(1) — data-in-transit controls</li>
-            <li>Information Access Management §164.308(a)(4) — least-privilege enforcement</li>
+            <li>Audit Controls §164.312(b) — structured audit trail with SSN detection</li>
+            <li>Integrity §164.312(c)(1) — data modification controls for PHI skills</li>
+            <li>Authentication §164.312(d) — identity verification gates for PHI write/send/delete</li>
+            <li>Transmission Security §164.312(e)(1) — outbound network controls for PHI skills</li>
+            <li>Information Access Management §164.308(a)(4) — least-privilege via chaining isolation</li>
             <li>Zero-Trust Default — best practice: <code>default_action: block</code></li>
+          </ul>
+
+          <h3>SOX — Section 404 (8 controls)</h3>
+          <ul>
+            <li>Access Control §404 — financial skill-level access restrictions</li>
+            <li>Data Boundary §404 — financial data containment within designated zones</li>
+            <li>Audit Trail §404 — sensitive content scanning with credit card detection</li>
+            <li>Integrity Controls §404 — write restrictions for financial skills</li>
+            <li>Authorization Controls §404 — human approval for financial write/send/delete</li>
+            <li>Network Segregation §404 — outbound network controls for financial skills</li>
+            <li>Segregation of Duties §404 — financial skill isolation via chaining rules</li>
+            <li>Zero-Trust Default — best practice: <code>default_action: block</code></li>
+          </ul>
+
+          <h3>GDPR — Key Articles (8 controls)</h3>
+          <ul>
+            <li>Data Minimisation Art. 5(1)(c) — personal data skill-level access restrictions</li>
+            <li>Data Protection by Design Art. 25 — personal data boundary zones with blocking</li>
+            <li>Records of Processing Art. 30 — sensitive content scanning for audit trail</li>
+            <li>Integrity of Processing Art. 32(1) — write restrictions for personal data skills</li>
+            <li>Confidentiality of Processing Art. 32(1) — human approval for write/send/delete</li>
+            <li>Transmission Security Art. 32(1) — outbound network controls for personal data</li>
+            <li>Processor Obligations Art. 28 — personal data skill isolation via chaining rules</li>
+            <li>Accountability Default Art. 5(2) — best practice: <code>default_action: block</code></li>
+          </ul>
+
+          <h3>PCI-DSS v4.0 — Key Requirements (8 controls)</h3>
+          <ul>
+            <li>Restrict Access Req. 7 — cardholder data skill-level access restrictions</li>
+            <li>Cardholder Data Environment Req. 7 — CDE boundary zones with blocking</li>
+            <li>Log and Monitor Req. 10 — sensitive content scanning with credit card + CVV detection</li>
+            <li>Protect Stored Data Req. 3 — write restrictions for cardholder data skills</li>
+            <li>Identify and Authenticate Req. 8 — human approval for cardholder write/send/delete</li>
+            <li>Network Segmentation Req. 1 — outbound network controls for cardholder data</li>
+            <li>Least Privilege Isolation Req. 7 — cardholder data skill isolation via chaining</li>
+            <li>Secure Default Req. 6 — best practice: <code>default_action: block</code></li>
           </ul>
         </div>
       </div>
@@ -537,6 +593,7 @@ agentward inspect --gateway clawdbot --policy agentward.yaml</pre>
     <a href="index.html">Home</a>
     <a href="how-it-works.html">How It Works</a>
     <a href="compare.html">Compare</a>
+    <a href="about.html">About</a>
     <a href="https://github.com/agentward-ai/agentward" target="_blank">GitHub</a>
   </div>
   <span class="footer-right">Apache 2.0 · Open Source</span>

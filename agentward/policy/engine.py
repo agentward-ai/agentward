@@ -299,7 +299,22 @@ class PolicyEngine:
                 resource=resource_name,
             )
 
-        # Resource has some allow rules but this action isn't listed — ALLOW
+        # Resource matched but action isn't listed.
+        # Respect default_action: in block mode, unlisted actions are denied
+        # (zero-trust — only explicitly allowed actions pass).
+        # In allow mode, unlisted actions pass through.
+        if self._policy.default_action == DefaultAction.BLOCK:
+            return EvaluationResult(
+                decision=PolicyDecision.BLOCK,
+                reason=(
+                    f"Action '{action}' on resource '{resource_name}' "
+                    f"is not explicitly allowed for skill '{skill_name}'. "
+                    f"Blocked by default (default_action: block)."
+                ),
+                skill=skill_name,
+                resource=resource_name,
+            )
+
         return EvaluationResult(
             decision=PolicyDecision.ALLOW,
             reason=(
