@@ -18,7 +18,7 @@
 ---
 
 <p align="center">
-  <video src="https://github.com/user-attachments/assets/42ec8528-cc9e-4ae6-b7d2-228edae28b11" alt="AgentWard Demo" width="900" autoplay loop muted playsinline></video>
+  <img src="https://github.com/agentward-ai/agentward/releases/download/v0.3.0-assets/demo.gif" alt="AgentWard Demo" width="900"/>
 </p>
 
 Telling an agent *"don't touch the stove"* is a natural-language guardrail that can be circumvented. AgentWard puts a **physical lock on the stove** — code-level enforcement that prompt injection can't override.
