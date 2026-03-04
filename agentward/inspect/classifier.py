@@ -310,6 +310,99 @@ _DETECTORS: dict[FindingType, Any] = {
 }
 
 
+def redact_arguments(arguments: dict[str, Any], findings: list[Finding]) -> dict[str, Any]:
+    """Create a redacted copy of tool arguments based on classifier findings.
+
+    Replaces the value at each finding's field_path with a redacted placeholder.
+    Returns a deep copy — the original dict is not modified.
+
+    Args:
+        arguments: The original tool call arguments dict.
+        findings: List of findings from classify_arguments().
+
+    Returns:
+        A new dict with sensitive values replaced by "[REDACTED:<type>]".
+    """
+    import copy
+
+    redacted = copy.deepcopy(arguments)
+
+    for finding in findings:
+        _redact_at_path(redacted, finding.field_path, finding.finding_type.value)
+
+    return redacted
+
+
+def _redact_at_path(obj: Any, path: str, finding_type: str) -> None:
+    """Replace the value at a dot-separated path with a redacted placeholder.
+
+    Args:
+        obj: The root object (dict or list) to modify in-place.
+        path: Dot-separated path (e.g., "body.content" or "items[1]").
+        finding_type: The type of finding for the placeholder text.
+    """
+    parts = _split_path(path)
+    if not parts:
+        return
+
+    current = obj
+    for part in parts[:-1]:
+        if isinstance(current, dict):
+            if part not in current:
+                return
+            current = current[part]
+        elif isinstance(current, list):
+            try:
+                idx = int(part)
+                current = current[idx]
+            except (ValueError, IndexError):
+                return
+        else:
+            return
+
+    # Set the final value
+    last = parts[-1]
+    if isinstance(current, dict) and last in current:
+        current[last] = f"[REDACTED:{finding_type}]"
+    elif isinstance(current, list):
+        try:
+            idx = int(last)
+            current[idx] = f"[REDACTED:{finding_type}]"
+        except (ValueError, IndexError):
+            pass
+
+
+def _split_path(path: str) -> list[str]:
+    """Split a field path into individual parts.
+
+    Handles both dot notation ("a.b.c") and array notation ("a[0].b").
+
+    Args:
+        path: The dot-separated path string.
+
+    Returns:
+        List of path components.
+    """
+    parts: list[str] = []
+    for segment in path.split("."):
+        if not segment:
+            continue
+        # Handle array indices like "items[1]"
+        if "[" in segment:
+            before_bracket = segment[:segment.index("[")]
+            if before_bracket:
+                parts.append(before_bracket)
+            # Extract all indices
+            rest = segment[segment.index("["):]
+            while rest.startswith("["):
+                end = rest.index("]")
+                parts.append(rest[1:end])
+                rest = rest[end + 1:]
+        else:
+            parts.append(segment)
+    return parts
+
+
 def classify_arguments(
     arguments: dict[str, Any],
     *,

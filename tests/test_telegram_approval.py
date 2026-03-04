@@ -436,9 +436,9 @@ class TestApprovalHandlerRace:
 
     @pytest.mark.asyncio
     async def test_session_cache_skips_dialog(self) -> None:
-        """Session cache hit -> immediate ALLOW_SESSION."""
+        """Session cache hit -> immediate ALLOW_SESSION (per-tool)."""
         handler = ApprovalHandler(timeout=5)
-        handler._session_approved = True
+        handler._session_approved.add("tool")
         result = await handler.request_approval("tool", {}, "reason")
         assert result == ApprovalDecision.ALLOW_SESSION
 
@@ -494,8 +494,8 @@ class TestApprovalHandlerRace:
             result = await handler.request_approval("tool", {}, "reason")
 
         assert result == ApprovalDecision.ALLOW_SESSION
-        # Session should be cached
-        assert handler._session_approved is True
+        # Session should be cached for this tool
+        assert "tool" in handler._session_approved
 
     @pytest.mark.asyncio
     async def test_race_terminal_wins(self) -> None:

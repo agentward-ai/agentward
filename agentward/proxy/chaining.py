@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agentward.policy.engine import EvaluationResult, PolicyEngine
-from agentward.policy.schema import ChainingMode, PolicyDecision
+from agentward.policy.schema import ChainingMode, PolicyDecision, SequenceAction
 from agentward.proxy.content import (
     ExtractedContent,
     content_matches_arguments,
@@ -97,6 +97,11 @@ class ChainTracker:
         depth_result = self._check_depth(target_skill)
         if depth_result is not None:
             return depth_result
+
+        # Check sequence rules (multi-step patterns)
+        seq_result = self._check_sequences(target_skill)
+        if seq_result is not None:
+            return seq_result
 
         # Check individual chaining rules
         if not self._engine.policy.skill_chaining:
@@ -286,3 +291,119 @@ class ChainTracker:
                 )
 
         return None
+
+    def _check_sequences(self, target_skill: str) -> EvaluationResult | None:
+        """Check sequence rules against the trailing skill history.
+
+        Builds a deduplicated trailing skill list from history (consecutive
+        duplicates collapsed), appends the target skill, and checks each
+        ``SequenceRule`` for a tail match.
+
+        Args:
+            target_skill: The skill about to be called.
+
+        Returns:
+            An EvaluationResult (BLOCK or APPROVE) if a sequence matches,
+            or None if no sequence rule applies.
+        """
+        rules = self._engine.policy.sequence_rules
+        if not rules:
+            return None
+
+        # Build trailing skill sequence with consecutive dedup
+        trailing: list[str] = []
+        for entry in self._history:
+            if entry.skill_name is None:
+                continue
+            if trailing and trailing[-1] == entry.skill_name:
+                continue  # Collapse consecutive same-skill
+            trailing.append(entry.skill_name)
+
+        # Append the pending target skill (also dedup)
+        if not trailing or trailing[-1] != target_skill:
+            trailing.append(target_skill)
+
+        # Check each sequence rule against the tail of the trailing list
+        for rule in rules:
+            if len(rule.pattern) > len(trailing):
+                continue  # Pattern longer than history — can't match
+
+            # Anchored to the END of trailing
+            tail = trailing[-len(rule.pattern):]
+            if self._sequence_matches(tail, rule.pattern):
+                decision = (
+                    PolicyDecision.BLOCK
+                    if rule.action == SequenceAction.BLOCK
+                    else PolicyDecision.APPROVE
+                )
+                return EvaluationResult(
+                    decision=decision,
+                    reason=(
+                        f"Sequence rule matched: {' → '.join(rule.pattern)} "
+                        f"(action: {rule.action.value}). "
+                        f"Trailing history: {' → '.join(tail)}."
+                    ),
+                    skill=target_skill,
+                )
+
+        return None
+
+    def _sequence_matches(self, actual: list[str], pattern: list[str]) -> bool:
+        """Check if an actual skill sequence matches a pattern.
+
+        Args:
+            actual: The actual sequence of skill names (same length as pattern).
+            pattern: The pattern to match against.
+
+        Returns:
+            True if every element matches.
+        """
+        return all(
+            self._element_matches(a, p) for a, p in zip(actual, pattern)
+        )
+
+    def _element_matches(self, actual_skill: str, pattern_element: str) -> bool:
+        """Check if a single skill matches a single pattern element.
+
+        Supports:
+          - Literal match: ``"email-manager"`` matches ``"email-manager"``
+          - ``"any"`` wildcard: matches any skill
+          - ``"any_{classification}"`` category wildcard: matches any skill
+            in a data boundary zone with that classification
+
+        Args:
+            actual_skill: The skill name from history.
+            pattern_element: The pattern element to match against.
+
+        Returns:
+            True if the element matches.
+        """
+        if pattern_element == "any":
+            return True
+        if pattern_element == actual_skill:
+            return True
+
+        # Category wildcard: "any_{classification}"
+        if pattern_element.startswith("any_"):
+            classification = pattern_element[4:]  # Strip "any_" prefix
+            return self._skill_has_classification(actual_skill, classification)
+
+        return False
+
+    def _skill_has_classification(self, skill_name: str, classification: str) -> bool:
+        """Check if a skill belongs to a boundary zone with the given classification.
+
+        Args:
+            skill_name: The skill to check.
+            classification: The data classification to match (e.g., "financial").
+
+        Returns:
+            True if the skill is in a zone with this classification.
+        """
+        for boundary in self._engine.policy.data_boundaries.values():
+            if (
+                boundary.classification == classification
+                and skill_name in boundary.skills
+            ):
+                return True
+        return False

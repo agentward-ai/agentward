@@ -9,12 +9,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from agentward.policy.protected_paths import check_arguments as _check_protected_paths
 from agentward.policy.schema import (
     AgentWardPolicy,
     DefaultAction,
     PolicyDecision,
     ResourcePermissions,
 )
+
+# Import is deferred at runtime to avoid circular dependencies;
+# the type is only used for isinstance checks in _check_role_filters.
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agentward.inspect.role_cache import ToolRoleCache
 
 
 @dataclass(frozen=True)
@@ -54,9 +62,11 @@ class PolicyEngine:
         self,
         policy: AgentWardPolicy,
         skill_context: str | None = None,
+        role_cache: "ToolRoleCache | None" = None,
     ) -> None:
         self._policy = policy
         self._skill_context = skill_context
+        self._role_cache = role_cache
         # Pre-build a lookup: (skill_name, resource_name) → ResourcePermissions
         self._resource_lookup: dict[tuple[str, str], ResourcePermissions] = {}
         for skill_name, resources in policy.skills.items():
@@ -97,6 +107,16 @@ class PolicyEngine:
         Returns:
             An EvaluationResult with the decision and reasoning.
         """
+        # Protected path invariants — non-overridable safety floor.
+        # Blocks access to ~/.ssh, ~/.gnupg, ~/.aws, etc. regardless of policy.
+        # This check CANNOT be bypassed by any policy configuration.
+        protected_reason = _check_protected_paths(arguments)
+        if protected_reason is not None:
+            return EvaluationResult(
+                decision=PolicyDecision.BLOCK,
+                reason=protected_reason,
+            )
+
         # Check require_approval — takes priority over resource-level permissions
         for rule in self._policy.require_approval:
             if rule.matches(tool_name, arguments):
@@ -122,7 +142,7 @@ class PolicyEngine:
         if match is not None:
             skill_name, resource_name, action, permissions = match
             return self._evaluate_permissions(
-                tool_name, skill_name, resource_name, action, permissions
+                tool_name, skill_name, resource_name, action, permissions, arguments
             )
 
         # No match — use the configured default action
@@ -233,6 +253,7 @@ class PolicyEngine:
         resource_name: str,
         action: str | None,
         permissions: ResourcePermissions,
+        arguments: dict[str, Any] | None = None,
     ) -> EvaluationResult:
         """Evaluate a matched tool call against resource permissions.
 
@@ -242,6 +263,7 @@ class PolicyEngine:
             resource_name: The matched resource.
             action: The extracted action (e.g., "send"), or None if no action extracted.
             permissions: The resource permissions to check against.
+            arguments: The tool call arguments (for filter enforcement).
 
         Returns:
             The evaluation result.
@@ -262,6 +284,12 @@ class PolicyEngine:
         if action is not None:
             allowed = permissions.is_action_allowed(action)
             if allowed is True:
+                # Action allowed — check filters before final ALLOW
+                filter_result = self._check_filters(
+                    tool_name, skill_name, resource_name, permissions, arguments
+                )
+                if filter_result is not None:
+                    return filter_result
                 return EvaluationResult(
                     decision=PolicyDecision.ALLOW,
                     reason=(
@@ -315,6 +343,13 @@ class PolicyEngine:
                 resource=resource_name,
             )
 
+        # Final ALLOW — check filters first
+        filter_result = self._check_filters(
+            tool_name, skill_name, resource_name, permissions, arguments
+        )
+        if filter_result is not None:
+            return filter_result
+
         return EvaluationResult(
             decision=PolicyDecision.ALLOW,
             reason=(
@@ -324,3 +359,173 @@ class PolicyEngine:
             skill=skill_name,
             resource=resource_name,
         )
+
+    def _check_filters(
+        self,
+        tool_name: str,
+        skill_name: str,
+        resource_name: str,
+        permissions: ResourcePermissions,
+        arguments: dict[str, Any] | None,
+    ) -> EvaluationResult | None:
+        """Check resource filters against tool call arguments.
+
+        Enforces two filter types:
+          - only_from: At least one argument value must contain one of the
+            allowed values (allowlist).
+          - exclude_labels: No argument value may contain any of the
+            excluded values (denylist).
+
+        Args:
+            tool_name: The original MCP tool name.
+            skill_name: The matched skill.
+            resource_name: The matched resource.
+            permissions: The resource permissions with filters.
+            arguments: The tool call arguments.
+
+        Returns:
+            A BLOCK result if a filter is violated, None if all filters pass.
+        """
+        if not permissions.filters or not arguments:
+            return None
+
+        # Collect all string argument values for matching
+        arg_values: list[str] = []
+        for v in arguments.values():
+            if isinstance(v, str):
+                arg_values.append(v)
+            elif isinstance(v, list):
+                for item in v:
+                    if isinstance(item, str):
+                        arg_values.append(item)
+
+        # only_from: at least one arg must contain an allowed value
+        only_from = permissions.filters.get("only_from")
+        if only_from and arg_values:
+            if not any(
+                any(allowed in val for allowed in only_from)
+                for val in arg_values
+            ):
+                return EvaluationResult(
+                    decision=PolicyDecision.BLOCK,
+                    reason=(
+                        f"Filter 'only_from' violated for resource '{resource_name}' "
+                        f"in skill '{skill_name}'. Allowed sources: {only_from}. "
+                        f"Tool '{tool_name}' blocked."
+                    ),
+                    skill=skill_name,
+                    resource=resource_name,
+                )
+
+        # exclude_labels: no arg may contain an excluded value
+        exclude_labels = permissions.filters.get("exclude_labels")
+        if exclude_labels and arg_values:
+            for val in arg_values:
+                for excluded in exclude_labels:
+                    if excluded.lower() in val.lower():
+                        return EvaluationResult(
+                            decision=PolicyDecision.BLOCK,
+                            reason=(
+                                f"Filter 'exclude_labels' violated for resource "
+                                f"'{resource_name}' in skill '{skill_name}'. "
+                                f"Excluded label '{excluded}' found in arguments. "
+                                f"Tool '{tool_name}' blocked."
+                            ),
+                            skill=skill_name,
+                            resource=resource_name,
+                        )
+
+        # Role-aware filters (only active when role_cache is populated)
+        role_result = self._check_role_filters(
+            tool_name, skill_name, resource_name, permissions, arguments,
+        )
+        if role_result is not None:
+            return role_result
+
+        return None
+
+    def _check_role_filters(
+        self,
+        tool_name: str,
+        skill_name: str,
+        resource_name: str,
+        permissions: ResourcePermissions,
+        arguments: dict[str, Any] | None,
+    ) -> EvaluationResult | None:
+        """Check role-aware filters against tool call arguments.
+
+        Supports two filter types:
+          - ``block_write_paths``: Block if any WRITE_PATH parameter value
+            matches a pattern in the list (substring match).
+          - ``allow_read_paths``: If set, READ_PATH parameter values must
+            match at least one pattern (allowlist).
+
+        Only activates when the role_cache has roles for this tool.
+
+        Args:
+            tool_name: The MCP tool name.
+            skill_name: The matched skill.
+            resource_name: The matched resource.
+            permissions: The resource permissions with filters.
+            arguments: The tool call arguments.
+
+        Returns:
+            A BLOCK result if a role filter is violated, None otherwise.
+        """
+        if self._role_cache is None or not arguments or not permissions.filters:
+            return None
+
+        from agentward.inspect.role_cache import ToolRoleCache
+        from agentward.inspect.roles import ArgumentRole
+
+        roles = self._role_cache.get_roles(tool_name)
+        if roles is None:
+            return None
+
+        # block_write_paths: block if WRITE_PATH args match any pattern
+        block_write = permissions.filters.get("block_write_paths")
+        if block_write:
+            write_params = [
+                name for name, role in roles.items()
+                if role == ArgumentRole.WRITE_PATH
+            ]
+            for param in write_params:
+                val = arguments.get(param)
+                if isinstance(val, str):
+                    for pattern in block_write:
+                        if pattern in val:
+                            return EvaluationResult(
+                                decision=PolicyDecision.BLOCK,
+                                reason=(
+                                    f"Filter 'block_write_paths' violated: parameter "
+                                    f"'{param}' (role: WRITE_PATH) contains '{pattern}'. "
+                                    f"Tool '{tool_name}' blocked."
+                                ),
+                                skill=skill_name,
+                                resource=resource_name,
+                            )
+
+        # allow_read_paths: READ_PATH args must match at least one pattern
+        allow_read = permissions.filters.get("allow_read_paths")
+        if allow_read:
+            read_params = [
+                name for name, role in roles.items()
+                if role == ArgumentRole.READ_PATH
+            ]
+            for param in read_params:
+                val = arguments.get(param)
+                if isinstance(val, str):
+                    if not any(pattern in val for pattern in allow_read):
+                        return EvaluationResult(
+                            decision=PolicyDecision.BLOCK,
+                            reason=(
+                                f"Filter 'allow_read_paths' violated: parameter "
+                                f"'{param}' (role: READ_PATH) value '{val}' does not "
+                                f"match any allowed pattern: {allow_read}. "
+                                f"Tool '{tool_name}' blocked."
+                            ),
+                            skill=skill_name,
+                            resource=resource_name,
+                        )
+
+        return None

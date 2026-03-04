@@ -32,10 +32,13 @@ from aiohttp import ClientError, ClientSession, ClientTimeout, ClientWebSocketRe
 from rich.console import Console
 
 from agentward.audit.logger import AuditLogger
+from agentward.inspect.classifier import ClassificationResult, classify_arguments, redact_arguments
 from agentward.policy.engine import EvaluationResult, PolicyEngine
-from agentward.policy.schema import PolicyDecision
+from agentward.policy.schema import PolicyDecision, SensitiveContentAction
 from agentward.proxy.approval import ApprovalDecision, ApprovalHandler
+from agentward.inspect.enforcer import BoundaryEnforcer
 from agentward.proxy.chaining import ChainTracker
+from agentward.proxy.circuit_breaker import CircuitBreaker
 
 _console = Console(stderr=True)
 
@@ -332,6 +335,8 @@ class HttpProxy:
         chain_tracker: ChainTracker | None = None,
         approval_handler: "ApprovalHandler | None" = None,
         dry_run: bool = False,
+        circuit_breaker: CircuitBreaker | None = None,
+        boundary_enforcer: BoundaryEnforcer | None = None,
     ) -> None:
         self._backend_url = backend_url.rstrip("/")
         self._listen_host = listen_host
@@ -342,6 +347,8 @@ class HttpProxy:
         self._chain_tracker = chain_tracker
         self._approval_handler = approval_handler
         self._dry_run = dry_run
+        self._circuit_breaker = circuit_breaker
+        self._boundary_enforcer = boundary_enforcer
         self._session: ClientSession | None = None
         # Monotonic counter for synthetic request IDs (HTTP has no JSON-RPC ids)
         self._request_counter = itertools.count(1)
@@ -1124,6 +1131,27 @@ class HttpProxy:
         if not isinstance(arguments, dict):
             arguments = {}
 
+        # Circuit breaker — block runaway loops
+        if self._circuit_breaker is not None:
+            if not self._circuit_breaker.check(tool_name, arguments):
+                cb_result = EvaluationResult(
+                    decision=PolicyDecision.BLOCK,
+                    reason=f"Circuit breaker tripped: tool '{tool_name}' "
+                    f"called too frequently (>{self._circuit_breaker.config.max_calls} "
+                    f"in {self._circuit_breaker.config.window_seconds}s).",
+                )
+                self._audit_logger.log_tool_call(tool_name, arguments, cb_result)
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": {
+                            "type": "circuit_breaker",
+                            "message": f"AgentWard: {cb_result.reason}",
+                        },
+                    },
+                    status=429,
+                )
+
         # Evaluate policy
         result = self._evaluate_tool_call(tool_name, arguments)
 
@@ -1186,7 +1214,47 @@ class HttpProxy:
                     status=403,
                 )
 
-        # ALLOW, LOG, or approved APPROVE — check chaining rules before forwarding
+        # ALLOW, LOG, or approved APPROVE — check sensitive content
+        sensitive = self._classify_tool_args(arguments)
+        if sensitive.has_sensitive_data:
+            action = self._sensitive_content_action()
+            if action == SensitiveContentAction.REDACT:
+                # Redact mode: mask sensitive fields and rewrite the request body
+                arguments = redact_arguments(arguments, sensitive.findings)
+                body["arguments"] = arguments
+                raw_body = _json.dumps(body).encode()
+                self._audit_logger.log_tool_call(
+                    tool_name, arguments,
+                    EvaluationResult(
+                        decision=PolicyDecision.REDACT,
+                        reason=f"Sensitive data redacted: "
+                        f"{', '.join(f.finding_type.value for f in sensitive.findings)}",
+                    ),
+                )
+            elif self._dry_run:
+                self._audit_logger.log_sensitive_block(
+                    tool_name, arguments, sensitive.findings,
+                )
+                # Dry-run: don't actually block
+            else:
+                self._audit_logger.log_sensitive_block(
+                    tool_name, arguments, sensitive.findings,
+                )
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": {
+                            "type": "sensitive_data_blocked",
+                            "message": (
+                                f"AgentWard: Sensitive data detected in tool arguments. "
+                                f"Findings: {', '.join(f.finding_type.value for f in sensitive.findings)}"
+                            ),
+                        },
+                    },
+                    status=403,
+                )
+
+        # Check chaining rules before forwarding
         request_id: int | None = None
         if self._chain_tracker is not None:
             chain_result = self._chain_tracker.check_before_call(
@@ -1218,21 +1286,71 @@ class HttpProxy:
                 tool_name, arguments, request_id=request_id,
             )
 
-        # Log ALLOW/LOG only after passing all checks (policy + chaining)
+        # Check data boundary rules before forwarding
+        if self._boundary_enforcer is not None:
+            skill_for_boundary = (
+                self._policy_engine.resolve_skill(tool_name)
+                if self._policy_engine else None
+            )
+            boundary_result = self._boundary_enforcer.check_tool_call(
+                tool_name, skill_for_boundary, arguments
+            )
+            if boundary_result is not None:
+                if boundary_result.decision == PolicyDecision.BLOCK:
+                    if self._dry_run:
+                        self._audit_logger.log_tool_call(
+                            tool_name, arguments, boundary_result, dry_run=True,
+                        )
+                    else:
+                        self._audit_logger.log_tool_call(
+                            tool_name, arguments, boundary_result,
+                        )
+                        return web.json_response(
+                            {
+                                "ok": False,
+                                "error": {
+                                    "type": "boundary_blocked",
+                                    "message": f"AgentWard: {boundary_result.reason}",
+                                },
+                            },
+                            status=403,
+                        )
+                elif boundary_result.decision == PolicyDecision.LOG:
+                    # LOG_ONLY: log the violation but allow the call
+                    self._audit_logger.log_tool_call(
+                        tool_name, arguments, boundary_result,
+                    )
+
+        # Log ALLOW/LOG only after passing all checks (policy + chaining + boundary)
         self._audit_logger.log_tool_call(tool_name, arguments, result)
+
+        # Record for circuit breaker after all checks pass
+        if self._circuit_breaker is not None:
+            self._circuit_breaker.record(tool_name, arguments)
 
         # Forward to backend and capture response for chain tracking
         response = await self._forward_request(request, raw_body=raw_body)
 
-        # Record response content for chaining detection
-        if self._chain_tracker is not None and isinstance(response, web.Response):
+        # Record response content for chaining detection and boundary taint tracking
+        if isinstance(response, web.Response):
             try:
                 response_json = _json.loads(response.body)
-                self._chain_tracker.record_response(
-                    tool_name, response_json, request_id=request_id,
-                )
             except Exception:
-                pass  # Can't parse — skip chain recording
+                response_json = None
+
+            if response_json is not None:
+                if self._chain_tracker is not None:
+                    self._chain_tracker.record_response(
+                        tool_name, response_json, request_id=request_id,
+                    )
+                if self._boundary_enforcer is not None:
+                    skill_for_boundary = (
+                        self._policy_engine.resolve_skill(tool_name)
+                        if self._policy_engine else None
+                    )
+                    self._boundary_enforcer.record_response(
+                        tool_name, skill_for_boundary, response_json,
+                    )
 
         return response
 
@@ -1331,3 +1449,35 @@ class HttpProxy:
                 reason="No policy loaded (passthrough mode).",
             )
         return self._policy_engine.evaluate(tool_name, arguments)
+
+    def _sensitive_content_action(self) -> SensitiveContentAction:
+        """Return the configured action for sensitive content detection.
+
+        Defaults to BLOCK if no policy is loaded.
+        """
+        if self._policy_engine is None:
+            return SensitiveContentAction.BLOCK
+        return self._policy_engine.policy.sensitive_content.on_detection
+
+    def _classify_tool_args(
+        self, arguments: dict[str, Any]
+    ) -> ClassificationResult:
+        """Run the sensitive content classifier on tool call arguments.
+
+        Reads enabled patterns from the policy config. If no policy is loaded
+        or the classifier is disabled, returns a clean result.
+
+        Args:
+            arguments: The tool call arguments dict.
+
+        Returns:
+            A ClassificationResult.
+        """
+        if self._policy_engine is None:
+            return ClassificationResult(has_sensitive_data=False)
+
+        config = self._policy_engine.policy.sensitive_content
+        if not config.enabled:
+            return ClassificationResult(has_sensitive_data=False)
+
+        return classify_arguments(arguments, enabled_patterns=config.patterns)

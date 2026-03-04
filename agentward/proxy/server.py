@@ -30,17 +30,25 @@ from typing import Any
 from rich.console import Console
 
 from agentward.audit.logger import AuditLogger
+from agentward.inspect.classifier import ClassificationResult, classify_arguments, redact_arguments
 from agentward.policy.engine import EvaluationResult, PolicyEngine
-from agentward.policy.schema import PolicyDecision
+from agentward.policy.schema import PolicyDecision, SensitiveContentAction
+from agentward.inspect.enforcer import BoundaryEnforcer
+from agentward.inspect.role_cache import ToolRoleCache
 from agentward.proxy.chaining import ChainTracker
+from agentward.proxy.circuit_breaker import CircuitBreaker
 from agentward.proxy.protocol import (
     APPROVAL_REQUIRED,
     POLICY_BLOCKED,
     JSONRPCRequest,
+    JSONRPCResponse,
     ProtocolError,
     extract_tool_info,
+    is_resources_read,
     is_tool_call,
     is_tool_call_notification,
+    is_tools_list,
+    is_tools_list_response,
     make_error_response,
     parse_message,
     serialize_message,
@@ -78,6 +86,9 @@ class StdioProxy:
         chain_tracker: ChainTracker | None = None,
         policy_path: Path | None = None,
         dry_run: bool = False,
+        circuit_breaker: CircuitBreaker | None = None,
+        boundary_enforcer: BoundaryEnforcer | None = None,
+        role_cache: ToolRoleCache | None = None,
     ) -> None:
         self._server_command = server_command
         self._policy_engine = policy_engine
@@ -86,6 +97,9 @@ class StdioProxy:
         self._chain_tracker = chain_tracker
         self._policy_path = policy_path
         self._dry_run = dry_run
+        self._circuit_breaker = circuit_breaker
+        self._boundary_enforcer = boundary_enforcer
+        self._role_cache = role_cache
 
         self._process: asyncio.subprocess.Process | None = None
         self._shutting_down = False
@@ -93,6 +107,8 @@ class StdioProxy:
         # Track pending tool call requests so we can log responses
         # Maps request_id → tool_name
         self._pending_tool_calls: dict[int | str, str] = {}
+        # Track pending tools/list request IDs for response logging
+        self._pending_tools_list: set[int | str] = set()
 
     async def run(self) -> None:
         """Start the proxy: spawn subprocess, forward messages, handle shutdown.
@@ -268,6 +284,24 @@ class StdioProxy:
                     _write_to_stdout(serialize_message(error_resp))
                     continue
 
+                # Circuit breaker — block runaway loops
+                if self._circuit_breaker is not None:
+                    if not self._circuit_breaker.check(tool_name, arguments):
+                        cb_result = EvaluationResult(
+                            decision=PolicyDecision.BLOCK,
+                            reason=f"Circuit breaker tripped: tool '{tool_name}' "
+                            f"called too frequently (>{self._circuit_breaker.config.max_calls} "
+                            f"in {self._circuit_breaker.config.window_seconds}s).",
+                        )
+                        self._audit_logger.log_tool_call(tool_name, arguments, cb_result)
+                        error_resp = make_error_response(
+                            msg.id,
+                            POLICY_BLOCKED,
+                            f"AgentWard: {cb_result.reason}",
+                        )
+                        _write_to_stdout(serialize_message(error_resp))
+                        continue
+
                 result = self._evaluate_tool_call(tool_name, arguments)
 
                 if result.decision == PolicyDecision.BLOCK:
@@ -302,7 +336,45 @@ class StdioProxy:
                         _write_to_stdout(serialize_message(error_resp))
                         continue
 
-                # ALLOW or LOG — check chaining rules before forwarding
+                # ALLOW or LOG — check sensitive content before chaining
+                sensitive = self._classify_tool_args(arguments)
+                if sensitive.has_sensitive_data:
+                    action = self._sensitive_content_action()
+                    if action == SensitiveContentAction.REDACT:
+                        # Redact mode: mask sensitive fields and rewrite the message
+                        arguments = redact_arguments(arguments, sensitive.findings)
+                        # Rewrite the JSON-RPC message with redacted arguments
+                        import json as _json
+                        raw_msg = _json.loads(line)
+                        raw_msg["params"]["arguments"] = arguments
+                        line = (_json.dumps(raw_msg) + "\n").encode()
+                        self._audit_logger.log_tool_call(
+                            tool_name, arguments,
+                            EvaluationResult(
+                                decision=PolicyDecision.REDACT,
+                                reason=f"Sensitive data redacted: "
+                                f"{', '.join(f.finding_type.value for f in sensitive.findings)}",
+                            ),
+                        )
+                    elif self._dry_run:
+                        self._audit_logger.log_sensitive_block(
+                            tool_name, arguments, sensitive.findings,
+                        )
+                        # Dry-run: don't actually block
+                    else:
+                        self._audit_logger.log_sensitive_block(
+                            tool_name, arguments, sensitive.findings,
+                        )
+                        error_resp = make_error_response(
+                            msg.id,
+                            POLICY_BLOCKED,
+                            f"AgentWard: Sensitive data detected in tool arguments. "
+                            f"Findings: {', '.join(f.finding_type.value for f in sensitive.findings)}",
+                        )
+                        _write_to_stdout(serialize_message(error_resp))
+                        continue
+
+                # Check chaining rules before forwarding
                 if self._chain_tracker is not None:
                     chain_result = self._chain_tracker.check_before_call(
                         tool_name, arguments
@@ -329,9 +401,57 @@ class StdioProxy:
                         tool_name, arguments, request_id=msg.id
                     )
 
-                # Log ALLOW/LOG only after passing all checks (policy + chaining)
+                # Check data boundary rules before forwarding
+                if self._boundary_enforcer is not None:
+                    skill_for_boundary = (
+                        self._policy_engine.resolve_skill(tool_name)
+                        if self._policy_engine else None
+                    )
+                    boundary_result = self._boundary_enforcer.check_tool_call(
+                        tool_name, skill_for_boundary, arguments
+                    )
+                    if boundary_result is not None:
+                        if boundary_result.decision == PolicyDecision.BLOCK:
+                            if self._dry_run:
+                                self._audit_logger.log_tool_call(
+                                    tool_name, arguments, boundary_result, dry_run=True,
+                                )
+                            else:
+                                self._audit_logger.log_tool_call(
+                                    tool_name, arguments, boundary_result,
+                                )
+                                error_resp = make_error_response(
+                                    msg.id,
+                                    POLICY_BLOCKED,
+                                    f"AgentWard boundary: {boundary_result.reason}",
+                                )
+                                _write_to_stdout(serialize_message(error_resp))
+                                continue
+                        elif boundary_result.decision == PolicyDecision.LOG:
+                            # LOG_ONLY: log the violation but allow the call
+                            self._audit_logger.log_tool_call(
+                                tool_name, arguments, boundary_result,
+                            )
+
+                # Log ALLOW/LOG only after passing all checks (policy + chaining + boundary)
                 self._audit_logger.log_tool_call(tool_name, arguments, result)
                 self._pending_tool_calls[msg.id] = tool_name
+
+                # Record for circuit breaker after all checks pass
+                if self._circuit_breaker is not None:
+                    self._circuit_breaker.record(tool_name, arguments)
+
+            # Track tools/list requests so we can log the response
+            if is_tools_list(msg) and isinstance(msg, JSONRPCRequest):
+                self._pending_tools_list.add(msg.id)
+
+            # Log resources/read requests for audit trail
+            if is_resources_read(msg) and isinstance(msg, JSONRPCRequest):
+                uri = msg.params.get("uri", "") if msg.params else ""
+                _console.print(
+                    f"  [dim]resources/read {uri}[/dim]",
+                    highlight=False,
+                )
 
             # Forward message to server
             self._process.stdin.write(line)
@@ -371,10 +491,99 @@ class StdioProxy:
                         self._chain_tracker.record_response(
                             tool_name, msg.result, request_id=msg.id
                         )
+
+                    # Record response for boundary taint tracking
+                    if self._boundary_enforcer is not None and isinstance(msg, _JSONRPCResponse):
+                        skill_for_boundary = (
+                            self._policy_engine.resolve_skill(tool_name)
+                            if self._policy_engine else None
+                        )
+                        self._boundary_enforcer.record_response(
+                            tool_name, skill_for_boundary, msg.result
+                        )
+
+                    # Scan tool response for sensitive data (response inspection)
+                    if isinstance(msg, _JSONRPCResponse) and msg.result:
+                        self._inspect_tool_response(tool_name, msg.result)
+
+                # Log tools/list responses (audit: what tools the server exposes)
+                if is_tools_list_response(msg, self._pending_tools_list):
+                    self._pending_tools_list.discard(msg.id)  # type: ignore[union-attr]
+                    if isinstance(msg, JSONRPCResponse) and isinstance(msg.result, dict):
+                        tools = msg.result.get("tools", [])
+                        if isinstance(tools, list):
+                            tool_names = [
+                                t.get("name", "?") for t in tools
+                                if isinstance(t, dict)
+                            ]
+                            _console.print(
+                                f"  [dim]Server exposes {len(tool_names)} tools: "
+                                f"{', '.join(tool_names[:10])}"
+                                f"{'...' if len(tool_names) > 10 else ''}[/dim]",
+                                highlight=False,
+                            )
+                            # Populate role cache from tool schemas
+                            if self._role_cache is not None:
+                                for t in tools:
+                                    if isinstance(t, dict) and "name" in t:
+                                        self._role_cache.register_tool(
+                                            t["name"],
+                                            t.get("inputSchema", {}),
+                                            t.get("annotations"),
+                                        )
             except ProtocolError:
                 pass  # Can't parse — that's fine, still forward it
 
             _write_to_stdout(line)
+
+    def _inspect_tool_response(
+        self, tool_name: str, result: Any
+    ) -> None:
+        """Scan a tool response for sensitive data (response-side inspection).
+
+        This catches sensitive data flowing OUT of tools (e.g., a database
+        query returning SSNs). Currently logs only — does not block the
+        response (it has already been forwarded by the time we parse it
+        from the server's stdout stream).
+
+        Args:
+            tool_name: The tool that produced the response.
+            result: The JSON-RPC result value from the server.
+        """
+        if self._policy_engine is None:
+            return
+        config = self._policy_engine.policy.sensitive_content
+        if not config.enabled:
+            return
+
+        # Extract text content from MCP tool result format
+        # MCP responses use: {content: [{type: "text", text: "..."}]}
+        text_parts: list[str] = []
+        if isinstance(result, dict):
+            content = result.get("content", [])
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text", "")
+                        if isinstance(text, str) and text:
+                            text_parts.append(text)
+
+        if not text_parts:
+            return
+
+        classification = classify_arguments(
+            {"_response": " ".join(text_parts)},
+            enabled_patterns=config.patterns,
+        )
+        if classification.has_sensitive_data:
+            _console.print(
+                f"  [bold #ffcc00]SENSITIVE RESPONSE[/bold #ffcc00] {tool_name}: "
+                f"{', '.join(f.finding_type.value for f in classification.findings)}",
+                highlight=False,
+            )
+            self._audit_logger.log_sensitive_block(
+                tool_name, {"_response_scan": True}, classification.findings,
+            )
 
     async def _forward_server_stderr(self) -> None:
         """Read server subprocess stderr and log it.
@@ -441,6 +650,38 @@ class StdioProxy:
                 reason="No policy loaded (passthrough mode).",
             )
         return self._policy_engine.evaluate(tool_name, arguments)
+
+    def _sensitive_content_action(self) -> SensitiveContentAction:
+        """Return the configured action for sensitive content detection.
+
+        Defaults to BLOCK if no policy is loaded.
+        """
+        if self._policy_engine is None:
+            return SensitiveContentAction.BLOCK
+        return self._policy_engine.policy.sensitive_content.on_detection
+
+    def _classify_tool_args(
+        self, arguments: dict[str, Any]
+    ) -> ClassificationResult:
+        """Run the sensitive content classifier on tool call arguments.
+
+        Reads enabled patterns from the policy config. If no policy is loaded
+        or the classifier is disabled, returns a clean result.
+
+        Args:
+            arguments: The tool call arguments dict.
+
+        Returns:
+            A ClassificationResult.
+        """
+        if self._policy_engine is None:
+            return ClassificationResult(has_sensitive_data=False)
+
+        config = self._policy_engine.policy.sensitive_content
+        if not config.enabled:
+            return ClassificationResult(has_sensitive_data=False)
+
+        return classify_arguments(arguments, enabled_patterns=config.patterns)
 
 
 async def _create_stdin_reader() -> asyncio.StreamReader:

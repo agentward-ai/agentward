@@ -198,6 +198,37 @@ class ChainingRule(BaseModel):
         return self.target_skill == target
 
 
+class SequenceAction(str, Enum):
+    """Action to take when a sequence pattern matches."""
+
+    BLOCK = "block"
+    APPROVE = "approve"
+
+
+class SequenceRule(BaseModel):
+    """An ordered sequence pattern for multi-step chaining detection.
+
+    Matches when the trailing skill call history ends with the given pattern.
+    Pattern elements can be:
+      - Literal skill name (e.g., "email-manager")
+      - ``"any"`` — matches any single skill
+      - ``"any_{classification}"`` — matches any skill in a data boundary zone
+        with that classification (e.g., "any_financial" matches skills in zones
+        with ``classification: "financial"``).
+
+    YAML format::
+
+        sequence_rules:
+          - pattern: [email-manager, web-browser, shell-executor]
+            action: block
+          - pattern: [any_financial, any, any_financial]
+            action: approve
+    """
+
+    pattern: list[str] = Field(min_length=2)
+    action: SequenceAction = SequenceAction.BLOCK
+
+
 class DataBoundary(BaseModel):
     """A data boundary zone for compliance enforcement.
 
@@ -211,15 +242,23 @@ class DataBoundary(BaseModel):
     on_violation: ViolationAction = ViolationAction.BLOCK_AND_LOG
 
 
+class SensitiveContentAction(str, Enum):
+    """Action to take when sensitive content is detected in tool arguments."""
+
+    BLOCK = "block"
+    REDACT = "redact"
+
+
 class SensitiveContentConfig(BaseModel):
     """Configuration for the sensitive content classifier.
 
     Controls which data patterns are scanned in tool call arguments.
     When enabled, tool calls containing sensitive data (credit cards, SSNs,
-    API keys, etc.) are blocked before reaching the agent runtime.
+    API keys, etc.) are blocked or redacted before reaching the agent runtime.
     """
 
     enabled: bool = True
+    on_detection: SensitiveContentAction = SensitiveContentAction.BLOCK
     patterns: list[str] = Field(
         default_factory=lambda: [
             "credit_card",
@@ -455,3 +494,8 @@ class AgentWardPolicy(BaseModel):
         description="Sensitive content classifier configuration.",
     )
     data_boundaries: dict[str, DataBoundary] = Field(default_factory=dict)
+    sequence_rules: list[SequenceRule] = Field(
+        default_factory=list,
+        description="Ordered sequence patterns for multi-step chaining detection. "
+        "Matches when the trailing skill history ends with the given pattern.",
+    )

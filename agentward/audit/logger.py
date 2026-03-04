@@ -14,6 +14,7 @@ from typing import IO, Any
 
 from rich.console import Console
 
+from agentward.inspect.classifier import classify_arguments, redact_arguments
 from agentward.policy.engine import EvaluationResult
 from agentward.policy.schema import PolicyDecision
 
@@ -65,10 +66,15 @@ class AuditLogger:
             chain_violation: Whether this was blocked due to a chaining rule.
             dry_run: If True, the decision was observed but not enforced.
         """
+        # Redact sensitive data from arguments before writing to audit log.
+        # Always runs regardless of policy — audit logs must never contain raw PII.
+        safe_arguments = _redact_for_audit(arguments)
+
         entry = {
             "timestamp": _now_iso(),
             "event": "tool_call",
             "tool": tool_name,
+            "arguments": safe_arguments,
             "decision": result.decision.value,
             "reason": result.reason,
             "skill": result.skill,
@@ -346,6 +352,53 @@ class AuditLogger:
             highlight=False,
         )
 
+    def log_boundary_violation(
+        self,
+        tool_name: str,
+        zone_name: str,
+        classification: str,
+        source_tool: str,
+        matched_content: str,
+        action: str,
+    ) -> None:
+        """Log a data boundary violation.
+
+        Args:
+            tool_name: The tool that violated the boundary.
+            zone_name: The boundary zone that was violated.
+            classification: The data classification (e.g., "phi", "financial").
+            source_tool: The tool whose response contained the tainted data.
+            matched_content: The content string that matched.
+            action: "block" or "log_only".
+        """
+        entry = {
+            "timestamp": _now_iso(),
+            "event": "boundary_violation",
+            "tool": tool_name,
+            "zone": zone_name,
+            "classification": classification,
+            "source_tool": source_tool,
+            "matched_content": matched_content[:200],  # Truncate for safety
+            "action": action,
+        }
+        self._write_entry(entry)
+
+        if action == "block":
+            _console.print(
+                f"  [bold red]\u2717 BOUNDARY BLOCK[/bold red] {tool_name}",
+                highlight=False,
+            )
+        else:
+            _console.print(
+                f"  [#ffcc00]\u26a0 BOUNDARY LOG[/#ffcc00] {tool_name}",
+                highlight=False,
+            )
+        _console.print(
+            f"    [dim]{classification} data from {source_tool} "
+            f"(zone: {zone_name})[/dim]",
+            highlight=False,
+        )
+
     def log_shutdown(self, reason: str) -> None:
         """Log proxy shutdown.
 
@@ -387,6 +440,28 @@ class AuditLogger:
                 except (OSError, ValueError):
                     pass
                 self._log_file = None
+
+
+def _redact_for_audit(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Redact sensitive data from tool arguments before writing to audit log.
+
+    Always runs the full classifier (all patterns) regardless of policy
+    configuration. Audit logs must never contain raw PII/credentials,
+    even when the proxy's sensitive_content config is disabled.
+
+    Args:
+        arguments: The raw tool call arguments.
+
+    Returns:
+        A copy with sensitive values replaced by "[REDACTED:<type>]",
+        or the original dict if nothing was found.
+    """
+    if not arguments:
+        return arguments
+    result = classify_arguments(arguments)
+    if not result.has_sensitive_data:
+        return arguments
+    return redact_arguments(arguments, result.findings)
 
 
 def _now_iso() -> str:

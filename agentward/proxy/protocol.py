@@ -246,6 +246,43 @@ def extract_tool_info(msg: JSONRPCRequest) -> tuple[str, dict[str, Any]]:
     return name, arguments
 
 
+def is_tools_list(msg: JSONRPCMessage) -> bool:
+    """Check if a message is a tools/list request.
+
+    Args:
+        msg: The parsed JSON-RPC message.
+
+    Returns:
+        True if this is a request with method "tools/list".
+    """
+    return isinstance(msg, JSONRPCRequest) and msg.method == "tools/list"
+
+
+def is_resources_read(msg: JSONRPCMessage) -> bool:
+    """Check if a message is a resources/read request.
+
+    Args:
+        msg: The parsed JSON-RPC message.
+
+    Returns:
+        True if this is a request with method "resources/read".
+    """
+    return isinstance(msg, JSONRPCRequest) and msg.method == "resources/read"
+
+
+def is_tools_list_response(msg: JSONRPCMessage, pending_ids: set[int | str]) -> bool:
+    """Check if a message is a response to a tools/list request.
+
+    Args:
+        msg: The parsed JSON-RPC message.
+        pending_ids: Set of request IDs for tools/list requests.
+
+    Returns:
+        True if this is a response matching a pending tools/list request.
+    """
+    return isinstance(msg, JSONRPCResponse) and msg.id in pending_ids
+
+
 def make_error_response(request_id: int | str, code: int, message: str) -> JSONRPCError:
     """Create a JSON-RPC error response.
 

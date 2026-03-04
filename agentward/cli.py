@@ -215,6 +215,29 @@ def inspect(
             highlight=False,
         )
 
+    # Create boundary enforcer if policy has data_boundaries
+    boundary_enforcer = None
+    if policy_engine is not None and policy_engine.policy.data_boundaries:
+        from agentward.inspect.enforcer import BoundaryEnforcer
+
+        boundary_enforcer = BoundaryEnforcer(
+            policy=policy_engine.policy,
+            policy_engine=policy_engine,
+        )
+        _console.print(
+            f"  Boundaries: {len(policy_engine.policy.data_boundaries)} zone(s)",
+            style="dim",
+            highlight=False,
+        )
+
+    # Create role cache for argument-role classification
+    role_cache = None
+    if policy_engine is not None:
+        from agentward.inspect.role_cache import ToolRoleCache
+
+        role_cache = ToolRoleCache()
+        policy_engine._role_cache = role_cache  # Wire into engine for role-aware filters
+
     if dry_run:
         _console.print(
             "  Mode: [bold #5eead4]dry-run[/bold #5eead4] (observe only, nothing blocked)",
@@ -225,7 +248,7 @@ def inspect(
         # HTTP reverse proxy mode
         _run_gateway_proxy(
             gateway, policy_engine, audit_logger, policy_path, chain_tracker,
-            dry_run=dry_run,
+            dry_run=dry_run, boundary_enforcer=boundary_enforcer,
         )
     else:
         # Stdio proxy mode
@@ -252,6 +275,8 @@ def inspect(
             chain_tracker=chain_tracker,
             policy_path=policy_path,
             dry_run=dry_run,
+            boundary_enforcer=boundary_enforcer,
+            role_cache=role_cache,
         )
 
         try:
@@ -267,6 +292,7 @@ def _run_gateway_proxy(
     policy_path: Path | None,
     chain_tracker: object | None = None,
     dry_run: bool = False,
+    boundary_enforcer: object | None = None,
 ) -> None:
     """Start an HTTP reverse proxy for a gateway.
 
@@ -277,6 +303,7 @@ def _run_gateway_proxy(
         policy_path: Path to policy file (for logging).
         chain_tracker: Optional chain tracker for chaining enforcement.
         dry_run: If True, observe and log decisions without enforcing.
+        boundary_enforcer: Optional boundary enforcer for data boundary enforcement.
     """
     if gateway_type not in ("clawdbot", "openclaw"):
         _console.print(
@@ -344,6 +371,7 @@ def _run_gateway_proxy(
         chain_tracker=chain_tracker,  # type: ignore[arg-type]
         approval_handler=approval_handler,
         dry_run=dry_run,
+        boundary_enforcer=boundary_enforcer,  # type: ignore[arg-type]
     )
 
     # Check if LLM proxy is configured (baseUrl patching in sidecar)

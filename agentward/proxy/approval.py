@@ -65,7 +65,7 @@ class ApprovalHandler:
         telegram_bot: Any = None,
     ) -> None:
         self._timeout = timeout
-        self._session_approved: bool = False
+        self._session_approved: set[str] = set()
         self._dialog_lock = asyncio.Lock()
         self._is_macos: bool = sys.platform == "darwin"
         self._telegram_bot = telegram_bot
@@ -95,8 +95,8 @@ class ApprovalHandler:
         Returns:
             The user's decision.
         """
-        # Session cache — skip dialog if session-wide approval was granted
-        if self._session_approved:
+        # Session cache — skip dialog if this tool was already approved
+        if tool_name in self._session_approved:
             return ApprovalDecision.ALLOW_SESSION
 
         has_telegram = (
@@ -117,7 +117,7 @@ class ApprovalHandler:
         # Serialize — one approval at a time
         async with self._dialog_lock:
             # Re-check cache (another request may have approved while waiting)
-            if self._session_approved:
+            if tool_name in self._session_approved:
                 return ApprovalDecision.ALLOW_SESSION
 
             start = time.monotonic()
@@ -126,9 +126,9 @@ class ApprovalHandler:
             )
             elapsed_ms = int((time.monotonic() - start) * 1000)
 
-        # Update session cache — session-wide, covers all tools
+        # Update session cache — scoped to this specific tool
         if decision == ApprovalDecision.ALLOW_SESSION:
-            self._session_approved = True
+            self._session_approved.add(tool_name)
 
         # Log to stderr
         _log_decision(tool_name, decision, elapsed_ms)
@@ -137,7 +137,7 @@ class ApprovalHandler:
 
     def clear_cache(self) -> None:
         """Clear the session approval cache."""
-        self._session_approved = False
+        self._session_approved.clear()
 
     # ------------------------------------------------------------------
     # Race logic

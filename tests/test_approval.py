@@ -256,8 +256,8 @@ class TestApprovalHandler:
         assert call_count == 2  # dialog shown again after cache clear
 
     @pytest.mark.asyncio
-    async def test_allow_all_covers_all_tools(self) -> None:
-        """'Allow for Interaction' grants interaction-wide approval — all tools skip the dialog."""
+    async def test_session_approval_scoped_per_tool(self) -> None:
+        """'Allow for Interaction' grants per-tool approval — different tools get their own dialog."""
         handler = ApprovalHandler(timeout=10)
         handler._is_macos = True
 
@@ -272,7 +272,11 @@ class TestApprovalHandler:
 
         await handler.request_approval("browser", {}, "reason")
         await handler.request_approval("web_fetch", {}, "reason")
-        assert call_count == 1  # second tool covered by session-wide approval
+        assert call_count == 2  # each tool requires its own approval
+
+        # But same tool is cached
+        await handler.request_approval("browser", {}, "reason")
+        assert call_count == 2  # browser already approved, no new dialog
 
     @pytest.mark.asyncio
     async def test_osascript_failure_returns_deny(self) -> None:
