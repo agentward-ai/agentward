@@ -13,6 +13,7 @@
   <a href="https://pypi.org/project/agentward/"><img src="https://img.shields.io/pypi/v/agentward?color=00FF41&labelColor=0a0a0a" alt="PyPI"></a>
   <a href="https://github.com/agentward-ai/agentward/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-00FF41?labelColor=0a0a0a" alt="License"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11+-00FF41?labelColor=0a0a0a" alt="Python"></a>
+  <a href="https://glama.ai/mcp/servers/agentward-ai/agent-ward"><img width="380" height="200" src="https://glama.ai/mcp/servers/agentward-ai/agent-ward/badge" alt="Glama MCP Server" /></a>
 </p>
 
 ---
