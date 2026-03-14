@@ -39,6 +39,7 @@ sanitize = [
 
 [project.scripts]
 agentward = "agentward.cli:app"
+agentward-mcp-server = "agentward.mcp_server:main"
 
 [project.urls]
 Homepage = "https://agentward.ai"
