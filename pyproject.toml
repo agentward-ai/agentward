@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentward"
-version = "0.3.2"
+version = "0.4.0"
 description = "Open-source permission control plane for AI agents. Scan, enforce, and audit every tool call."
 readme = "README.md"
 license = "Apache-2.0"
@@ -35,6 +35,14 @@ dependencies = [
 sanitize = [
     "pypdf>=4.0",
     "spacy>=3.7",
+]
+# LLM-as-judge intent analysis — semantic second-opinion layer for tool calls.
+# Uses the Anthropic and/or OpenAI Python SDKs to call a fast judge model.
+# Install with: pip install agentward[judge]
+# Then enable in your policy YAML: llm_judge: {enabled: true, provider: anthropic}
+judge = [
+    "anthropic>=0.40",
+    "openai>=1.0",
 ]
 
 [project.scripts]

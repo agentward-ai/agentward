@@ -399,6 +399,41 @@ class AuditLogger:
             highlight=False,
         )
 
+    def log_judge_decision(
+        self,
+        tool_name: str,
+        verdict: str,
+        risk_score: float,
+        reasoning: str,
+        elapsed_ms: int,
+        cached: bool = False,
+    ) -> None:
+        """Log an LLM judge decision.
+
+        Records the structured judge result for audit trail and SIEM ingestion.
+        The human-readable verdict is also printed to stderr by the judge module
+        itself, so this method only writes to the JSON Lines file.
+
+        Args:
+            tool_name: The tool that was judged.
+            verdict: The judge's verdict: "allow", "flag", or "block".
+            risk_score: Risk score 0.0–1.0 from the judge LLM.
+            reasoning: One-sentence explanation from the judge LLM.
+            elapsed_ms: Time the judge LLM call took in milliseconds.
+            cached: Whether this result was served from cache (no LLM call made).
+        """
+        entry = {
+            "timestamp": _now_iso(),
+            "event": "judge_decision",
+            "tool": tool_name,
+            "verdict": verdict,
+            "risk_score": risk_score,
+            "reasoning": reasoning,
+            "elapsed_ms": elapsed_ms,
+            "cached": cached,
+        }
+        self._write_entry(entry)
+
     def log_shutdown(self, reason: str) -> None:
         """Log proxy shutdown.
 

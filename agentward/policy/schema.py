@@ -453,6 +453,152 @@ class ApprovalRule(BaseModel):
         return False
 
 
+class JudgeSensitivity(str, Enum):
+    """How aggressively the LLM judge flags potential mismatches.
+
+    LOW:    Only block/flag obvious contradictions (high confidence required).
+            Minimises false positives; suited for informational tools.
+    MEDIUM: Balanced threshold — flags suspicious patterns, blocks clear mismatches.
+            Recommended default for most deployments.
+    HIGH:   Flag anything ambiguous — suited for high-security contexts where
+            false negatives (missed attacks) are worse than false positives.
+    """
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+# PolicyDecision values are uppercase ("ALLOW", "BLOCK", etc.) but YAML
+# typically uses lowercase.  These are the LlmJudgeConfig fields that
+# accept PolicyDecision values and must be normalised before validation.
+_JUDGE_POLICY_DECISION_FIELDS = ("on_flag", "on_block", "on_timeout", "judge_on")
+
+
+class LlmJudgeConfig(BaseModel):
+    """Configuration for the LLM-as-judge intent analysis feature.
+
+    When enabled, each tool call that passes the policy engine receives a
+    second-opinion LLM call asking "do these arguments match what this tool
+    claims to do?" — catching prompt injection, scope creep, and tools being
+    used for undeclared purposes.
+
+    This adds latency (one extra LLM call per tool invocation) and API cost,
+    so it is opt-in via ``enabled: true``. Recommended for high-security
+    deployments where semantic mismatches need to be caught.
+
+    Example YAML::
+
+        llm_judge:
+          enabled: true
+          provider: anthropic
+          model: claude-haiku-4-5-20251001
+          sensitivity: medium
+          on_flag: log
+          on_block: block
+          cache_ttl: 300
+    """
+
+    enabled: bool = False
+    provider: str = Field(
+        default="anthropic",
+        description="LLM provider for the judge call: 'anthropic' or 'openai'.",
+    )
+    model: str = Field(
+        default="claude-haiku-4-5-20251001",
+        description=(
+            "Model ID to use for the judge call. "
+            "Prefer fast, cheap models — haiku/gpt-4o-mini — since this runs per tool call."
+        ),
+    )
+    api_key_env: str | None = Field(
+        default=None,
+        description=(
+            "Environment variable containing the API key. "
+            "Defaults to ANTHROPIC_API_KEY for Anthropic, OPENAI_API_KEY for OpenAI."
+        ),
+    )
+    base_url: str | None = Field(
+        default=None,
+        description=(
+            "Override the base URL for the LLM API. "
+            "Defaults to the provider's standard endpoint."
+        ),
+    )
+    timeout: float = Field(
+        default=10.0,
+        description="Seconds before a judge LLM call times out.",
+    )
+    sensitivity: JudgeSensitivity = Field(
+        default=JudgeSensitivity.MEDIUM,
+        description="How aggressively to flag potential mismatches.",
+    )
+    on_flag: PolicyDecision = Field(
+        default=PolicyDecision.LOG,
+        description=(
+            "Decision when the judge flags a suspicious call (risk below block threshold). "
+            "Default 'log' — proceed but record the suspicion in the audit trail."
+        ),
+    )
+    on_block: PolicyDecision = Field(
+        default=PolicyDecision.BLOCK,
+        description=(
+            "Decision when the judge says the call clearly contradicts the tool's purpose. "
+            "Default 'block'."
+        ),
+    )
+    on_timeout: PolicyDecision = Field(
+        default=PolicyDecision.ALLOW,
+        description=(
+            "Decision when the judge LLM call times out or errors. "
+            "Default 'allow' (fail-open) to avoid blocking legitimate calls on transient failures."
+        ),
+    )
+    cache_ttl: int = Field(
+        default=300,
+        description=(
+            "Seconds to cache judge decisions for identical tool+argument patterns. "
+            "Set to 0 to disable caching. Caching skips the extra LLM call for "
+            "repeated identical invocations."
+        ),
+    )
+    cache_max_size: int = Field(
+        default=1000,
+        description="Maximum number of cached judge decisions (oldest evicted when full).",
+    )
+    judge_on: list[PolicyDecision] = Field(
+        default_factory=lambda: [PolicyDecision.ALLOW],
+        description=(
+            "Base policy decisions that trigger the judge. "
+            "Default [allow]: only second-opinion calls that passed the policy engine. "
+            "Add 'log' to also judge LOG decisions."
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalise_policy_decisions(cls, data: Any) -> Any:
+        """Normalise lowercase YAML policy decision strings to uppercase.
+
+        ``PolicyDecision`` enum values are uppercase (``"ALLOW"``, ``"BLOCK"``, …)
+        but YAML authors naturally write lowercase.  This validator upper-cases
+        the ``on_flag``, ``on_block``, ``on_timeout``, and ``judge_on`` fields
+        so both casings are accepted.
+        """
+        if not isinstance(data, dict):
+            return data
+        result = dict(data)
+        for field in _JUDGE_POLICY_DECISION_FIELDS:
+            value = result.get(field)
+            if isinstance(value, str):
+                result[field] = value.upper()
+            elif isinstance(value, list):
+                result[field] = [
+                    v.upper() if isinstance(v, str) else v for v in value
+                ]
+        return result
+
+
 class DefaultAction(str, Enum):
     """Default action for tools that don't match any policy rule.
 
@@ -498,4 +644,12 @@ class AgentWardPolicy(BaseModel):
         default_factory=list,
         description="Ordered sequence patterns for multi-step chaining detection. "
         "Matches when the trailing skill history ends with the given pattern.",
+    )
+    llm_judge: LlmJudgeConfig = Field(
+        default_factory=LlmJudgeConfig,
+        description=(
+            "LLM-as-judge intent analysis configuration. "
+            "When enabled, uses a secondary LLM call to detect when a tool's "
+            "actual arguments don't match its declared description/purpose."
+        ),
     )
