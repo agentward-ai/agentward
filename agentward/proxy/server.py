@@ -25,7 +25,10 @@ import signal
 import sys
 from sys import platform as _platform
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from agentward.proxy.judge import LlmJudge
 
 from rich.console import Console
 
@@ -89,6 +92,7 @@ class StdioProxy:
         circuit_breaker: CircuitBreaker | None = None,
         boundary_enforcer: BoundaryEnforcer | None = None,
         role_cache: ToolRoleCache | None = None,
+        llm_judge: LlmJudge | None = None,
     ) -> None:
         self._server_command = server_command
         self._policy_engine = policy_engine
@@ -100,6 +104,7 @@ class StdioProxy:
         self._circuit_breaker = circuit_breaker
         self._boundary_enforcer = boundary_enforcer
         self._role_cache = role_cache
+        self._llm_judge = llm_judge
 
         self._process: asyncio.subprocess.Process | None = None
         self._shutting_down = False
@@ -336,6 +341,34 @@ class StdioProxy:
                         _write_to_stdout(serialize_message(error_resp))
                         continue
 
+                # LLM judge — semantic second opinion on ALLOW/LOG decisions
+                if (
+                    self._llm_judge is not None
+                    and result.decision in self._llm_judge.judge_on_decisions
+                ):
+                    judge_override = await self._llm_judge.check(
+                        tool_name, arguments, result
+                    )
+                    if judge_override is not None:
+                        result = judge_override
+                        if result.decision == PolicyDecision.BLOCK:
+                            if self._dry_run:
+                                self._audit_logger.log_tool_call(
+                                    tool_name, arguments, result, dry_run=True,
+                                )
+                                # Dry-run: don't actually block
+                            else:
+                                self._audit_logger.log_tool_call(
+                                    tool_name, arguments, result
+                                )
+                                error_resp = make_error_response(
+                                    msg.id,
+                                    POLICY_BLOCKED,
+                                    f"AgentWard LLM judge blocked: {result.reason}",
+                                )
+                                _write_to_stdout(serialize_message(error_resp))
+                                continue
+
                 # ALLOW or LOG — check sensitive content before chaining
                 sensitive = self._classify_tool_args(arguments)
                 if sensitive.has_sensitive_data:
@@ -530,6 +563,15 @@ class StdioProxy:
                                             t["name"],
                                             t.get("inputSchema", {}),
                                             t.get("annotations"),
+                                        )
+                            # Register tool descriptions with the LLM judge
+                            if self._llm_judge is not None:
+                                for t in tools:
+                                    if isinstance(t, dict) and "name" in t:
+                                        self._llm_judge.register_tool(
+                                            t["name"],
+                                            t.get("inputSchema", {}),
+                                            t.get("description"),
                                         )
             except ProtocolError:
                 pass  # Can't parse — that's fine, still forward it

@@ -9,6 +9,7 @@ two minutes.
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -220,6 +221,7 @@ def print_risk_summary(
 def generate_init_policy(
     scan: ScanResult,
     chains: list[ChainDetection],
+    llm_judge_config: "LlmJudgeConfig | None" = None,
 ) -> "AgentWardPolicy":
     """Generate a recommended policy with stricter defaults than ``configure``.
 
@@ -238,6 +240,7 @@ def generate_init_policy(
         AgentWardPolicy,
         ApprovalRule,
         ChainingMode,
+        LlmJudgeConfig,
         ResourcePermissions,
     )
 
@@ -277,6 +280,10 @@ def generate_init_policy(
 
     # Set chaining mode to content (strictest useful default)
     policy.chaining_mode = ChainingMode.CONTENT
+
+    # Attach LLM judge config if provided
+    if llm_judge_config is not None:
+        policy.llm_judge = llm_judge_config
 
     return policy
 
@@ -603,6 +610,115 @@ def start_proxy(console: Console, policy_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# LLM judge setup prompt
+# ---------------------------------------------------------------------------
+
+_JUDGE_PROVIDER_KEY_ENV = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+}
+
+
+def _prompt_judge_setup(
+    console: Console,
+) -> tuple["LlmJudgeConfig | None", str | None, str | None]:
+    """Interactively ask the user whether to enable the LLM judge.
+
+    Returns:
+        (config, api_key, key_env_var) where api_key and key_env_var are None
+        if the user declined or the key is already in the environment.
+    """
+    from agentward.policy.schema import LlmJudgeConfig
+
+    console.print("")
+    console.print(
+        "[bold]LLM intent analysis[/bold] — a secondary model checks whether each "
+        "tool call matches its declared purpose (prompt injection, scope creep, etc.)\n"
+        "  Adds ~1–2s latency per tool call. Requires an Anthropic or OpenAI API key.",
+        highlight=False,
+    )
+    try:
+        want_judge = typer.confirm("Enable LLM intent analysis?", default=False)
+    except typer.Abort:
+        return None, None, None
+
+    if not want_judge:
+        return None, None, None
+
+    # Provider choice
+    try:
+        provider_raw = typer.prompt(
+            "Provider",
+            default="anthropic",
+            prompt_suffix=" [anthropic/openai]: ",
+            show_default=False,
+        )
+    except typer.Abort:
+        return None, None, None
+
+    provider = provider_raw.strip().lower()
+    if provider not in _JUDGE_PROVIDER_KEY_ENV:
+        console.print(
+            f"  [yellow]Unknown provider {provider!r} — defaulting to anthropic.[/yellow]",
+            highlight=False,
+        )
+        provider = "anthropic"
+
+    key_env = _JUDGE_PROVIDER_KEY_ENV[provider]
+
+    # Check if key already in environment
+    if os.environ.get(key_env):
+        console.print(
+            f"  [dim]${key_env} already set — using existing key.[/dim]",
+            highlight=False,
+        )
+        config = LlmJudgeConfig(enabled=True, provider=provider)
+        return config, None, None
+
+    # Prompt for the key
+    try:
+        api_key = typer.prompt(
+            f"API key (${key_env})",
+            hide_input=True,
+            prompt_suffix=": ",
+            show_default=False,
+        )
+    except typer.Abort:
+        return None, None, None
+
+    api_key = api_key.strip()
+    if not api_key:
+        console.print("  [yellow]No key entered — skipping LLM judge.[/yellow]", highlight=False)
+        return None, None, None
+
+    config = LlmJudgeConfig(enabled=True, provider=provider)
+    return config, api_key, key_env
+
+
+def _write_env_key(env_path: Path, key_name: str, key_value: str) -> None:
+    """Write or update a key=value line in a .env file.
+
+    If the file already contains an assignment for ``key_name`` it is
+    replaced in-place; otherwise the new entry is appended.
+    The file is created with mode 0o600 (owner read/write only).
+    """
+    existing = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+    lines = existing.splitlines(keepends=True)
+    prefix = f"{key_name}="
+    new_line = f"{key_name}={key_value}\n"
+    replaced = False
+    for i, line in enumerate(lines):
+        if line.startswith(prefix):
+            lines[i] = new_line
+            replaced = True
+            break
+    if not replaced:
+        lines.append(new_line)
+    env_path.write_text("".join(lines), encoding="utf-8")
+    env_path.chmod(0o600)
+
+
+# ---------------------------------------------------------------------------
 # Main init flow
 # ---------------------------------------------------------------------------
 
@@ -720,9 +836,24 @@ def run_init(
             raise typer.Exit(0)
 
     # ------------------------------------------------------------------
+    # Step 4b: Optional LLM judge setup (skipped in dry-run and --yes)
+    # ------------------------------------------------------------------
+    llm_judge_config = None
+    judge_api_key: str | None = None
+    judge_key_env: str | None = None
+
+    if not dry_run and not yes:
+        llm_judge_config, judge_api_key, judge_key_env = _prompt_judge_setup(console)
+
+    # Inject API key into the current process env so the proxy started at
+    # the end of init can use it immediately (without the user re-exporting).
+    if judge_api_key and judge_key_env:
+        os.environ[judge_key_env] = judge_api_key
+
+    # ------------------------------------------------------------------
     # Step 5: Generate policy (needed for diff before write decision)
     # ------------------------------------------------------------------
-    policy = generate_init_policy(scan_result, chains)
+    policy = generate_init_policy(scan_result, chains, llm_judge_config=llm_judge_config)
 
     # ------------------------------------------------------------------
     # Step 5b: Check for existing policy file — show diff if present
@@ -804,6 +935,20 @@ def run_init(
 
         console.print(
             f"\n[{_CLR_GREEN}]✓[/{_CLR_GREEN}]  Policy written to [bold]{output_path}[/bold]",
+            highlight=False,
+        )
+
+    # Persist the judge API key to a .env file next to the policy
+    if judge_api_key and judge_key_env:
+        env_path = output_path.parent / ".env"
+        _write_env_key(env_path, judge_key_env, judge_api_key)
+        console.print(
+            f"[{_CLR_GREEN}]✓[/{_CLR_GREEN}]  API key saved to [bold]{env_path}[/bold]",
+            highlight=False,
+        )
+        console.print(
+            f"  Add to your shell profile: "
+            f"[dim]export {judge_key_env}=<key>[/dim]",
             highlight=False,
         )
 

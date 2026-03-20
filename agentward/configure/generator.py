@@ -497,4 +497,23 @@ def _policy_to_dict(policy: AgentWardPolicy) -> dict:
             }
         data["data_boundaries"] = boundaries
 
+    # LLM judge (only written when explicitly enabled — default-off feature)
+    if policy.llm_judge.enabled:
+        j = policy.llm_judge
+        judge_dict: dict = {
+            "enabled": True,
+            "provider": j.provider,
+            "model": j.model,
+            "sensitivity": j.sensitivity.value,
+            "on_flag": j.on_flag.value.lower(),
+            "on_block": j.on_block.value.lower(),
+            "on_timeout": j.on_timeout.value.lower(),
+            "cache_ttl": j.cache_ttl,
+        }
+        if j.api_key_env is not None:
+            judge_dict["api_key_env"] = j.api_key_env
+        if j.base_url is not None:
+            judge_dict["base_url"] = j.base_url
+        data["llm_judge"] = judge_dict
+
     return data

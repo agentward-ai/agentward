@@ -25,7 +25,10 @@ import signal
 from datetime import datetime, timezone
 from sys import platform as _platform
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from agentward.proxy.judge import LlmJudge
 
 import aiohttp
 from aiohttp import ClientError, ClientSession, ClientTimeout, ClientWebSocketResponse, web
@@ -337,6 +340,7 @@ class HttpProxy:
         dry_run: bool = False,
         circuit_breaker: CircuitBreaker | None = None,
         boundary_enforcer: BoundaryEnforcer | None = None,
+        llm_judge: LlmJudge | None = None,
     ) -> None:
         self._backend_url = backend_url.rstrip("/")
         self._listen_host = listen_host
@@ -349,6 +353,7 @@ class HttpProxy:
         self._dry_run = dry_run
         self._circuit_breaker = circuit_breaker
         self._boundary_enforcer = boundary_enforcer
+        self._llm_judge = llm_judge
         self._session: ClientSession | None = None
         # Monotonic counter for synthetic request IDs (HTTP has no JSON-RPC ids)
         self._request_counter = itertools.count(1)
@@ -1213,6 +1218,31 @@ class HttpProxy:
                     },
                     status=403,
                 )
+
+        # LLM judge — semantic second opinion on ALLOW/LOG decisions
+        if (
+            self._llm_judge is not None
+            and result.decision in self._llm_judge.judge_on_decisions
+        ):
+            judge_override = await self._llm_judge.check(tool_name, arguments, result)
+            if judge_override is not None:
+                result = judge_override
+                if result.decision == PolicyDecision.BLOCK:
+                    if not self._dry_run:
+                        self._audit_logger.log_tool_call(tool_name, arguments, result)
+                        return web.json_response(
+                            {
+                                "ok": False,
+                                "error": {
+                                    "type": "judge_blocked",
+                                    "message": f"AgentWard LLM judge blocked: {result.reason}",
+                                },
+                            },
+                            status=403,
+                        )
+                    self._audit_logger.log_tool_call(
+                        tool_name, arguments, result, dry_run=True,
+                    )
 
         # ALLOW, LOG, or approved APPROVE — check sensitive content
         sensitive = self._classify_tool_args(arguments)

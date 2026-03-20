@@ -550,7 +550,7 @@ class TestRunInit:
             patches[4],
             patches[5],
             patches[6],
-            patch("agentward.init.typer.confirm", side_effect=[True, False]),
+            patch("agentward.init.typer.confirm", side_effect=[True, False, False]),
             patch("agentward.init.wrap_openclaw_gateway", return_value=False),
         ):
             run_init(console=console, policy_path=policy_path)
@@ -575,7 +575,7 @@ class TestRunInit:
             patches[4],
             patches[5],
             patches[6],
-            patch("agentward.init.typer.confirm", side_effect=[True, True]),
+            patch("agentward.init.typer.confirm", side_effect=[True, False, True]),
             patch("agentward.init.wrap_openclaw_gateway", return_value=False),
         ):
             run_init(console=console, policy_path=policy_path)
