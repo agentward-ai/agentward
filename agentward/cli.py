@@ -2077,3 +2077,125 @@ def sanitize(
                 f"{len(result.categories_found)} categories.[/dim]",
                 highlight=False,
             )
+
+
+# ---------------------------------------------------------------------------
+# preinstall command
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def preinstall(
+    target: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to the skill or MCP server directory to scan.",
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
+        ),
+    ],
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Output findings as JSON (machine-readable).",
+        ),
+    ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-v",
+            help="Show evidence snippets and per-finding recommendations.",
+        ),
+    ] = False,
+    timeout: Annotated[
+        int,
+        typer.Option(
+            "--timeout",
+            help="Maximum seconds for the scan subprocess. Default: 30.",
+        ),
+    ] = 30,
+    fail_on_warn: Annotated[
+        bool,
+        typer.Option(
+            "--fail-on-warn",
+            help="Exit with code 1 for WARN verdict (default: only BLOCK exits non-zero).",
+        ),
+    ] = False,
+    output: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--output",
+            "-o",
+            help=(
+                "Write report to a file. Format is inferred from extension: "
+                ".html → dark-themed HTML, .json → machine-readable JSON, "
+                ".md or other → Markdown. Terminal output is shown regardless."
+            ),
+            writable=True,
+        ),
+    ] = None,
+) -> None:
+    """Scan a skill directory for security threats before installation.
+
+    Checks for deserialization attacks, executable hooks, malicious
+    dependencies, and typosquatting — before the skill is loaded into
+    the agent's process.
+
+    Exit codes (for CI use):
+      0  — SAFE: no threats detected
+      1  — WARN: low/medium findings (only with --fail-on-warn)
+      2  — BLOCK: critical/high threats detected
+
+    Examples:
+      agentward preinstall ./my-skill/
+      agentward preinstall ./my-skill/ --json
+      agentward preinstall ./my-skill/ --verbose
+      agentward preinstall ./my-skill/ --fail-on-warn
+      agentward preinstall ./my-skill/ --output report.html
+      agentward preinstall ./my-skill/ --output report.md
+    """
+    import json as _json
+
+    from agentward.banner import print_banner
+    from agentward.preinstall.scanner import PreinstallScanner
+    from agentward.preinstall.models import ScanVerdict
+    from agentward.preinstall.report import (
+        render_preinstall_json,
+        render_preinstall_report,
+        render_preinstall_markdown,
+        render_preinstall_html,
+    )
+
+    if not json_output:
+        print_banner(_console)
+
+    scanner = PreinstallScanner(timeout=timeout)
+    report = scanner.scan(target)
+
+    if json_output:
+        import sys as _sys
+        _sys.stdout.write(_json.dumps(render_preinstall_json(report), indent=2))
+        _sys.stdout.write("\n")
+    else:
+        render_preinstall_report(report, _console, verbose=verbose)
+
+    if output is not None:
+        ext = output.suffix.lower()
+        if ext == ".html":
+            content = render_preinstall_html(report)
+        elif ext == ".json":
+            content = _json.dumps(render_preinstall_json(report), indent=2) + "\n"
+        else:  # .md or any other extension
+            content = render_preinstall_markdown(report)
+        output.write_text(content, encoding="utf-8")
+        _console.print(f"[dim]Report written to {output}[/dim]", highlight=False)
+
+    verdict = report.verdict
+    if verdict == ScanVerdict.BLOCK:
+        raise typer.Exit(2)
+    if fail_on_warn and verdict == ScanVerdict.WARN:
+        raise typer.Exit(1)
