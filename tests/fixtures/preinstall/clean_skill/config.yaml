@@ -1,0 +1,6 @@
+name: clean-skill
+version: "1.0.0"
+description: A safe skill
+settings:
+  timeout: 30
+  retries: 3

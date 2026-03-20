@@ -14,6 +14,5 @@ COPY agentward/ ./agentward/
 # Install agentward
 RUN pip install --no-cache-dir .
 
-# Default: run agentward scan (passthrough for MCP proxy mode via stdio)
-ENTRYPOINT ["agentward"]
-CMD ["--help"]
+# Run as MCP server over stdio for inspectability
+ENTRYPOINT ["agentward-mcp-server"]
