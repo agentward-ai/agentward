@@ -184,6 +184,32 @@
     }
     .chip-soon .soon-tag{font-family:var(--font-mono);font-size:9px;color:var(--muted2);margin-left:6px}
 
+    /* ── Security Lifecycle ── */
+    .lc-pipeline{display:flex;align-items:stretch;gap:0;margin-top:36px}
+    .lc-step{
+      flex:1;min-width:0;
+      background:var(--bg1);border:1px solid var(--border);border-radius:12px;
+      padding:20px 14px 18px;
+      display:flex;flex-direction:column;gap:9px;
+      text-decoration:none;color:inherit;
+      position:relative;overflow:hidden;
+      transition:border-color .15s,background .15s;
+    }
+    .lc-step::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,#00ff8830,transparent);transition:background .2s}
+    .lc-step:hover{border-color:var(--border2);background:#0f0f0f}
+    .lc-step:hover::before{background:linear-gradient(90deg,transparent,var(--green),transparent)}
+    .lc-conn{width:20px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--muted2);font-family:var(--font-mono);font-size:14px}
+    .lc-stepnum{font-family:var(--font-mono);font-size:9px;font-weight:600;color:var(--muted2);letter-spacing:2px;text-transform:uppercase}
+    .lc-stepname{font-size:14px;font-weight:700;color:var(--white);letter-spacing:-0.3px;line-height:1.1}
+    .lc-cmd{display:inline-flex;font-family:var(--font-mono);font-size:10px;color:var(--green);background:var(--bg);border:1px solid var(--border2);padding:2px 8px;border-radius:4px;width:fit-content}
+    .lc-desc{font-size:12px;color:var(--muted);line-height:1.6;flex:1}
+    .lc-artifact{display:inline-flex;align-items:center;font-family:var(--font-mono);font-size:9px;font-weight:600;color:var(--green);background:var(--green-dim);border:1px solid var(--green-border);padding:3px 10px;border-radius:20px;width:fit-content;margin-top:4px;letter-spacing:0.5px}
+    .lc-enterprise{margin-top:20px}
+    .lc-emap{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px}
+    .lc-emap-pill{font-family:var(--font-mono);font-size:9.5px;color:var(--muted2);background:var(--bg);border:1px solid var(--border);padding:2px 9px;border-radius:4px}
+    .lc-emap-arr{color:var(--muted2);font-family:var(--font-mono);font-size:11px}
+    @media(max-width:760px){.lc-pipeline{flex-direction:column;gap:8px}.lc-conn{display:none}}
+
     /* ── CTA bottom ── */
     .cta-bottom{
       text-align:center;border-top:1px solid var(--border);
@@ -303,6 +329,87 @@
     <div class="card-accent">
       <div class="card-label">AgentWard</div>
       <p style="font-style:italic;color:#999">"Telling an agent <span style="color:#ccc">'don't touch the stove'</span> is a natural-language guardrail that can be circumvented. AgentWard puts a <span style="color:var(--green);font-style:normal;font-weight:600">physical lock on the stove</span> — code-level enforcement that prompt injection can't override."</p>
+    </div>
+  </div>
+</div>
+
+<!-- SECURITY LIFECYCLE JOURNEY -->
+<div class="section" style="max-width:940px;padding-top:0;border-top:1px solid var(--border)">
+  <div class="eyebrow">Security Lifecycle</div>
+  <h2 class="section-title">From zero to fully secured — in one pipeline.</h2>
+  <p class="section-body">Every enterprise security workflow maps to five CLI commands. Run them individually or let <code style="font-family:var(--font-mono);font-size:13px;background:var(--bg2);border:1px solid var(--border2);padding:2px 8px;border-radius:5px;color:var(--green)">agentward init</code> wire the whole chain in one shot.</p>
+
+  <div class="lc-pipeline">
+
+    <!-- 01: SCAN -->
+    <a href="docs.html#scan" class="lc-step">
+      <div class="lc-stepnum">01 · SCAN</div>
+      <div class="lc-stepname">Detect</div>
+      <div class="lc-cmd">agentward scan</div>
+      <p class="lc-desc">Catches load-time attack vectors — unsafe YAML constructs, pickle/marshal deserialization, and executable hooks that fire <em>before</em> runtime protection can help. Built to flag ClawHavoc-style supply chain attacks embedded in skill metadata.</p>
+      <div class="lc-artifact">→ Risk report</div>
+    </a>
+
+    <div class="lc-conn">→</div>
+
+    <!-- 02: CONFIGURE -->
+    <a href="docs.html#configure" class="lc-step">
+      <div class="lc-stepnum">02 · CONFIGURE</div>
+      <div class="lc-stepname">Policy</div>
+      <div class="lc-cmd">agentward init</div>
+      <p class="lc-desc">Auto-generates a suggested policy YAML from scan findings. Review and tune resource permissions, chaining rules, approval gates, and data classification boundaries.</p>
+      <div class="lc-artifact">→ agentward.yaml</div>
+    </a>
+
+    <div class="lc-conn">→</div>
+
+    <!-- 03: ENFORCE -->
+    <a href="docs.html#inspect" class="lc-step">
+      <div class="lc-stepnum">03 · ENFORCE</div>
+      <div class="lc-stepname">Intercept</div>
+      <div class="lc-cmd">agentward inspect</div>
+      <p class="lc-desc">Runtime proxy intercepts every tool call. Blocks unauthorized access, redacts PII, enforces skill-chain depth limits, and requires human approval for sensitive operations.</p>
+      <div class="lc-artifact">→ Live proxy</div>
+    </a>
+
+    <div class="lc-conn">→</div>
+
+    <!-- 04: VERIFY -->
+    <a href="docs.html" class="lc-step">
+      <div class="lc-stepnum">04 · VERIFY</div>
+      <div class="lc-stepname">Test</div>
+      <div class="lc-cmd">agentward test</div>
+      <p class="lc-desc">Fires adversarial probes through the live proxy to prove policy catches what the scanner flagged. CI-ready with exit codes — fails the build if enforcement gaps exist.</p>
+      <div class="lc-artifact">→ Test results</div>
+    </a>
+
+    <div class="lc-conn">→</div>
+
+    <!-- 05: MONITOR -->
+    <a href="docs.html" class="lc-step">
+      <div class="lc-stepnum">05 · MONITOR</div>
+      <div class="lc-stepname">Audit</div>
+      <div class="lc-cmd">audit logs</div>
+      <p class="lc-desc">JSONL + RFC 5424 syslog feeds into your SIEM — Splunk, Wazuh, Graylog, ELK, Sentinel. Continuous visibility into every blocked and allowed tool call.</p>
+      <div class="lc-artifact">→ SIEM events</div>
+    </a>
+
+  </div>
+
+  <!-- Enterprise journey callout -->
+  <div class="card-accent lc-enterprise">
+    <div class="card-label">Enterprise Journey</div>
+    <p style="font-size:13.5px;color:#999;line-height:1.65;margin-bottom:0">This lifecycle maps directly to enterprise security workflows — from initial risk assessment through continuous enforcement to regulatory audit trails that satisfy SOC 2, HIPAA, and PCI-DSS auditors.</p>
+    <div class="lc-emap">
+      <span class="lc-emap-pill">Initial Assessment</span>
+      <span class="lc-emap-arr">→</span>
+      <span class="lc-emap-pill">Policy Deployment</span>
+      <span class="lc-emap-arr">→</span>
+      <span class="lc-emap-pill">Continuous Enforcement</span>
+      <span class="lc-emap-arr">→</span>
+      <span class="lc-emap-pill">Compliance Verification</span>
+      <span class="lc-emap-arr">→</span>
+      <span class="lc-emap-pill">Audit Trail</span>
     </div>
   </div>
 </div>
