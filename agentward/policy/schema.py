@@ -599,6 +599,24 @@ class LlmJudgeConfig(BaseModel):
         return result
 
 
+class AuditConfig(BaseModel):
+    """Configuration for audit log output paths.
+
+    Controls where AgentWard writes its structured audit files.
+    Both JSONL and syslog are always written when ``--log`` is active —
+    this setting only changes *where* the syslog file lands.
+    """
+
+    syslog_path: str | None = Field(
+        default=None,
+        description=(
+            "Path for the RFC 5424 syslog output file. "
+            "Defaults to the JSONL log path with a .syslog extension. "
+            "Accepts absolute paths or paths relative to the working directory."
+        ),
+    )
+
+
 class DefaultAction(str, Enum):
     """Default action for tools that don't match any policy rule.
 
@@ -651,5 +669,12 @@ class AgentWardPolicy(BaseModel):
             "LLM-as-judge intent analysis configuration. "
             "When enabled, uses a secondary LLM call to detect when a tool's "
             "actual arguments don't match its declared description/purpose."
+        ),
+    )
+    audit: AuditConfig = Field(
+        default_factory=AuditConfig,
+        description=(
+            "Audit log output configuration. "
+            "Use audit.syslog_path to override the default RFC 5424 syslog file location."
         ),
     )
