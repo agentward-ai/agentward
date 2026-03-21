@@ -1,0 +1,5 @@
+name = "floral-cherry-25dc"
+compatibility_date = "2025-03-21"
+
+[assets]
+directory = "./docs/Site"

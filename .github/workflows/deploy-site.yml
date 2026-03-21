@@ -1,4 +1,4 @@
-name: Deploy Site to Cloudflare Pages
+name: Deploy Site to Cloudflare Workers
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "docs/Site/**"
+      - "wrangler.toml"
   workflow_dispatch:
 
 jobs:
@@ -18,11 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy to Cloudflare Pages
-        uses: cloudflare/pages-action@v1
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: floral-cherry-25dc
-          directory: docs/Site
-          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
