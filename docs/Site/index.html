@@ -131,6 +131,38 @@
     .card p{font-size:14.5px;line-height:1.75;color:#aaa}
     .card strong{color:var(--white)}
 
+    /* ── Split scan panel ── */
+    .split{display:grid;grid-template-columns:1fr 1fr;gap:0;border-radius:12px;overflow:hidden;border:1px solid var(--border2);margin-top:28px}
+    @media(max-width:660px){.split{grid-template-columns:1fr}}
+    .split-left{background:#050505;padding:20px 22px;height:480px;overflow:hidden;display:flex;flex-direction:column}
+    .split-left-scroll{overflow-y:auto;flex:1}
+    .split-left-scroll::-webkit-scrollbar{width:4px}
+    .split-left-scroll::-webkit-scrollbar-track{background:transparent}
+    .split-left-scroll::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+    .split-right{background:#0b0f0c;padding:20px 22px;border-left:1px solid var(--border);height:480px;overflow-y:auto}
+    .split-right::-webkit-scrollbar{width:4px}
+    .split-right::-webkit-scrollbar-track{background:transparent}
+    .split-right::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+    .split-header{font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--green);letter-spacing:2px;text-transform:uppercase;margin-bottom:16px;opacity:.7}
+    .log-line{line-height:1.85;white-space:pre;opacity:0;transition:opacity .2s ease}
+    .log-line.show{opacity:1}
+    .risk-row{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-radius:7px;margin-bottom:5px;opacity:0;transform:translateX(12px);transition:opacity .35s ease,transform .35s ease;font-size:12.5px}
+    .risk-row.show{opacity:1;transform:translateX(0)}
+    .tool-name{font-family:var(--font-mono);font-size:11.5px;color:var(--white)}
+    .tool-src{font-size:10px;color:var(--muted);margin-left:5px}
+    .risk-badge{font-family:var(--font-mono);font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px;white-space:nowrap}
+    .badge-crit{background:#ff444420;color:var(--red);border:1px solid #ff444330}
+    .badge-high{background:#ff8c4220;color:var(--orange);border:1px solid #ff8c4230}
+    .badge-med{background:#ffcc0020;color:var(--yellow);border:1px solid #ffcc0030}
+    .badge-low{background:#00ff8820;color:var(--green);border:1px solid var(--green-border)}
+    .chain-alert{margin-top:12px;padding:10px 12px;border-radius:8px;background:#ff8c4210;border:1px solid #ff8c4230;opacity:0;transition:opacity .4s ease}
+    .chain-alert.show{opacity:1}
+    .chain-label{font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--orange);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px}
+    .chain-detail{font-size:11.5px;color:#aaa;font-family:var(--font-mono)}
+    .summary-bar{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;opacity:0;transition:opacity .4s ease}
+    .summary-bar.show{opacity:1}
+    .sum-pill{font-family:var(--font-mono);font-size:10.5px;padding:3px 9px;border-radius:5px}
+
     /* ── Terminal ── */
     .terminal-wrap{margin-top:32px}
     .terminal{background:#050505;border:1px solid var(--border2);border-radius:12px;overflow:hidden}
@@ -436,21 +468,29 @@
   </div>
 </div>
 
-<!-- ANIMATED TERMINAL -->
+<!-- SPLIT SCAN PANEL -->
 <div class="section-sm" style="padding-top:0">
   <div class="eyebrow">What You'd See Running It</div>
   <h2 class="section-title">Full scan output, step by step.</h2>
-  <div class="terminal-wrap">
-    <div class="terminal">
-      <div class="terminal-bar">
-        <div class="tdot" style="background:#ff5f57"></div>
-        <div class="tdot" style="background:#febc2e"></div>
-        <div class="tdot" style="background:#28c840"></div>
-        <span class="terminal-bar-label">agentward scan ~/</span>
+  <div class="split">
+    <div class="split-left">
+      <div class="split-left-scroll" id="termB-scroll">
+        <div id="termB-lines"></div>
+        <span class="cursor" id="cursorB" style="opacity:0"></span>
       </div>
-      <div class="terminal-body" id="terminalLines" style="min-height:320px;overflow-y:auto;max-height:420px"></div>
-      <div class="terminal-body" style="padding-top:0;border-top:1px solid var(--border)">
-        <span id="terminalCursor" style="opacity:0"><span class="t-c">$</span> <span class="cursor"></span></span>
+    </div>
+    <div class="split-right">
+      <div class="split-header">Risk findings</div>
+      <div id="riskRows"></div>
+      <div class="chain-alert" id="chainAlert">
+        <div class="chain-label">⚠ Skill chain detected</div>
+        <div class="chain-detail">email-mgr → web-browser<br><span style="color:var(--muted)">lateral data movement risk</span></div>
+      </div>
+      <div class="summary-bar" id="summaryBar">
+        <span class="sum-pill" style="background:#ff444418;color:var(--red)">3 critical</span>
+        <span class="sum-pill" style="background:#ff8c4218;color:var(--orange)">4 high</span>
+        <span class="sum-pill" style="background:#ffcc0018;color:var(--yellow)">1 medium</span>
+        <span class="sum-pill" style="background:#00ff8818;color:var(--green)">1 low</span>
       </div>
     </div>
   </div>
@@ -563,58 +603,104 @@ function copyCmd(){
     setTimeout(()=>{i.textContent='⎘';i.style.opacity='0.4';i.style.color=''},2000)}
 }
 
-// ── Terminal animation ──
-const terminalLines = [
-  { text: '$ pip install agentward',                                           color: '#00ff88', delay: 0 },
-  { text: '$ agentward scan ~/',                                               color: '#00ff88', delay: 600 },
-  { text: '',                                                                  color: '',        delay: 900 },
-  { text: '🔍 Auto-discovering tool sources...',                               color: '#666',    delay: 1100 },
-  { text: '   Found: ~/.cursor/mcp.json (4 MCP servers)',                      color: '#5eead4', delay: 1400 },
-  { text: '   Found: ~/projects/*.py (6 tool definitions)',                    color: '#5eead4', delay: 1700 },
-  { text: '   Found: ~/.openclaw/skills/ (9 OpenClaw skills)',                 color: '#5eead4', delay: 2000 },
-  { text: '',                                                                  color: '',        delay: 2200 },
-  { text: '⚡ Enumerating live MCP servers...',                                color: '#666',    delay: 2400 },
-  { text: '⚡ Scanning Python SDK tools (OpenAI, LangChain)...',               color: '#666',    delay: 2700 },
-  { text: '⚡ Analyzing OpenClaw skill permissions...',                        color: '#666',    delay: 3000 },
-  { text: '',                                                                  color: '',        delay: 3200 },
-  { text: '┌──────────────────────────────────────────────────────┐',         color: '#2a2a2a', delay: 3400 },
-  { text: '│  Source             Tool/Skill        Risk           │',         color: '#444',    delay: 3500 },
-  { text: '├──────────────────────────────────────────────────────┤',         color: '#2a2a2a', delay: 3600 },
-  { text: '│  MCP  filesystem    read,write,del    🔴 CRITICAL    │',         color: '#ff4444', delay: 3800 },
-  { text: '│  MCP  slack         all-channels      ⚠  HIGH        │',         color: '#ff8c42', delay: 4000 },
-  { text: '│  MCP  postgres      read,write        ⚠  MEDIUM      │',         color: '#ffcc00', delay: 4200 },
-  { text: '│  MCP  github        repos,issues      ✓  LOW         │',         color: '#00ff88', delay: 4400 },
-  { text: '│  Skill email-mgr    send,read,del     ⚠  HIGH        │',         color: '#ff8c42', delay: 4600 },
-  { text: '│  Skill web-browser  navigate,js,dl    ⚠  HIGH        │',         color: '#ff8c42', delay: 4800 },
-  { text: '│  Skill finance      read,network      🔴 CRITICAL    │',         color: '#ff4444', delay: 5000 },
-  { text: '│  SDK  shell_exec    subprocess        🔴 CRITICAL    │',         color: '#ff4444', delay: 5200 },
-  { text: '│  SDK  send_email    smtp,attachments  ⚠  HIGH        │',         color: '#ff8c42', delay: 5400 },
-  { text: '└──────────────────────────────────────────────────────┘',         color: '#2a2a2a', delay: 5600 },
-  { text: '',                                                                  color: '',        delay: 5800 },
-  { text: '⚠ Skill chain detected: email-mgr → web-browser',                   color: '#ff8c42', delay: 6000 },
-  { text: '  Lateral movement — email content could leak via browsing',       color: '#664400', delay: 6200 },
-  { text: '',                                                                  color: '',        delay: 6400 },
-  { text: '3 critical · 4 high · 1 medium · 1 low',                           color: '#f0f0f0', delay: 6600 },
-  { text: '→ Run `agentward configure` to generate policies',                  color: '#00ff88', delay: 7000 },
+// ── Split scan panel animation ──
+const logLinesB = [
+  { text:'$ agentward scan ~/', color:'var(--green)', delay:0 },
+  { text:'', delay:200 },
+  { text:'🔍 Auto-discovering tool sources…', color:'#888', delay:320 },
+  { text:'   Found: ~/.cursor/mcp.json', color:'#5eead4', delay:560 },
+  { text:'         → 4 MCP servers', color:'#5eead4', delay:680 },
+  { text:'   Found: ~/projects/*.py', color:'#5eead4', delay:800 },
+  { text:'         → 6 Python tool defs', color:'#5eead4', delay:920 },
+  { text:'   Found: ~/.openclaw/skills/', color:'#5eead4', delay:1040 },
+  { text:'         → 9 OpenClaw skills', color:'#5eead4', delay:1160 },
+  { text:'', delay:1260 },
+  { text:'⚡ Enumerating live MCP servers…', color:'#888', delay:1320 },
+  { text:'   [MCP]   filesystem   read,write,del', color:'#ff4444', delay:1450 },
+  { text:'   [SDK]   shell_exec   subprocess', color:'#ff4444', delay:1650 },
+  { text:'   [Skill] finance      read,network', color:'#ff4444', delay:1850 },
+  { text:'', delay:1950 },
+  { text:'⚡ Scanning Python SDK tools…', color:'#888', delay:2000 },
+  { text:'   [Skill] email-mgr    send,read,del', color:'#ff8c42', delay:2050 },
+  { text:'   [Skill] web-browser  navigate,js,dl', color:'#ff8c42', delay:2210 },
+  { text:'   [MCP]   slack        all-channels', color:'#ff8c42', delay:2370 },
+  { text:'   [SDK]   send_email   smtp,attachments', color:'#ff8c42', delay:2530 },
+  { text:'', delay:2650 },
+  { text:'⚡ Analyzing OpenClaw skill permissions…', color:'#888', delay:2700 },
+  { text:'   [MCP]   postgres     read,write', color:'#ffcc00', delay:2820 },
+  { text:'   [MCP]   github       repos,issues', color:'#00ff88', delay:3000 },
+  { text:'', delay:3100 },
+  { text:'⚠  Chain: email-mgr → web-browser', color:'#ff8c42', delay:3180 },
+  { text:'   Lateral movement — email → browser exfil', color:'#664400', delay:3300 },
+  { text:'', delay:3450 },
+  { text:'Scan complete. 9 tools · 3 sources', color:'#d8d8d8', delay:3550 },
+  { text:'3 critical · 4 high · 1 medium · 1 low', color:'#d8d8d8', delay:3700 },
+  { text:'', delay:3850 },
+  { text:'→ agentward init  (generate policy)', color:'var(--green)', delay:3950 },
 ];
 
-const container = document.getElementById('terminalLines');
-const cursor = document.getElementById('terminalCursor');
+const riskRowsData = [
+  { name:'filesystem', src:'MCP', perms:'read·write·del', cls:'crit', label:'🔴 CRITICAL', delay:1450 },
+  { name:'shell_exec', src:'SDK', perms:'subprocess', cls:'crit', label:'🔴 CRITICAL', delay:1650 },
+  { name:'finance', src:'Skill', perms:'read·network', cls:'crit', label:'🔴 CRITICAL', delay:1850 },
+  { name:'email-mgr', src:'Skill', perms:'send·read·del', cls:'high', label:'⚠ HIGH', delay:2050 },
+  { name:'web-browser', src:'Skill', perms:'navigate·js·dl', cls:'high', label:'⚠ HIGH', delay:2210 },
+  { name:'slack', src:'MCP', perms:'all-channels', cls:'high', label:'⚠ HIGH', delay:2370 },
+  { name:'send_email', src:'SDK', perms:'smtp·attach', cls:'high', label:'⚠ HIGH', delay:2530 },
+  { name:'postgres', src:'MCP', perms:'read·write', cls:'med', label:'◆ MEDIUM', delay:2820 },
+  { name:'github', src:'MCP', perms:'repos·issues', cls:'low', label:'✓ LOW', delay:3000 },
+];
 
-terminalLines.forEach((line, i) => {
-  setTimeout(() => {
-    const div = document.createElement('div');
-    div.style.color = line.color || 'transparent';
-    div.style.whiteSpace = 'pre';
-    div.style.fontFamily = "'IBM Plex Mono', 'JetBrains Mono', monospace";
-    div.style.fontSize = '12.5px';
-    div.style.lineHeight = '1.85';
-    div.textContent = line.text || '\u00A0';
-    container.appendChild(div);
-    container.scrollTop = container.scrollHeight;
-    if (i === terminalLines.length - 1) cursor.style.opacity = '1';
-  }, line.delay);
-});
+function runScanPanel() {
+  const logContainer = document.getElementById('termB-lines');
+  const scrollEl     = document.getElementById('termB-scroll');
+  const rowContainer = document.getElementById('riskRows');
+  const chainAlert   = document.getElementById('chainAlert');
+  const summaryBar   = document.getElementById('summaryBar');
+  const cursorB      = document.getElementById('cursorB');
+
+  logContainer.innerHTML = '';
+  rowContainer.innerHTML = '';
+  chainAlert.classList.remove('show');
+  summaryBar.classList.remove('show');
+  cursorB.style.opacity = '0';
+
+  logLinesB.forEach((line, i) => {
+    setTimeout(() => {
+      const div = document.createElement('div');
+      div.className = 'log-line';
+      div.style.color = line.color || 'transparent';
+      div.style.whiteSpace = 'pre';
+      div.style.fontFamily = 'var(--font-mono)';
+      div.style.fontSize = '11px';
+      div.style.lineHeight = '1.85';
+      div.textContent = line.text || '\u00A0';
+      logContainer.appendChild(div);
+      requestAnimationFrame(() => {
+        div.classList.add('show');
+        scrollEl.scrollTop = scrollEl.scrollHeight;
+      });
+      if (i === logLinesB.length - 1) {
+        cursorB.style.opacity = '1';
+        setTimeout(runScanPanel, 2800);
+      }
+    }, line.delay);
+  });
+
+  riskRowsData.forEach(r => {
+    setTimeout(() => {
+      const row = document.createElement('div');
+      row.className = 'risk-row';
+      row.innerHTML = `<span><span class="tool-name">${r.name}</span><span class="tool-src">${r.src}</span></span><span class="risk-badge badge-${r.cls}">${r.label}</span>`;
+      rowContainer.appendChild(row);
+      requestAnimationFrame(() => row.classList.add('show'));
+    }, r.delay);
+  });
+
+  setTimeout(() => chainAlert.classList.add('show'), 3200);
+  setTimeout(() => summaryBar.classList.add('show'), 3600);
+}
+runScanPanel();
 </script>
 </body>
 </html>
