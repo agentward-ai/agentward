@@ -1,8 +1,12 @@
 """Structured audit logging for AgentWard.
 
 Logs every policy decision as structured JSON. Writes to stderr (via rich)
-for human-readable output, and optionally to a JSON Lines file for machine
-consumption and SIEM ingestion.
+for human-readable output, and optionally to a JSON Lines file and an RFC 5424
+syslog file for machine consumption and SIEM ingestion.
+
+When a log_path is provided both JSONL and syslog files are always written
+simultaneously — the syslog path defaults to the JSONL path with a .syslog
+extension but can be overridden via the policy's ``audit.syslog_path`` setting.
 """
 
 from __future__ import annotations
@@ -11,6 +15,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO, Any
+
+from agentward.audit.syslog_formatter import format_rfc5424
 
 from rich.console import Console
 
@@ -29,25 +35,52 @@ class AuditLogger:
         log_file: Optional open file handle for JSON Lines output.
     """
 
-    def __init__(self, log_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        log_path: Path | None = None,
+        syslog_path: Path | None = None,
+    ) -> None:
         """Initialize the audit logger.
 
         Args:
             log_path: Optional path to write structured JSON Lines audit log.
                       If None, only logs to stderr via rich console.
+            syslog_path: Optional path for the RFC 5424 syslog output file.
+                         When log_path is set and syslog_path is None, the
+                         syslog file is written alongside the JSONL file with
+                         a ``.syslog`` extension.  Ignored when log_path is None.
         """
         self._log_file: IO[str] | None = None
         self._log_path = log_path
+        self._syslog_file: IO[str] | None = None
+
         if log_path is not None:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             self._log_file = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
 
+            # Always open syslog file alongside the JSONL file.
+            effective_syslog = (
+                syslog_path if syslog_path is not None else log_path.with_suffix(".syslog")
+            )
+            effective_syslog.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                self._syslog_file = open(effective_syslog, "a", encoding="utf-8")  # noqa: SIM115
+            except OSError as e:
+                _console.print(
+                    f"[bold red]Syslog file open failed:[/bold red] {e}",
+                    highlight=False,
+                )
+
     def close(self) -> None:
-        """Flush and close the log file if open."""
+        """Flush and close both log files if open."""
         if self._log_file is not None:
             self._log_file.flush()
             self._log_file.close()
             self._log_file = None
+        if self._syslog_file is not None:
+            self._syslog_file.flush()
+            self._syslog_file.close()
+            self._syslog_file = None
 
     def log_tool_call(
         self,
@@ -449,9 +482,9 @@ class AuditLogger:
         _console.print(f"[bold]AgentWard proxy stopped:[/bold] {reason}")
 
     def _write_entry(self, entry: dict[str, Any]) -> None:
-        """Write a structured JSON entry to the log file.
+        """Write a structured JSON entry to both log files.
 
-        If the write fails (disk full, permission error, etc.), logs the
+        If a write fails (disk full, permission error, etc.), logs the
         failure to stderr and continues — the proxy must not crash due to
         audit I/O errors.
 
@@ -475,6 +508,21 @@ class AuditLogger:
                 except (OSError, ValueError):
                     pass
                 self._log_file = None
+
+        if self._syslog_file is not None:
+            try:
+                self._syslog_file.write(format_rfc5424(entry) + "\n")
+                self._syslog_file.flush()
+            except (OSError, ValueError) as e:
+                _console.print(
+                    f"[bold red]Syslog write failed:[/bold red] {e}",
+                    highlight=False,
+                )
+                try:
+                    self._syslog_file.close()
+                except (OSError, ValueError):
+                    pass
+                self._syslog_file = None
 
 
 def _redact_for_audit(arguments: dict[str, Any]) -> dict[str, Any]:
