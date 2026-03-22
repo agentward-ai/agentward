@@ -5,10 +5,10 @@ that fires them through the live policy engine to detect misconfigurations
 and coverage gaps.
 
 Usage:
-    agentward test --policy agentward.yaml
-    agentward test --category protected_paths --severity critical
-    agentward test --probes custom_probes.yaml
-    agentward test --list
+    agentward probe --policy agentward.yaml
+    agentward probe --category protected_paths --severity critical
+    agentward probe --probes custom_probes.yaml
+    agentward probe --list
 """
 
 from agentward.testing.models import Probe, ProbeCategory, ProbeOutcome, ProbeSeverity, ProbeResult
