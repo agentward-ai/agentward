@@ -197,6 +197,7 @@
       <a href="#setup">agentward setup</a>
       <a href="#inspect">agentward inspect</a>
       <a href="#comply">agentward comply</a>
+      <a href="#test">agentward test</a>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-label">Configuration</div>
@@ -414,6 +415,103 @@ agentward comply --framework pci-dss --policy custom.yaml  <span class="dim"># c
             <li>Least Privilege Isolation Req. 7 — cardholder data skill isolation via chaining</li>
             <li>Secure Default Req. 6 — best practice: <code>default_action: block</code></li>
           </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- TEST -->
+    <div class="doc-section" id="test">
+      <div class="eyebrow">Stage 5 — Verification</div>
+      <div class="cmd-block">
+        <div class="cmd-header">
+          <span class="cmd-name">agentward test</span>
+          <span class="cmd-badge live">LIVE</span>
+        </div>
+        <div class="cmd-desc">
+          <p>Policy regression testing. Fires a curated library of adversarial tool calls through the live policy engine and reports which attack categories your policy correctly handles. Policies drift over time — <code>agentward test</code> catches regressions before they reach production.</p>
+        </div>
+        <div class="cmd-body">
+          <pre>agentward test --policy agentward.yaml           <span class="dim"># run all 68 built-in probes</span>
+agentward test --category protected_paths        <span class="dim"># filter by attack category</span>
+agentward test --severity critical               <span class="dim"># filter by severity</span>
+agentward test --probes my_probes.yaml           <span class="dim"># add custom probe file</span>
+agentward test --list                            <span class="dim"># catalogue all available probes</span>
+agentward test --strict                          <span class="dim"># treat GAPs as failures (CI mode)</span>
+agentward test --verbose                         <span class="dim"># per-probe detail even when all pass</span></pre>
+          <table class="option-table">
+            <tr><th>OPTION</th><th>DESCRIPTION</th></tr>
+            <tr><td>-p / --policy PATH</td><td>Policy file to test against (default: safety-floor only)</td></tr>
+            <tr><td>-c / --category NAME</td><td>Filter to one or more attack categories. Repeat for multiple.</td></tr>
+            <tr><td>-s / --severity NAME</td><td>Filter to one or more severity levels. Repeat for multiple.</td></tr>
+            <tr><td>--probes PATH</td><td>Additional probe file (.yaml) or directory. Repeat for multiple paths.</td></tr>
+            <tr><td>--list</td><td>List all available probes and exit (no tests run)</td></tr>
+            <tr><td>--strict</td><td>Treat GAP results as failures — exit code 1 on any uncovered attack surface</td></tr>
+            <tr><td>--verbose</td><td>Print per-probe result table even when all probes pass</td></tr>
+          </table>
+
+          <h3>Result states</h3>
+          <p>Each probe produces one of four outcomes:</p>
+          <table class="option-table">
+            <tr><th>STATE</th><th>MEANING</th></tr>
+            <tr><td>✓ PASS</td><td>Policy returned the expected verdict — this attack category is covered</td></tr>
+            <tr><td>✗ FAIL</td><td>Policy has a rule for this tool but returned the wrong verdict — <strong>active misconfiguration</strong></td></tr>
+            <tr><td>△ GAP</td><td>No policy rule covers this tool — the engine fell through to the default action — <strong>coverage gap</strong></td></tr>
+            <tr><td>– SKIP</td><td>Probe requires a feature not enabled in your policy (e.g. <code>skill_chaining</code>)</td></tr>
+          </table>
+          <p>FAIL and GAP are distinct on purpose. A FAIL means you have a rule that is producing the wrong result — fix the rule. A GAP means you have no rule for that attack surface — decide whether to add one.</p>
+
+          <h3>Built-in attack categories</h3>
+          <table class="option-table">
+            <tr><th>CATEGORY</th><th>PROBES</th><th>WHAT IT TESTS</th></tr>
+            <tr><td>protected_paths</td><td>14</td><td>SSH keys, AWS credentials, k8s config, GPG, Docker — non-overridable safety floor. Always PASS.</td></tr>
+            <tr><td>path_traversal</td><td>7</td><td><code>../</code> sequences, tilde expansion, null-byte injection toward protected directories</td></tr>
+            <tr><td>scope_creep</td><td>8</td><td>Write / delete / send actions beyond declared read-only permissions</td></tr>
+            <tr><td>privilege_escalation</td><td>9</td><td>sudo, SUID bits, crontab injection, kernel modules, <code>LD_PRELOAD</code>, Python eval</td></tr>
+            <tr><td>skill_chaining</td><td>7</td><td>Cross-skill exfiltration: email→web, finance→*, EHR→web, web→shell</td></tr>
+            <tr><td>pii_injection</td><td>6</td><td>SSN, credit card, PHI, bank account, API keys in tool arguments</td></tr>
+            <tr><td>deserialization</td><td>7</td><td>Pickle, YAML <code>!!python/object</code>, Java serial, PHP object injection, XML billion-laughs</td></tr>
+            <tr><td>boundary_violation</td><td>5</td><td>PHI / PII / financial data crossing data-boundary zone lines</td></tr>
+            <tr><td>prompt_injection</td><td>5</td><td>Classic jailbreaks, role escalation, exfiltration instructions in email templates</td></tr>
+          </table>
+
+          <h3>Writing custom probes</h3>
+          <p>Create a <code>.yaml</code> file with a top-level <code>probes</code> list. Pass it with <code>--probes</code>. A probe with the same <code>name</code> as a built-in overrides the built-in — so you can adjust defaults for your environment. Point <code>--probes</code> at a directory to load an entire folder at once.</p>
+          <div class="yaml-block"><span class="yaml-cmt"># my_org_probes.yaml</span>
+<span class="yaml-key">probes</span>:
+  <span class="yaml-cmt"># Tool-call probe — tests a specific MCP tool + arguments</span>
+  - <span class="yaml-key">name</span>: <span class="yaml-str">crm_bulk_export_blocked</span>
+    <span class="yaml-key">category</span>: <span class="yaml-str">scope_creep</span>
+    <span class="yaml-key">severity</span>: <span class="yaml-str">critical</span>
+    <span class="yaml-key">description</span>: <span class="yaml-str">"CRM bulk export must require approval, not run freely"</span>
+    <span class="yaml-key">tool_name</span>: <span class="yaml-str">crm_export_all</span>
+    <span class="yaml-key">arguments</span>:
+      <span class="yaml-key">format</span>: <span class="yaml-str">csv</span>
+      <span class="yaml-key">include_pii</span>: <span class="yaml-bool-t">true</span>
+    <span class="yaml-key">expected</span>: <span class="yaml-str">BLOCK</span>
+    <span class="yaml-key">rationale</span>: <span class="yaml-str">"Bulk export of CRM data is high-blast-radius and irreversible"</span>
+
+  <span class="yaml-cmt"># Skill-chaining probe — tests evaluate_chaining() directly</span>
+  - <span class="yaml-key">name</span>: <span class="yaml-str">crm_to_email_exfiltration</span>
+    <span class="yaml-key">category</span>: <span class="yaml-str">skill_chaining</span>
+    <span class="yaml-key">severity</span>: <span class="yaml-str">critical</span>
+    <span class="yaml-key">description</span>: <span class="yaml-str">"CRM skill must not be able to trigger email sending"</span>
+    <span class="yaml-key">chaining_source</span>: <span class="yaml-str">crm-manager</span>
+    <span class="yaml-key">chaining_target</span>: <span class="yaml-str">email-manager</span>
+    <span class="yaml-key">expected</span>: <span class="yaml-str">BLOCK</span>
+    <span class="yaml-key">rationale</span>: <span class="yaml-str">"Prevents exfiltrating customer records via email"</span>
+    <span class="yaml-key">requires_policy_feature</span>: <span class="yaml-str">skill_chaining</span></div>
+
+          <p>Required probe fields: <code>name</code>, <code>category</code>, <code>severity</code>, <code>description</code>, <code>expected</code>, and either <code>tool_name</code> or both <code>chaining_source</code> + <code>chaining_target</code>.</p>
+          <p>Optional: <code>arguments</code> (dict), <code>rationale</code> (shown on failure), <code>requires_policy_feature</code> (skip probe if feature absent — values: <code>skill_chaining</code>, <code>require_approval</code>, <code>sensitive_content</code>, <code>data_boundaries</code>, <code>llm_judge</code>).</p>
+
+          <h3>CI integration</h3>
+          <pre>agentward test --policy agentward.yaml                    <span class="dim"># exit 0 on pass, 1 on fail</span>
+agentward test --policy agentward.yaml --strict           <span class="dim"># exit 1 on fail OR gap</span>
+agentward test --policy agentward.yaml --severity critical <span class="dim"># fast: only critical probes</span></pre>
+          <p>Exit code <code>0</code> — all probes passed (or were skipped). Exit code <code>1</code> — at least one FAIL (or GAP in <code>--strict</code> mode). Designed for direct integration into CI pipelines.</p>
+          <pre><span class="dim"># .github/workflows/ci.yaml</span>
+- <span class="w">name</span>: Policy regression test
+  <span class="w">run</span>: agentward test --policy agentward.yaml --strict --severity critical,high</pre>
         </div>
       </div>
     </div>
