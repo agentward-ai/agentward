@@ -168,7 +168,41 @@ agentward audit --json                         # machine-readable output
 
 Shows summary stats, decision breakdowns (ALLOW/BLOCK/APPROVE counts), top tools, chain violations, and optionally a chronological timeline.
 
-#### 7. Compare policy changes
+#### 7. Enterprise SIEM integration
+
+AgentWard writes every audit event in **two formats simultaneously**:
+
+- **JSON Lines** (`agentward-audit.jsonl`) — structured JSON, used by `agentward audit` and `agentward status`
+- **RFC 5424 syslog** (`agentward-audit.syslog`) — industry-standard syslog, ready for any SIEM or log shipper
+
+The syslog file is automatically created alongside the JSONL file (same path, `.syslog` extension). Both are always written — no toggle, no config needed to enable.
+
+**Compatible with Splunk Universal Forwarder, Wazuh, Graylog, ELK/Filebeat, Microsoft Sentinel, Fluentd, rsyslog, and any other tool that reads RFC 5424 syslog.** The format compliance is what gives universal compatibility — point any log shipper at the `.syslog` file and it works.
+
+Each syslog line uses the `LOG_USER` facility and includes a structured data element `[agentward@0 ...]` with tool name, decision, skill, resource, policy reason, and event-specific fields. Example:
+
+```
+<12>1 2026-03-20T10:00:00+00:00 host agentward 4521 tool_call [agentward@0 event="tool_call" tool="gmail_send" decision="BLOCK" skill="email-manager" resource="gmail" reason="send action is not permitted"] BLOCK gmail_send: send action is not permitted
+```
+
+**Severity mapping:**
+
+| Decision / Event | RFC 5424 Severity |
+|---|---|
+| ALLOW, LOG, startup/shutdown | Informational (6) |
+| REDACT, APPROVE, approval dialogs | Notice (5) |
+| BLOCK, judge FLAG/BLOCK, sensitive data blocked, boundary violation block | Warning (4) |
+| BLOCK via skill chain violation | Error (3) |
+| Circuit breaker trip | Alert (1) |
+
+**Override the syslog file path in your policy YAML:**
+
+```yaml
+audit:
+  syslog_path: /var/log/agentward/audit.syslog   # default: alongside the JSONL file
+```
+
+#### 8. Compare policy changes
 
 ```bash
 agentward diff old.yaml new.yaml               # rich diff output

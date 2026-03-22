@@ -202,6 +202,7 @@
     <div class="sidebar-section">
       <div class="sidebar-label">Configuration</div>
       <a href="#policy-yaml">Policy YAML</a>
+      <a href="#audit-logging">Audit Logging</a>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-label">Troubleshooting</div>
@@ -570,7 +571,50 @@ agentward test --policy agentward.yaml --severity critical <span class="dim"># f
     <span class="yaml-key">classification</span>: <span class="yaml-val">phi</span>
     <span class="yaml-key">rules</span>:
       - <span class="yaml-val">phi_data cannot flow outside hipaa_zone</span>
-    <span class="yaml-key">on_violation</span>: <span class="yaml-val">block_and_notify</span></div>
+    <span class="yaml-key">on_violation</span>: <span class="yaml-val">block_and_notify</span>
+
+<span class="yaml-cmt"># Audit log output (both JSONL and RFC 5424 syslog are always written)</span>
+<span class="yaml-key">audit</span>:
+  <span class="yaml-key">syslog_path</span>: <span class="yaml-str">/var/log/agentward/audit.syslog</span>   <span class="yaml-cmt"># default: alongside the JSONL file</span></div>
+    </div>
+
+    <!-- AUDIT LOGGING -->
+    <div class="doc-section" id="audit-logging">
+      <div class="eyebrow">Configuration</div>
+      <h2>Audit Logging &amp; Enterprise SIEM</h2>
+      <p>AgentWard writes every audit event in <strong style="color:var(--white)">two formats simultaneously</strong> — no configuration required to enable dual-mode output.</p>
+
+      <h3>Dual-mode output</h3>
+      <ul>
+        <li><strong style="color:#ccc">JSON Lines</strong> (<code>agentward-audit.jsonl</code>) — structured JSON used by <code>agentward audit</code> and <code>agentward status</code></li>
+        <li><strong style="color:#ccc">RFC 5424 syslog</strong> (<code>agentward-audit.syslog</code>) — industry-standard syslog, automatically created alongside the JSONL file with a <code>.syslog</code> extension</li>
+      </ul>
+
+      <p>Both files are always written when <code>--log</code> is active. There is no toggle — the syslog file is a built-in second output, not an optional feature.</p>
+
+      <h3>SIEM compatibility</h3>
+      <p>Compatible with <strong style="color:var(--white)">Splunk Universal Forwarder, Wazuh, Graylog, ELK / Filebeat, Microsoft Sentinel, Fluentd, rsyslog</strong>, and any other tool that reads RFC 5424 syslog. RFC 5424 format compliance is what gives universal compatibility — point any log shipper at the <code>.syslog</code> file and it works without any custom parsing rules.</p>
+
+      <p>Each line uses the <code>LOG_USER</code> facility and includes a structured data element <code>[agentward@0 ...]</code> with all relevant audit fields. Example line:</p>
+      <pre><span class="dim"># BLOCK decision — Warning severity (PRI=12)</span>
+<span class="w">&lt;12&gt;1 2026-03-20T10:00:00+00:00 host agentward 4521 tool_call [agentward@0 event="tool_call" tool="gmail_send" decision="BLOCK" skill="email-manager" resource="gmail" reason="send action is not permitted"] BLOCK gmail_send: send action is not permitted</span></pre>
+
+      <h3>Severity mapping</h3>
+      <table class="option-table">
+        <tr><th>DECISION / EVENT</th><th>RFC 5424 SEVERITY</th></tr>
+        <tr><td>ALLOW, LOG, startup / shutdown</td><td>Informational (6)</td></tr>
+        <tr><td>REDACT, APPROVE, approval dialogs, boundary log</td><td>Notice (5)</td></tr>
+        <tr><td>BLOCK, judge FLAG / BLOCK, sensitive data blocked, boundary block</td><td>Warning (4)</td></tr>
+        <tr><td>BLOCK via skill chain violation</td><td>Error (3)</td></tr>
+        <tr><td>Circuit breaker trip</td><td>Alert (1)</td></tr>
+      </table>
+
+      <h3>Override the syslog path</h3>
+      <p>By default the syslog file lives alongside the JSONL file. Override it with the <code>audit.syslog_path</code> field in your policy YAML:</p>
+      <pre><span class="dim"># agentward.yaml</span>
+<span class="yaml-key">audit</span>:
+  <span class="yaml-key">syslog_path</span>: <span class="yaml-str">/var/log/agentward/audit.syslog</span>   <span class="dim"># absolute or relative path</span></pre>
+      <p>If <code>audit.syslog_path</code> is not set, the path is derived automatically: <code>--log /path/to/audit.jsonl</code> → syslog at <code>/path/to/audit.syslog</code>.</p>
     </div>
 
     <!-- TROUBLESHOOTING: CLAWDBOT -->

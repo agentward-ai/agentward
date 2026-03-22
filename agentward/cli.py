@@ -182,10 +182,17 @@ def inspect(
             _console.print(f"[bold red]Policy error:[/bold red] {e}", highlight=False)
             raise typer.Exit(1) from None
 
-    # Create audit logger
+    # Create audit logger — resolve optional syslog_path from policy config
     from agentward.audit.logger import AuditLogger
 
-    audit_logger = AuditLogger(log_path=log)
+    syslog_path = None
+    if loaded_policy := (
+        policy_engine.policy if policy_engine is not None else None
+    ):
+        if loaded_policy.audit.syslog_path:
+            syslog_path = Path(loaded_policy.audit.syslog_path)
+
+    audit_logger = AuditLogger(log_path=log, syslog_path=syslog_path)
 
     # Create chain tracker if policy has chaining rules
     from agentward.policy.schema import ChainingMode

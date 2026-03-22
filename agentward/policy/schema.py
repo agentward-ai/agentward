@@ -574,6 +574,44 @@ class LlmJudgeConfig(BaseModel):
             "Add 'log' to also judge LOG decisions."
         ),
     )
+    dual_verify: bool = Field(
+        default=False,
+        description=(
+            "When true, BLOCK verdicts are confirmed with a second differently-worded judge call. "
+            "If the two judges disagree, escalates to FLAG instead of BLOCK. "
+            "Prevents a single compromised or confused judge call from hard-blocking a tool."
+        ),
+    )
+    override_rate_threshold: float = Field(
+        default=0.80,
+        description=(
+            "If the judge returns ALLOW for more than this fraction of evaluated calls "
+            "(over the last override_rate_window calls), log a WARNING about potential judge "
+            "manipulation. Set to 1.0 to disable. Default 0.80."
+        ),
+    )
+    override_rate_window: int = Field(
+        default=20,
+        description=(
+            "Number of recent judge calls used to compute the ALLOW rate for override-rate "
+            "detection. Smaller windows react faster; larger windows reduce noise."
+        ),
+    )
+    canary_interval: int = Field(
+        default=0,
+        description=(
+            "Inject a known-bad canary probe into the judge every N real tool calls. "
+            "If the judge fails to flag the canary, a CRITICAL alert is logged. "
+            "Set to 0 (default) to disable canary probes."
+        ),
+    )
+    desc_max_len: int = Field(
+        default=2000,
+        description=(
+            "Maximum characters allowed in a tool description before it is truncated. "
+            "Limits prompt-injection surface via excessively long descriptions."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -597,6 +635,24 @@ class LlmJudgeConfig(BaseModel):
                     v.upper() if isinstance(v, str) else v for v in value
                 ]
         return result
+
+
+class AuditConfig(BaseModel):
+    """Configuration for audit log output paths.
+
+    Controls where AgentWard writes its structured audit files.
+    Both JSONL and syslog are always written when ``--log`` is active —
+    this setting only changes *where* the syslog file lands.
+    """
+
+    syslog_path: str | None = Field(
+        default=None,
+        description=(
+            "Path for the RFC 5424 syslog output file. "
+            "Defaults to the JSONL log path with a .syslog extension. "
+            "Accepts absolute paths or paths relative to the working directory."
+        ),
+    )
 
 
 class DefaultAction(str, Enum):
@@ -651,5 +707,12 @@ class AgentWardPolicy(BaseModel):
             "LLM-as-judge intent analysis configuration. "
             "When enabled, uses a secondary LLM call to detect when a tool's "
             "actual arguments don't match its declared description/purpose."
+        ),
+    )
+    audit: AuditConfig = Field(
+        default_factory=AuditConfig,
+        description=(
+            "Audit log output configuration. "
+            "Use audit.syslog_path to override the default RFC 5424 syslog file location."
         ),
     )
