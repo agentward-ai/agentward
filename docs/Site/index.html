@@ -163,6 +163,44 @@
     .summary-bar.show{opacity:1}
     .sum-pill{font-family:var(--font-mono);font-size:10.5px;padding:3px 9px;border-radius:5px}
 
+    /* ── Stage panel headers ── */
+    .sp-wrap{margin-top:32px}
+    .sp-wrap+.sp-wrap{margin-top:16px}
+    .sp-header{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+    .sp-num{font-family:var(--font-mono);font-size:9px;font-weight:600;color:var(--muted2);letter-spacing:1px;white-space:nowrap}
+    .sp-name{font-family:var(--font-mono);font-size:9px;font-weight:600;color:var(--green);letter-spacing:2px;text-transform:uppercase;white-space:nowrap}
+    .sp-cmd{font-family:var(--font-mono);font-size:10.5px;color:var(--green);background:var(--bg);border:1px solid var(--border2);padding:2px 8px;border-radius:4px;white-space:nowrap}
+    .sp-divider{height:1px;background:var(--border);flex:1}
+    .split-hero{border-color:#ff444430}
+    /* YAML highlight */
+    .yaml-line{opacity:0;transition:opacity .2s}
+    .yaml-line.show{opacity:1}
+    .yaml-comment{color:var(--muted2)}
+    .yaml-key{color:#5eead4}
+    .yaml-val{color:var(--orange)}
+    .yaml-str{color:var(--green)}
+    /* Audit entries */
+    .audit-entry{display:flex;gap:10px;align-items:flex-start;padding:6px 8px;border-radius:6px;margin-bottom:4px;font-family:var(--font-mono);font-size:11px;opacity:0;transform:translateX(10px);transition:opacity .3s,transform .3s}
+    .audit-entry.show{opacity:1;transform:translateX(0)}
+    .audit-allow{background:#00ff8808;border-left:2px solid var(--green)}
+    .audit-block{background:#ff444408;border-left:2px solid var(--red)}
+    .audit-approve{background:#ffcc0008;border-left:2px solid var(--yellow)}
+    .audit-verb{font-weight:600;min-width:60px;flex-shrink:0}
+    .audit-allow .audit-verb{color:var(--green)}
+    .audit-block .audit-verb{color:var(--red)}
+    .audit-approve .audit-verb{color:var(--yellow)}
+    .audit-tool{color:var(--white)}
+    .audit-reason{color:var(--muted);font-size:10px;display:block;margin-top:1px}
+    /* Comply findings */
+    .comply-finding{display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border-radius:7px;margin-bottom:5px;opacity:0;transform:translateX(10px);transition:opacity .35s,transform .35s}
+    .comply-finding.show{opacity:1;transform:translateX(0)}
+    .comply-pass{background:#00ff8808;border:1px solid #00ff8820}
+    .comply-fail{background:#ff444408;border:1px solid #ff444420}
+    .comply-icon{font-size:12px;min-width:16px;flex-shrink:0;margin-top:2px}
+    .comply-title{font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--white)}
+    .comply-desc{font-size:10.5px;color:var(--muted);margin-top:2px}
+    .comply-fix-tag{display:inline-block;font-family:var(--font-mono);font-size:9px;color:var(--green);background:var(--green-dim);border:1px solid var(--green-border);padding:1px 7px;border-radius:3px;margin-top:4px}
+
     /* ── Terminal ── */
     .terminal-wrap{margin-top:32px}
     .terminal{background:#050505;border:1px solid var(--border2);border-radius:12px;overflow:hidden}
@@ -468,82 +506,118 @@
   </div>
 </div>
 
-<!-- SPLIT SCAN PANEL -->
+<!-- LIFECYCLE PANELS -->
 <div class="section-sm" style="padding-top:0">
-  <div class="eyebrow">What You'd See Running It</div>
-  <h2 class="section-title">Full scan output, step by step.</h2>
-  <div class="split">
-    <div class="split-left">
-      <div class="split-left-scroll" id="termB-scroll">
-        <div id="termB-lines"></div>
-        <span class="cursor" id="cursorB" style="opacity:0"></span>
-      </div>
-    </div>
-    <div class="split-right">
-      <div class="split-header">Risk findings</div>
-      <div id="riskRows"></div>
-      <div class="chain-alert" id="chainAlert">
-        <div class="chain-label">⚠ Skill chain detected</div>
-        <div class="chain-detail">email-mgr → web-browser<br><span style="color:var(--muted)">lateral data movement risk</span></div>
-      </div>
-      <div class="summary-bar" id="summaryBar">
-        <span class="sum-pill" style="background:#ff444418;color:var(--red)">3 critical</span>
-        <span class="sum-pill" style="background:#ff8c4218;color:var(--orange)">4 high</span>
-        <span class="sum-pill" style="background:#ffcc0018;color:var(--yellow)">1 medium</span>
-        <span class="sum-pill" style="background:#00ff8818;color:var(--green)">1 low</span>
-      </div>
-    </div>
-  </div>
-</div>
+  <div class="eyebrow">See It Running</div>
+  <h2 class="section-title">The full lifecycle, step by step.</h2>
 
-<!-- HOW IT WORKS PREVIEW -->
-<div class="section" style="padding-top:0;border-top:1px solid var(--border)">
-  <div class="eyebrow">What It Does</div>
-  <h2 class="section-title">Five stages. One command to run them all.</h2>
-  <p class="section-body" style="margin-bottom:0">Run <code style="font-family:var(--font-mono);font-size:13px;background:var(--bg2);border:1px solid var(--border2);padding:2px 8px;border-radius:5px;color:var(--green)">agentward init</code> — or go step by step.</p>
-  <div class="stages-grid">
-    <a href="how-it-works.html" class="stage-card">
-      <div class="stage-n">1</div>
-      <div class="stage-info">
-        <div class="stage-cmd">agentward scan</div>
-        <h4>Scan</h4>
-        <p>Map every tool your agent can reach. Risk ratings, data access patterns, dangerous skill chains — lateral movement paths that existing DLP and IAM don't cover.</p>
+  <!-- 01 SCAN -->
+  <div class="sp-wrap" data-panel="scan">
+    <div class="sp-header">
+      <span class="sp-num">01</span><div class="sp-divider"></div>
+      <span class="sp-name">SCAN</span>
+      <span class="sp-cmd">agentward scan</span>
+    </div>
+    <div class="split">
+      <div class="split-left">
+        <div class="split-left-scroll" id="scanScroll">
+          <div id="scanLines"></div>
+          <span class="cursor" id="scanCursor" style="opacity:0"></span>
+        </div>
       </div>
-    </a>
-    <a href="how-it-works.html" class="stage-card">
-      <div class="stage-n">2</div>
-      <div class="stage-info">
-        <div class="stage-cmd">agentward configure</div>
-        <h4>Configure</h4>
-        <p>Generate smart-default YAML policies from scan results — tailored to your use-case pattern.</p>
+      <div class="split-right">
+        <div class="split-header">Risk findings</div>
+        <div id="scanRisk"></div>
+        <div class="chain-alert" id="scanChain">
+          <div class="chain-label">⚠ Skill chain detected</div>
+          <div class="chain-detail">email-mgr → web-browser<br><span style="color:var(--muted)">lateral data movement risk</span></div>
+        </div>
+        <div class="summary-bar" id="scanSummary">
+          <span class="sum-pill" style="background:#ff444418;color:var(--red)">3 critical</span>
+          <span class="sum-pill" style="background:#ff8c4218;color:var(--orange)">4 high</span>
+          <span class="sum-pill" style="background:#ffcc0018;color:var(--yellow)">1 medium</span>
+          <span class="sum-pill" style="background:#00ff8818;color:var(--green)">1 low</span>
+        </div>
       </div>
-    </a>
-    <a href="how-it-works.html" class="stage-card">
-      <div class="stage-n">3</div>
-      <div class="stage-info">
-        <div class="stage-cmd">agentward inspect</div>
-        <h4>Enforce</h4>
-        <p>Runtime proxy intercepts every tool call. Block, redact, or require human approval — in real time.</p>
+    </div>
+
+  <!-- 02 CONFIGURE -->
+  <div class="sp-wrap" data-panel="configure">
+    <div class="sp-header">
+      <span class="sp-num">02</span><div class="sp-divider"></div>
+      <span class="sp-name">CONFIGURE</span>
+      <span class="sp-cmd">agentward init</span>
+    </div>
+    <div class="split">
+      <div class="split-left">
+        <div class="split-left-scroll" id="cfgScroll">
+          <div id="cfgLines"></div>
+          <span class="cursor" id="cfgCursor" style="opacity:0"></span>
+        </div>
       </div>
-    </a>
-    <a href="how-it-works.html" class="stage-card">
-      <div class="stage-n">4</div>
-      <div class="stage-info">
-        <div class="stage-cmd">agentward comply</div>
-        <h4>Comply</h4>
-        <p>Evaluate policies against HIPAA, SOX, GDPR, PCI-DSS. Auto-generate compliant policy YAML with fixes applied.</p>
+      <div class="split-right" style="background:#080d08">
+        <div class="split-header">agentward.yaml</div>
+        <div id="cfgYamlLines" style="font-family:var(--font-mono);font-size:11px;line-height:1.85"></div>
+        <div class="summary-bar" id="cfgSummary">
+          <span class="sum-pill" style="background:#00ff8818;color:var(--green)">6 rules generated</span>
+          <span class="sum-pill" style="background:#ff8c4218;color:var(--orange)">3 approval gates</span>
+        </div>
       </div>
-    </a>
-    <a href="docs.html#test" class="stage-card">
-      <div class="stage-n">5</div>
-      <div class="stage-info">
-        <div class="stage-cmd">agentward test</div>
-        <h4>Test</h4>
-        <p>Policy regression testing. Fire 68 adversarial probes through the engine — verify your policy actually blocks what it should. Extend with custom org-specific probe YAML.</p>
-      </div>
-    </a>
+    </div>
   </div>
-  <div style="margin-top:20px;display:flex;gap:20px;flex-wrap:wrap">
+
+  <!-- 03 ENFORCE (hero) -->
+  <div class="sp-wrap" data-panel="enforce">
+    <div class="sp-header">
+      <span class="sp-num">03</span><div class="sp-divider" style="background:#ff444430"></div>
+      <span class="sp-name" style="color:var(--red)">ENFORCE</span>
+      <span class="sp-cmd" style="color:var(--red);border-color:#ff444340">agentward inspect</span>
+    </div>
+    <div class="split split-hero">
+      <div class="split-left" style="background:#070303">
+        <div class="split-left-scroll" id="enfScroll">
+          <div id="enfLines"></div>
+          <span class="cursor" id="enfCursor" style="opacity:0;background:var(--red)"></span>
+        </div>
+      </div>
+      <div class="split-right" style="background:#0a0404;border-left-color:#ff444420">
+        <div class="split-header" style="color:var(--red)">Audit log</div>
+        <div id="enfAudit"></div>
+        <div class="summary-bar" id="enfSummary">
+          <span class="sum-pill" style="background:#ff444418;color:var(--red)">3 blocked</span>
+          <span class="sum-pill" style="background:#ffcc0018;color:var(--yellow)">1 approved</span>
+          <span class="sum-pill" style="background:#00ff8818;color:var(--green)">2 allowed</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 04 COMPLY -->
+  <div class="sp-wrap" data-panel="comply">
+    <div class="sp-header">
+      <span class="sp-num">04</span><div class="sp-divider"></div>
+      <span class="sp-name">COMPLY</span>
+      <span class="sp-cmd">agentward comply</span>
+    </div>
+    <div class="split">
+      <div class="split-left">
+        <div class="split-left-scroll" id="complyScroll">
+          <div id="complyLines"></div>
+          <span class="cursor" id="complyCursor" style="opacity:0"></span>
+        </div>
+      </div>
+      <div class="split-right" style="background:#080b0d">
+        <div class="split-header">HIPAA §164.312</div>
+        <div id="complyFindings"></div>
+        <div class="summary-bar" id="complySummary">
+          <span class="sum-pill" style="background:#ff444418;color:var(--red)">2 required gaps</span>
+          <span class="sum-pill" style="background:#00ff8818;color:var(--green)">auto-fix available</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:28px;display:flex;gap:20px;flex-wrap:wrap">
     <a href="how-it-works.html" style="font-size:13.5px;color:var(--green);font-weight:500">Architecture & how it works →</a>
     <a href="docs.html" style="font-size:13.5px;color:var(--muted);font-weight:500">Full CLI reference →</a>
     <a href="compare.html" style="font-size:13.5px;color:var(--muted);font-weight:500">Compare vs. Cisco, Snyk →</a>
@@ -626,104 +700,247 @@ function copyCmd(){
     setTimeout(()=>{i.textContent='⎘';i.style.opacity='0.4';i.style.color=''},2000)}
 }
 
-// ── Split scan panel animation ──
-const logLinesB = [
-  { text:'$ agentward scan ~/', color:'var(--green)', delay:0 },
-  { text:'', delay:200 },
-  { text:'🔍 Auto-discovering tool sources…', color:'#888', delay:320 },
-  { text:'   Found: ~/.cursor/mcp.json', color:'#5eead4', delay:560 },
-  { text:'         → 4 MCP servers', color:'#5eead4', delay:680 },
-  { text:'   Found: ~/projects/*.py', color:'#5eead4', delay:800 },
-  { text:'         → 6 Python tool defs', color:'#5eead4', delay:920 },
-  { text:'   Found: ~/.openclaw/skills/', color:'#5eead4', delay:1040 },
-  { text:'         → 9 OpenClaw skills', color:'#5eead4', delay:1160 },
-  { text:'', delay:1260 },
-  { text:'⚡ Enumerating live MCP servers…', color:'#888', delay:1320 },
-  { text:'   [MCP]   filesystem   read,write,del', color:'#ff4444', delay:1450 },
-  { text:'   [SDK]   shell_exec   subprocess', color:'#ff4444', delay:1650 },
-  { text:'   [Skill] finance      read,network', color:'#ff4444', delay:1850 },
-  { text:'', delay:1950 },
-  { text:'⚡ Scanning Python SDK tools…', color:'#888', delay:2000 },
-  { text:'   [Skill] email-mgr    send,read,del', color:'#ff8c42', delay:2050 },
-  { text:'   [Skill] web-browser  navigate,js,dl', color:'#ff8c42', delay:2210 },
-  { text:'   [MCP]   slack        all-channels', color:'#ff8c42', delay:2370 },
-  { text:'   [SDK]   send_email   smtp,attachments', color:'#ff8c42', delay:2530 },
-  { text:'', delay:2650 },
-  { text:'⚡ Analyzing OpenClaw skill permissions…', color:'#888', delay:2700 },
-  { text:'   [MCP]   postgres     read,write', color:'#ffcc00', delay:2820 },
-  { text:'   [MCP]   github       repos,issues', color:'#00ff88', delay:3000 },
-  { text:'', delay:3100 },
-  { text:'⚠  Chain: email-mgr → web-browser', color:'#ff8c42', delay:3180 },
-  { text:'   Lateral movement — email → browser exfil', color:'#664400', delay:3300 },
-  { text:'', delay:3450 },
-  { text:'Scan complete. 9 tools · 3 sources', color:'#d8d8d8', delay:3550 },
-  { text:'3 critical · 4 high · 1 medium · 1 low', color:'#d8d8d8', delay:3700 },
-  { text:'', delay:3850 },
-  { text:'→ agentward init  (generate policy)', color:'var(--green)', delay:3950 },
-];
+// ── Lifecycle panel animations ──
 
-const riskRowsData = [
-  { name:'filesystem', src:'MCP', perms:'read·write·del', cls:'crit', label:'🔴 CRITICAL', delay:1450 },
-  { name:'shell_exec', src:'SDK', perms:'subprocess', cls:'crit', label:'🔴 CRITICAL', delay:1650 },
-  { name:'finance', src:'Skill', perms:'read·network', cls:'crit', label:'🔴 CRITICAL', delay:1850 },
-  { name:'email-mgr', src:'Skill', perms:'send·read·del', cls:'high', label:'⚠ HIGH', delay:2050 },
-  { name:'web-browser', src:'Skill', perms:'navigate·js·dl', cls:'high', label:'⚠ HIGH', delay:2210 },
-  { name:'slack', src:'MCP', perms:'all-channels', cls:'high', label:'⚠ HIGH', delay:2370 },
-  { name:'send_email', src:'SDK', perms:'smtp·attach', cls:'high', label:'⚠ HIGH', delay:2530 },
-  { name:'postgres', src:'MCP', perms:'read·write', cls:'med', label:'◆ MEDIUM', delay:2820 },
-  { name:'github', src:'MCP', perms:'repos·issues', cls:'low', label:'✓ LOW', delay:3000 },
-];
-
-function runScanPanel() {
-  const logContainer = document.getElementById('termB-lines');
-  const scrollEl     = document.getElementById('termB-scroll');
-  const rowContainer = document.getElementById('riskRows');
-  const chainAlert   = document.getElementById('chainAlert');
-  const summaryBar   = document.getElementById('summaryBar');
-  const cursorB      = document.getElementById('cursorB');
-
-  logContainer.innerHTML = '';
-  rowContainer.innerHTML = '';
-  chainAlert.classList.remove('show');
-  summaryBar.classList.remove('show');
-  cursorB.style.opacity = '0';
-
-  logLinesB.forEach((line, i) => {
+function appendLog(container, scrollEl, lines, onDone) {
+  lines.forEach((line, i) => {
     setTimeout(() => {
       const div = document.createElement('div');
       div.className = 'log-line';
-      div.style.color = line.color || 'transparent';
-      div.style.whiteSpace = 'pre';
-      div.style.fontFamily = 'var(--font-mono)';
-      div.style.fontSize = '11px';
-      div.style.lineHeight = '1.85';
+      div.style.cssText = `color:${line.color||'transparent'};white-space:pre;font-family:var(--font-mono);font-size:11px;line-height:1.85`;
       div.textContent = line.text || '\u00A0';
-      logContainer.appendChild(div);
-      requestAnimationFrame(() => {
-        div.classList.add('show');
-        scrollEl.scrollTop = scrollEl.scrollHeight;
-      });
-      if (i === logLinesB.length - 1) {
-        cursorB.style.opacity = '1';
-        setTimeout(runScanPanel, 2800);
-      }
+      container.appendChild(div);
+      requestAnimationFrame(() => { div.classList.add('show'); scrollEl.scrollTop = scrollEl.scrollHeight; });
+      if (i === lines.length - 1 && onDone) onDone();
     }, line.delay);
   });
+}
 
-  riskRowsData.forEach(r => {
+// ── 01 SCAN ──
+const scanLog = [
+  {text:'$ agentward scan ~/',                              color:'var(--green)', delay:0},
+  {text:'',                                                                       delay:180},
+  {text:'🔍 Auto-discovering tool sources…',               color:'#888',         delay:300},
+  {text:'   Found: ~/.cursor/mcp.json  → 4 MCP servers',  color:'#5eead4',      delay:520},
+  {text:'   Found: ~/projects/*.py     → 6 Python tools',  color:'#5eead4',      delay:700},
+  {text:'   Found: ~/.openclaw/skills/ → 9 skills',        color:'#5eead4',      delay:880},
+  {text:'',                                                                       delay:980},
+  {text:'⚡ Enumerating & scanning…',                      color:'#888',         delay:1040},
+  {text:'   [MCP]   filesystem   read,write,del',          color:'#ff4444',      delay:1170},
+  {text:'   [SDK]   shell_exec   subprocess',              color:'#ff4444',      delay:1360},
+  {text:'   [Skill] finance      read,network',            color:'#ff4444',      delay:1550},
+  {text:'   [Skill] email-mgr    send,read,del',           color:'#ff8c42',      delay:1720},
+  {text:'   [Skill] web-browser  navigate,js,dl',          color:'#ff8c42',      delay:1890},
+  {text:'   [MCP]   slack        all-channels',            color:'#ff8c42',      delay:2060},
+  {text:'   [SDK]   send_email   smtp,attachments',        color:'#ff8c42',      delay:2230},
+  {text:'   [MCP]   postgres     read,write',              color:'#ffcc00',      delay:2400},
+  {text:'   [MCP]   github       repos,issues',            color:'#00ff88',      delay:2570},
+  {text:'',                                                                       delay:2680},
+  {text:'⚠  Chain: email-mgr → web-browser',              color:'#ff8c42',      delay:2760},
+  {text:'   lateral data movement risk',                   color:'#664400',      delay:2880},
+  {text:'',                                                                       delay:2980},
+  {text:'3 critical · 4 high · 1 medium · 1 low',         color:'#d8d8d8',      delay:3080},
+  {text:'→ agentward init  (generate policy)',             color:'var(--green)', delay:3280},
+];
+const scanRiskData = [
+  {name:'filesystem', src:'MCP',   cls:'crit', label:'🔴 CRITICAL', delay:1170},
+  {name:'shell_exec', src:'SDK',   cls:'crit', label:'🔴 CRITICAL', delay:1360},
+  {name:'finance',    src:'Skill', cls:'crit', label:'🔴 CRITICAL', delay:1550},
+  {name:'email-mgr',  src:'Skill', cls:'high', label:'⚠ HIGH',      delay:1720},
+  {name:'web-browser',src:'Skill', cls:'high', label:'⚠ HIGH',      delay:1890},
+  {name:'slack',      src:'MCP',   cls:'high', label:'⚠ HIGH',      delay:2060},
+  {name:'send_email', src:'SDK',   cls:'high', label:'⚠ HIGH',      delay:2230},
+  {name:'postgres',   src:'MCP',   cls:'med',  label:'◆ MEDIUM',    delay:2400},
+  {name:'github',     src:'MCP',   cls:'low',  label:'✓ LOW',       delay:2570},
+];
+function runScan(loop) {
+  const lc=document.getElementById('scanLines'), sc=document.getElementById('scanScroll');
+  const rc=document.getElementById('scanRisk'),  ca=document.getElementById('scanChain');
+  const sb=document.getElementById('scanSummary'),cu=document.getElementById('scanCursor');
+  lc.innerHTML=''; rc.innerHTML=''; cu.style.opacity='0';
+  ca.classList.remove('show'); sb.classList.remove('show');
+  appendLog(lc, sc, scanLog, () => { cu.style.opacity='1'; if(loop) setTimeout(()=>runScan(true),2500); });
+  scanRiskData.forEach(r => {
     setTimeout(() => {
-      const row = document.createElement('div');
-      row.className = 'risk-row';
-      row.innerHTML = `<span><span class="tool-name">${r.name}</span><span class="tool-src">${r.src}</span></span><span class="risk-badge badge-${r.cls}">${r.label}</span>`;
-      rowContainer.appendChild(row);
-      requestAnimationFrame(() => row.classList.add('show'));
+      const row=document.createElement('div'); row.className='risk-row';
+      row.innerHTML=`<span><span class="tool-name">${r.name}</span><span class="tool-src">${r.src}</span></span><span class="risk-badge badge-${r.cls}">${r.label}</span>`;
+      rc.appendChild(row); requestAnimationFrame(()=>row.classList.add('show'));
     }, r.delay);
   });
-
-  setTimeout(() => chainAlert.classList.add('show'), 3200);
-  setTimeout(() => summaryBar.classList.add('show'), 3600);
+  setTimeout(()=>ca.classList.add('show'), 2800);
+  setTimeout(()=>sb.classList.add('show'), 3100);
 }
-runScanPanel();
+
+// ── 02 CONFIGURE ──
+const cfgLog = [
+  {text:'$ agentward init',                                        color:'var(--green)', delay:0},
+  {text:'',                                                                               delay:180},
+  {text:'✓ Scan loaded — 9 tools analysed',                       color:'#5eead4',      delay:300},
+  {text:'  3 critical · 4 high · 1 medium · 1 low',              color:'#888',         delay:420},
+  {text:'',                                                                               delay:540},
+  {text:'Generating policy YAML…',                                color:'#888',         delay:620},
+  {text:'  ✓ filesystem  → require_approval: [write, delete]',   color:'#d8d8d8',      delay:800},
+  {text:'  ✓ email-mgr   → block: [send, delete]',               color:'#d8d8d8',      delay:980},
+  {text:'  ✓ finance     → block: all',                          color:'#d8d8d8',      delay:1160},
+  {text:'  ✓ shell_exec  → block: all',                          color:'#d8d8d8',      delay:1340},
+  {text:'  ✓ web-browser → require_approval: all',               color:'#d8d8d8',      delay:1520},
+  {text:'  ✓ chaining    → blanket, max_depth: 2',               color:'#d8d8d8',      delay:1700},
+  {text:'',                                                                               delay:1820},
+  {text:'Policy written → agentward.yaml',                        color:'#00ff88',      delay:1900},
+  {text:'→ agentward inspect  (start proxy)',                      color:'var(--green)', delay:2100},
+];
+const cfgYaml = [
+  {html:`<span class="yaml-comment"># agentward.yaml — auto-generated</span>`,                                                        delay:640},
+  {html:`<span class="yaml-key">default_action</span>: <span class="yaml-str">allow</span>`,                                          delay:760},
+  {html:``,                                                                                                                             delay:820},
+  {html:`<span class="yaml-key">skills</span>:`,                                                                                       delay:860},
+  {html:`  <span class="yaml-key">filesystem</span>:`,                                                                                 delay:900},
+  {html:`    <span class="yaml-key">allow</span>: <span class="yaml-val">[read]</span>`,                                              delay:980},
+  {html:`    <span class="yaml-key">require_approval</span>: <span class="yaml-val">[write, delete]</span>`,                          delay:1000},
+  {html:`  <span class="yaml-key">email-mgr</span>:`,                                                                                 delay:1080},
+  {html:`    <span class="yaml-key">block</span>: <span class="yaml-val">[send, delete]</span>`,                                     delay:1100},
+  {html:`    <span class="yaml-key">require_approval</span>: <span class="yaml-val">[read]</span>`,                                   delay:1180},
+  {html:`  <span class="yaml-key">finance</span>:`,                                                                                    delay:1240},
+  {html:`    <span class="yaml-key">block</span>: <span class="yaml-str">all</span>`,                                                 delay:1260},
+  {html:`  <span class="yaml-key">shell_exec</span>:`,                                                                                delay:1360},
+  {html:`    <span class="yaml-key">block</span>: <span class="yaml-str">all</span>`,                                                 delay:1380},
+  {html:`  <span class="yaml-key">web-browser</span>:`,                                                                               delay:1440},
+  {html:`    <span class="yaml-key">require_approval</span>: <span class="yaml-str">all</span>`,                                      delay:1520},
+  {html:``,                                                                                                                             delay:1600},
+  {html:`<span class="yaml-key">chaining</span>:`,                                                                                    delay:1660},
+  {html:`  <span class="yaml-key">mode</span>: <span class="yaml-str">blanket</span>`,                                                delay:1700},
+  {html:`  <span class="yaml-key">max_depth</span>: <span class="yaml-val">2</span>`,                                                 delay:1740},
+];
+function runConfigure(loop) {
+  const lc=document.getElementById('cfgLines'), sc=document.getElementById('cfgScroll');
+  const yc=document.getElementById('cfgYamlLines'), sb=document.getElementById('cfgSummary');
+  const cu=document.getElementById('cfgCursor');
+  lc.innerHTML=''; yc.innerHTML=''; cu.style.opacity='0'; sb.classList.remove('show');
+  appendLog(lc, sc, cfgLog, () => { cu.style.opacity='1'; if(loop) setTimeout(()=>runConfigure(true),2500); });
+  cfgYaml.forEach(line => {
+    setTimeout(() => {
+      const div=document.createElement('div'); div.className='yaml-line';
+      div.style.cssText='white-space:pre'; div.innerHTML=line.html||'\u00A0';
+      yc.appendChild(div); requestAnimationFrame(()=>div.classList.add('show'));
+    }, line.delay);
+  });
+  setTimeout(()=>sb.classList.add('show'), 1980);
+}
+
+// ── 03 ENFORCE ──
+const enfLog = [
+  {text:'$ agentward inspect --policy agentward.yaml',     color:'var(--green)', delay:0},
+  {text:'◉ Proxy active on :18900',                        color:'#5eead4',      delay:300},
+  {text:'  Intercepting all tool calls…',                  color:'#888',         delay:440},
+  {text:'',                                                                       delay:580},
+  {text:'→ tools/call  github.list_repos',                 color:'#888',         delay:660},
+  {text:'  ✓ ALLOW    — matched allow rule',               color:'#00ff88',      delay:820},
+  {text:'',                                                                       delay:900},
+  {text:'→ tools/call  filesystem.read_file',              color:'#888',         delay:960},
+  {text:'  ✓ ALLOW    — matched allow rule',               color:'#00ff88',      delay:1120},
+  {text:'',                                                                       delay:1200},
+  {text:'→ tools/call  filesystem.write_file',             color:'#888',         delay:1280},
+  {text:'  ✗ BLOCKED  — requires approval; not granted',   color:'#ff4444',      delay:1440},
+  {text:'  ⊘ Tool call rejected',                          color:'#550000',      delay:1560},
+  {text:'',                                                                       delay:1640},
+  {text:'→ tools/call  email-mgr.send',                    color:'#888',         delay:1720},
+  {text:'  ✗ BLOCKED  — policy: block [send]',             color:'#ff4444',      delay:1880},
+  {text:'',                                                                       delay:1960},
+  {text:'→ tools/call  shell_exec.run',                    color:'#888',         delay:2040},
+  {text:'  ✗ BLOCKED  — policy: block all',               color:'#ff4444',      delay:2200},
+  {text:'  ⚠ Supply chain attack attempt stopped',         color:'#550000',      delay:2320},
+  {text:'',                                                                       delay:2400},
+  {text:'→ tools/call  email-mgr.read',                    color:'#888',         delay:2480},
+  {text:'  ⚑ APPROVAL — awaiting human sign-off',          color:'#ffcc00',      delay:2640},
+  {text:'  ✓ Approved via macOS dialog',                   color:'#00ff88',      delay:2900},
+];
+const enfAuditData = [
+  {cls:'allow',   verb:'ALLOW',   tool:'github.list_repos',      reason:'matched allow rule',                 delay:820},
+  {cls:'allow',   verb:'ALLOW',   tool:'filesystem.read_file',   reason:'matched allow rule',                 delay:1120},
+  {cls:'block',   verb:'BLOCK',   tool:'filesystem.write_file',  reason:'requires approval; not granted',     delay:1440},
+  {cls:'block',   verb:'BLOCK',   tool:'email-mgr.send',         reason:'policy: block [send]',               delay:1880},
+  {cls:'block',   verb:'BLOCK',   tool:'shell_exec.run',         reason:'policy: block all · supply chain',   delay:2200},
+  {cls:'approve', verb:'APPROVE', tool:'email-mgr.read',         reason:'human approved via macOS dialog',    delay:2900},
+];
+function runEnforce(loop) {
+  const lc=document.getElementById('enfLines'), sc=document.getElementById('enfScroll');
+  const ac=document.getElementById('enfAudit'), sb=document.getElementById('enfSummary');
+  const cu=document.getElementById('enfCursor');
+  lc.innerHTML=''; ac.innerHTML=''; cu.style.opacity='0'; sb.classList.remove('show');
+  appendLog(lc, sc, enfLog, () => { cu.style.opacity='1'; if(loop) setTimeout(()=>runEnforce(true),2500); });
+  enfAuditData.forEach(a => {
+    setTimeout(() => {
+      const el=document.createElement('div'); el.className=`audit-entry audit-${a.cls}`;
+      el.innerHTML=`<span class="audit-verb">${a.verb}</span><span><span class="audit-tool">${a.tool}</span><span class="audit-reason">${a.reason}</span></span>`;
+      ac.appendChild(el); requestAnimationFrame(()=>el.classList.add('show'));
+    }, a.delay);
+  });
+  setTimeout(()=>sb.classList.add('show'), 3100);
+}
+
+// ── 04 COMPLY ──
+const complyLog = [
+  {text:'$ agentward comply --framework hipaa',           color:'var(--green)', delay:0},
+  {text:'',                                                                       delay:200},
+  {text:'Evaluating 9 skills against HIPAA…',            color:'#888',         delay:320},
+  {text:'',                                                                       delay:460},
+  {text:'§164.312 Technical Safeguards',                  color:'#5eead4',      delay:520},
+  {text:'',                                                                       delay:620},
+  {text:'  [PASS] Access Control',                        color:'#00ff88',      delay:700},
+  {text:'         filesystem scoped, approval required',  color:'#444',         delay:800},
+  {text:'  [FAIL] Audit Controls',                        color:'#ff4444',      delay:980},
+  {text:'         no logging configured   ← fix available',color:'#550000',     delay:1080},
+  {text:'  [PASS] Integrity',                             color:'#00ff88',      delay:1260},
+  {text:'         write ops require human approval',      color:'#444',         delay:1360},
+  {text:'  [FAIL] Transmission Security',                 color:'#ff4444',      delay:1540},
+  {text:'         email-mgr: network unrestricted',       color:'#550000',      delay:1640},
+  {text:'  [FAIL] PHI Skill Restriction',                 color:'#ff4444',      delay:1820},
+  {text:'         finance: no PHI boundary',              color:'#550000',      delay:1920},
+  {text:'',                                                                       delay:2060},
+  {text:'2 required gaps · 3 auto-fixable',              color:'#d8d8d8',      delay:2140},
+  {text:'→ agentward comply --fix',                       color:'var(--green)', delay:2340},
+];
+const complyFindingsData = [
+  {pass:true,  icon:'✓', title:'Access Control',        desc:'filesystem scoped, approval required',                      delay:700},
+  {pass:false, icon:'✗', title:'Audit Controls',        desc:'no logging configured',      fix:'enable_audit_logging',     delay:980},
+  {pass:true,  icon:'✓', title:'Integrity',             desc:'write operations require human approval',                   delay:1260},
+  {pass:false, icon:'✗', title:'Transmission Security', desc:'email-mgr: network unrestricted', fix:'add_data_boundary',  delay:1540},
+  {pass:false, icon:'✗', title:'PHI Skill Restriction', desc:'finance: missing PHI boundary',   fix:'add_skill_restriction',delay:1820},
+];
+function runComply(loop) {
+  const lc=document.getElementById('complyLines'), sc=document.getElementById('complyScroll');
+  const fc=document.getElementById('complyFindings'), sb=document.getElementById('complySummary');
+  const cu=document.getElementById('complyCursor');
+  lc.innerHTML=''; fc.innerHTML=''; cu.style.opacity='0'; sb.classList.remove('show');
+  appendLog(lc, sc, complyLog, () => { cu.style.opacity='1'; if(loop) setTimeout(()=>runComply(true),2500); });
+  complyFindingsData.forEach(f => {
+    setTimeout(() => {
+      const el=document.createElement('div'); el.className=`comply-finding ${f.pass?'comply-pass':'comply-fail'}`;
+      el.innerHTML=`<span class="comply-icon">${f.icon}</span><div><div class="comply-title">${f.title}</div><div class="comply-desc">${f.desc}</div>${f.fix?`<span class="comply-fix-tag">${f.fix}</span>`:''}</div>`;
+      fc.appendChild(el); requestAnimationFrame(()=>el.classList.add('show'));
+    }, f.delay);
+  });
+  setTimeout(()=>sb.classList.add('show'), 2200);
+}
+
+// ── IntersectionObserver: start each panel when scrolled into view ──
+function observePanel(id, runFn) {
+  const el = document.querySelector(`[data-panel="${id}"]`);
+  if (!el) return;
+  let started = false;
+  const obs = new IntersectionObserver(entries => {
+    if (entries[0].isIntersecting && !started) {
+      started = true;
+      runFn(true);
+      obs.disconnect();
+    }
+  }, {threshold: 0.15});
+  obs.observe(el);
+}
+observePanel('scan',      runScan);
+observePanel('configure', runConfigure);
+observePanel('enforce',   runEnforce);
+observePanel('comply',    runComply);
 </script>
 </body>
 </html>
