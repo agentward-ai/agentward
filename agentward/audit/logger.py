@@ -467,6 +467,69 @@ class AuditLogger:
         }
         self._write_entry(entry)
 
+    def log_session_event(
+        self,
+        session_id: str,
+        tool_name: str,
+        verdict: str,
+        aggregate_score: float,
+        triggering_pattern: str,
+        pattern_results: list[dict[str, Any]],
+        dry_run: bool = False,
+    ) -> None:
+        """Log a session-level evasion detection event.
+
+        Called after the session analyzer returns a SUSPICIOUS or
+        EVASION_DETECTED verdict. The entry is written to the JSON Lines /
+        syslog audit files and printed to stderr with colour-coded styling.
+
+        Args:
+            session_id: Unique identifier of the flagged session.
+            tool_name: The tool call that triggered the verdict.
+            verdict: The session verdict string ("SUSPICIOUS" or "EVASION_DETECTED").
+            aggregate_score: Highest pattern score (0.0–1.0).
+            triggering_pattern: Name of the highest-scoring pattern.
+            pattern_results: Per-pattern score/reason dicts for audit detail.
+            dry_run: If True, the verdict was observed but not enforced.
+        """
+        entry: dict[str, Any] = {
+            "timestamp": _now_iso(),
+            "event": "session_evasion",
+            "session_id": session_id,
+            "tool": tool_name,
+            "verdict": verdict,
+            "aggregate_score": round(aggregate_score, 4),
+            "triggering_pattern": triggering_pattern,
+            "pattern_results": [
+                r for r in pattern_results if r.get("score", 0) > 0
+            ],
+        }
+        if dry_run:
+            entry["dry_run"] = True
+        self._write_entry(entry)
+
+        dry_tag = " [bold #5eead4](dry-run)[/bold #5eead4]" if dry_run else ""
+        if verdict == "EVASION_DETECTED":
+            _console.print(
+                f"  [bold red]⚠ SESSION EVASION[/bold red]{dry_tag} "
+                f"{triggering_pattern} (score={aggregate_score:.2f})",
+                highlight=False,
+            )
+            _console.print(
+                f"    [dim]Triggered by: {tool_name} | Session: {session_id}[/dim]",
+                highlight=False,
+            )
+        else:
+            _console.print(
+                f"  [bold #ffcc00]⚠ SESSION SUSPICIOUS[/bold #ffcc00]{dry_tag} "
+                f"{triggering_pattern} (score={aggregate_score:.2f})",
+                highlight=False,
+            )
+            _console.print(
+                f"    [dim]Triggered by: {tool_name} | Session: {session_id}[/dim]",
+                highlight=False,
+            )
+
     def log_shutdown(self, reason: str) -> None:
         """Log proxy shutdown.
 

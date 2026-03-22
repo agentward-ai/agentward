@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agentward.proxy.judge import LlmJudge
+    from agentward.session import SessionMonitor
 
 from rich.console import Console
 
@@ -93,6 +94,7 @@ class StdioProxy:
         boundary_enforcer: BoundaryEnforcer | None = None,
         role_cache: ToolRoleCache | None = None,
         llm_judge: LlmJudge | None = None,
+        session_monitor: "SessionMonitor | None" = None,
     ) -> None:
         self._server_command = server_command
         self._policy_engine = policy_engine
@@ -105,6 +107,13 @@ class StdioProxy:
         self._boundary_enforcer = boundary_enforcer
         self._role_cache = role_cache
         self._llm_judge = llm_judge
+        self._session_monitor = session_monitor
+        # Stable session ID for the lifetime of this proxy process
+        if session_monitor is not None:
+            from agentward.session import SessionMonitor as _SM
+            self._session_id = _SM.new_session_id("stdio")
+        else:
+            self._session_id = ""
 
         self._process: asyncio.subprocess.Process | None = None
         self._shutting_down = False
@@ -468,6 +477,51 @@ class StdioProxy:
 
                 # Log ALLOW/LOG only after passing all checks (policy + chaining + boundary)
                 self._audit_logger.log_tool_call(tool_name, arguments, result)
+
+                # Session-level evasion detection — runs after per-call decision.
+                # Never blocks a call on its own; only acts when the full sequence
+                # triggers a session-level verdict.
+                if self._session_monitor is not None:
+                    _session_result = self._session_monitor.record_and_check(
+                        self._session_id,
+                        tool_name,
+                        arguments,
+                        result.decision,
+                    )
+                    if _session_result.verdict.value != "CLEAN":
+                        self._audit_logger.log_session_event(
+                            session_id=self._session_id,
+                            tool_name=tool_name,
+                            verdict=_session_result.verdict.value,
+                            aggregate_score=_session_result.aggregate_score,
+                            triggering_pattern=_session_result.triggering_pattern,
+                            pattern_results=[
+                                {
+                                    "pattern": r.pattern_name,
+                                    "score": r.score,
+                                    "reason": r.reason,
+                                }
+                                for r in _session_result.pattern_results
+                                if r.score > 0
+                            ],
+                            dry_run=self._dry_run,
+                        )
+                        if self._session_monitor.should_pause_session(_session_result):
+                            self._session_monitor.pause_session(self._session_id)
+                        if (
+                            self._session_monitor.should_block(_session_result)
+                            and not self._dry_run
+                        ):
+                            error_resp = make_error_response(
+                                msg.id,
+                                POLICY_BLOCKED,
+                                f"AgentWard session monitor: "
+                                f"{_session_result.triggering_pattern} detected "
+                                f"(score={_session_result.aggregate_score:.2f}).",
+                            )
+                            _write_to_stdout(serialize_message(error_resp))
+                            continue
+
                 self._pending_tool_calls[msg.id] = tool_name
 
                 # Record for circuit breaker after all checks pass
