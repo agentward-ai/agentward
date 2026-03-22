@@ -23,7 +23,7 @@ from agentward.session.cli import session_app
 
 app = typer.Typer(
     name="agentward",
-    help="Open-source permission control plane for AI agents. Scan, enforce, and audit every tool call.",
+    help="Secure every agent action — from install to runtime. Open-source security platform for AI agents.",
     no_args_is_help=True,
 )
 

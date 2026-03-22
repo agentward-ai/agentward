@@ -5,8 +5,8 @@
 <h1 align="center">AgentWard</h1>
 
 <p align="center">
-  <strong>Open-source permission control plane for AI agents.</strong><br/>
-  Scan, enforce, and audit every tool call.
+  <strong>Secure every agent action — from install to runtime.</strong><br/>
+  Open-source security platform for AI agents.
 </p>
 
 <p align="center">
