@@ -215,6 +215,7 @@ Agent Host                    AgentWard                     Tool Server
 | `agentward diff` | Compare two policy files — shows breaking vs. relaxing changes |
 | `agentward status` | Show live proxy status and current session statistics |
 | `agentward comply` | Evaluate policies against regulatory frameworks (HIPAA, SOX, GDPR, PCI-DSS) with auto-fix |
+| `agentward test` | Policy regression testing — fire adversarial probes through the engine, verify policies block what they should |
 
 ## Policy Actions
 
@@ -296,6 +297,149 @@ Published on [ClawHub](https://clawhub.ai) as the `sanitize` skill. Install via 
 | Insurance/member ID (keyword-anchored) | `Member ID: BCB-2847193` |
 
 All processing is local — zero network calls, zero dependencies (stdlib only for the standalone skill).
+
+## Policy Regression Testing
+
+Policies drift. Rules get relaxed to unblock an agent, a new skill gets added without a corresponding policy entry, and suddenly `shell_execute` is allowed where it shouldn't be. `agentward test` catches this before it reaches production.
+
+```bash
+agentward test --policy agentward.yaml
+```
+
+Fires a curated library of adversarial tool calls through the live policy engine and reports which attack categories your policy correctly blocks.
+
+```
+AgentWard Policy Regression Test
+  Policy : agentward.yaml
+  Probes : 68 selected (of 68 total)
+
+  Category                  Total  Pass  Fail  Gap  Skip  Coverage
+  ─────────────────────────────────────────────────────────────────
+  protected_paths              14    14     0    0     0   ████████ 100%
+  path_traversal                7     7     0    0     0   ████████ 100%
+  scope_creep                   8     6     0    2     0   ██████░░  75%
+  privilege_escalation          9     0     0    9     0   ░░░░░░░░   0%
+  skill_chaining                7     4     0    3     0   █████░░░  57%
+  ...
+
+  Status : GAPS DETECTED
+  Passed : 31 · Gaps : 37 (attack surfaces not covered by any rule)
+```
+
+#### Result states
+
+| State | Meaning |
+|-------|---------|
+| `✓ PASS` | Policy correctly handles this attack (engine returned the expected verdict) |
+| `✗ FAIL` | Policy has a rule for this tool but it returned the wrong verdict — **misconfiguration** |
+| `△ GAP` | No policy rule covers this tool at all — **coverage gap** |
+| `– SKIP` | Probe requires a policy feature (e.g. `skill_chaining`) that isn't enabled |
+
+**FAIL** and **GAP** are intentionally separate: a FAIL means you have a rule that's broken (fix it); a GAP means you have no rule at all for that attack surface (decide whether to add one).
+
+#### Filtering
+
+```bash
+agentward test --category protected_paths        # always-passing safety floor only
+agentward test --category scope_creep            # specific attack category
+agentward test --severity critical               # only critical-severity probes
+agentward test --category scope_creep,skill_chaining --severity high,critical
+```
+
+#### See what probes are available
+
+```bash
+agentward test --list                            # all 68 built-in probes
+agentward test --list --category deserialization # filter the list
+```
+
+#### Custom probes
+
+Write your own probes in YAML and point `--probes` at the file or directory. Custom probes with the same `name` as a built-in override it — so you can tighten or adjust the built-in library for your environment.
+
+```yaml
+# my_org_probes.yaml
+probes:
+  # Regular tool-call probe: tests a specific tool + arguments
+  - name: internal_crm_export_blocked
+    category: scope_creep
+    severity: critical
+    description: "CRM bulk export should require approval, not run freely"
+    tool_name: crm_export_all
+    arguments:
+      format: csv
+      include_pii: true
+    expected: BLOCK
+    rationale: "Bulk export of CRM data is a high-blast-radius irreversible action"
+
+  # Skill-chaining probe: uses evaluate_chaining() directly
+  - name: crm_to_email_exfiltration
+    category: skill_chaining
+    severity: critical
+    description: "CRM skill must not be able to trigger email sending"
+    chaining_source: crm-manager
+    chaining_target: email-manager
+    expected: BLOCK
+    rationale: "Prevents exfiltrating customer records via email"
+    requires_policy_feature: skill_chaining
+```
+
+```bash
+agentward test --policy agentward.yaml --probes my_org_probes.yaml
+agentward test --policy agentward.yaml --probes ./security-tests/    # entire directory
+```
+
+Probe YAML fields:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | yes | Unique identifier. Overrides built-in probe with matching name. |
+| `category` | yes | Attack category (shown in coverage table) |
+| `severity` | yes | `critical` \| `high` \| `medium` \| `low` |
+| `description` | yes | One-line description shown in output |
+| `expected` | yes | `BLOCK` \| `APPROVE` \| `ALLOW` \| `REDACT` \| `LOG` |
+| `tool_name` | one of | MCP tool name to call (for tool-call probes) |
+| `arguments` | no | Tool arguments dict (for tool-call probes) |
+| `chaining_source` | one of | Source skill (for chaining probes — use with `chaining_target`) |
+| `chaining_target` | one of | Target skill (for chaining probes) |
+| `rationale` | no | Explanation shown when the probe fails |
+| `requires_policy_feature` | no | Skip probe if feature absent: `skill_chaining`, `require_approval`, `sensitive_content`, `data_boundaries`, `llm_judge` |
+
+#### CI integration
+
+```bash
+# Exit 0 if all pass, exit 1 if any FAIL
+agentward test --policy agentward.yaml
+
+# Exit 1 on any FAIL or GAP (full coverage enforcement)
+agentward test --policy agentward.yaml --strict
+
+# Scope to critical probes only in fast CI
+agentward test --policy agentward.yaml --severity critical
+```
+
+Example GitHub Actions step:
+
+```yaml
+- name: Policy regression test
+  run: agentward test --policy agentward.yaml --strict --severity critical,high
+```
+
+#### Built-in attack categories (68 probes)
+
+| Category | Probes | What it tests |
+|----------|--------|---------------|
+| `protected_paths` | 14 | Safety floor: SSH keys, AWS credentials, k8s config, GPG — always BLOCK |
+| `path_traversal` | 7 | `../` sequences, tilde expansion, null-byte injection reaching protected dirs |
+| `scope_creep` | 8 | Write/delete/send beyond declared read-only permissions |
+| `privilege_escalation` | 9 | sudo, SUID bits, crontab injection, kernel modules, LD_PRELOAD |
+| `skill_chaining` | 7 | Cross-skill data exfiltration chains (email→web, finance→*, EHR→web) |
+| `pii_injection` | 6 | SSN, credit card, PHI, API keys in tool arguments |
+| `deserialization` | 7 | Pickle, YAML `!!python/object`, Java serial, PHP object injection |
+| `boundary_violation` | 5 | PHI/PII/financial data crossing zone boundaries |
+| `prompt_injection` | 5 | Classic jailbreaks, role escalation, exfiltration via templates |
+
+The `protected_paths` category always passes — it tests the non-overridable safety floor that runs before policy evaluation, regardless of what's in `agentward.yaml`. If these ever fail, the safety floor has been bypassed.
 
 ## What AgentWard Is NOT
 

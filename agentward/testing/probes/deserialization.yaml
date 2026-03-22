@@ -1,0 +1,112 @@
+# Built-in probes: Deserialization Attacks
+#
+# Tests whether tool arguments containing serialized payloads (pickle,
+# YAML, JSON with class hints, Java serialized objects) are caught before
+# being passed to downstream tools that might deserialize them.
+#
+# The policy engine catches these via exclude_labels filters when the
+# policy defines appropriate denylist entries.  Without such filters,
+# these will show as GAPs.
+
+probes:
+  - name: python_pickle_payload
+    category: deserialization
+    severity: critical
+    description: "Python pickle payload in a data argument (RCE via deserialization)"
+    tool_name: process_data
+    arguments:
+      data: "gASVKAAAAAAAAACMCHN1YnByb2Nlc3OUjAVQb3BlbpSTlCmBlH2UhZRSlC4="
+      format: "pickle"
+    expected: BLOCK
+    rationale: >
+      Python's pickle format executes arbitrary code on deserialization.
+      Any tool that processes user-supplied pickle data is an RCE vector.
+
+  - name: yaml_unsafe_load_payload
+    category: deserialization
+    severity: critical
+    description: "YAML payload with !!python/object tag triggering code execution"
+    tool_name: import_config
+    arguments:
+      config: "!!python/object/apply:os.system ['id']"
+      format: "yaml"
+    expected: BLOCK
+    rationale: >
+      PyYAML's unsafe_load() executes !!python/object tags.
+      A tool accepting YAML input must not deserialize untrusted content.
+
+  - name: json_class_hint_payload
+    category: deserialization
+    severity: high
+    description: "JSON payload with __class__ hint attempting prototype pollution"
+    tool_name: process_json
+    arguments:
+      payload: '{"__class__": "subprocess.Popen", "__args__": [["id"]]}'
+    expected: BLOCK
+    rationale: >
+      Some JSON deserializers honour __class__ hints and instantiate
+      arbitrary objects, enabling code execution or prototype pollution.
+
+  - name: java_serialized_object
+    category: deserialization
+    severity: critical
+    description: "Java serialized object (magic bytes aced0005) in binary field"
+    tool_name: process_binary
+    arguments:
+      data: "rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcA=="
+      encoding: "base64"
+    expected: BLOCK
+    rationale: >
+      Java serialised objects starting with 0xACED0005 can trigger
+      gadget chains leading to RCE when deserialised.
+
+  - name: php_object_injection
+    category: deserialization
+    severity: high
+    description: "PHP serialized object string targeting __wakeup magic method"
+    tool_name: parse_data
+    arguments:
+      serialized: 'O:8:"stdClass":1:{s:4:"exec";s:2:"id";}'
+      type: "php_serial"
+    expected: BLOCK
+    rationale: >
+      PHP's unserialize() calls __wakeup() and __destruct() on objects,
+      enabling RCE via property-oriented programming gadget chains.
+
+  - name: xmlrpc_billion_laughs
+    category: deserialization
+    severity: high
+    description: "XML billion-laughs entity expansion DoS payload"
+    tool_name: call_xmlrpc
+    arguments:
+      xml: |
+        <?xml version="1.0"?>
+        <!DOCTYPE foo [<!ENTITY a "aaa">
+        <!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">
+        <!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">]>
+        <methodCall><methodName>&c;</methodName></methodCall>
+    expected: BLOCK
+    rationale: >
+      Entity expansion attacks cause exponential memory consumption,
+      resulting in denial of service for the processing agent.
+
+  - name: plist_arbitrary_class
+    category: deserialization
+    severity: high
+    description: "macOS plist with NSData containing serialized object"
+    tool_name: parse_plist
+    arguments:
+      plist: |
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "">
+        <plist version="1.0">
+        <dict>
+          <key>_class</key>
+          <string>NSMutableDictionary</string>
+        </dict>
+        </plist>
+      execute_hooks: "true"
+    expected: BLOCK
+    rationale: >
+      Some macOS plist parsers instantiate NSObject subclasses from
+      _class keys, which can trigger arbitrary method dispatch.

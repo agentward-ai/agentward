@@ -2223,3 +2223,10 @@ def preinstall(
         raise typer.Exit(2)
     if fail_on_warn and verdict == ScanVerdict.WARN:
         raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# test command — policy regression testing
+# ---------------------------------------------------------------------------
+from agentward.testing.cli import app as _testing_app  # noqa: E402
+app.add_typer(_testing_app)
