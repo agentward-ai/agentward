@@ -19,12 +19,15 @@ import typer
 from rich.console import Console
 
 from agentward import __version__
+from agentward.session.cli import session_app
 
 app = typer.Typer(
     name="agentward",
     help="Open-source permission control plane for AI agents. Scan, enforce, and audit every tool call.",
     no_args_is_help=True,
 )
+
+app.add_typer(session_app, name="session")
 
 _console = Console(stderr=True)
 

@@ -12,6 +12,14 @@ from typing import Any
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
+# session/policy.py has no dependency on schema.py — no circular import.
+from agentward.session.policy import SessionPolicy
+
+
+def _session_policy_default() -> SessionPolicy:
+    """Return the default SessionPolicy instance (disabled)."""
+    return SessionPolicy()
+
 
 class PolicyDecision(str, Enum):
     """Decision returned by the policy engine for a tool call."""
@@ -676,5 +684,13 @@ class AgentWardPolicy(BaseModel):
         description=(
             "Audit log output configuration. "
             "Use audit.syslog_path to override the default RFC 5424 syslog file location."
+        ),
+    )
+    session: SessionPolicy = Field(
+        default_factory=lambda: _session_policy_default(),
+        description=(
+            "Session-level evasion detection configuration. "
+            "When enabled, analyzes sequences of tool calls to detect multi-step "
+            "attacks where no individual call violates policy."
         ),
     )
