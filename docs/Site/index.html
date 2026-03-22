@@ -514,9 +514,10 @@
   <!-- 01 SCAN -->
   <div class="sp-wrap" data-panel="scan">
     <div class="sp-header">
-      <span class="sp-num">01</span><div class="sp-divider"></div>
+      <span class="sp-num">01</span>
       <span class="sp-name">SCAN</span>
       <span class="sp-cmd">agentward scan</span>
+      <div class="sp-divider"></div>
     </div>
     <div class="split">
       <div class="split-left">
@@ -544,9 +545,10 @@
   <!-- 02 CONFIGURE -->
   <div class="sp-wrap" data-panel="configure">
     <div class="sp-header">
-      <span class="sp-num">02</span><div class="sp-divider"></div>
+      <span class="sp-num">02</span>
       <span class="sp-name">CONFIGURE</span>
-      <span class="sp-cmd">agentward init</span>
+      <span class="sp-cmd">agentward configure</span>
+      <div class="sp-divider"></div>
     </div>
     <div class="split">
       <div class="split-left">
@@ -569,9 +571,10 @@
   <!-- 03 ENFORCE (hero) -->
   <div class="sp-wrap" data-panel="enforce">
     <div class="sp-header">
-      <span class="sp-num">03</span><div class="sp-divider" style="background:#ff444430"></div>
+      <span class="sp-num">03</span>
       <span class="sp-name" style="color:var(--red)">ENFORCE</span>
       <span class="sp-cmd" style="color:var(--red);border-color:#ff444340">agentward inspect</span>
+      <div class="sp-divider" style="background:#ff444430"></div>
     </div>
     <div class="split split-hero">
       <div class="split-left" style="background:#070303">
@@ -595,9 +598,10 @@
   <!-- 04 COMPLY -->
   <div class="sp-wrap" data-panel="comply">
     <div class="sp-header">
-      <span class="sp-num">04</span><div class="sp-divider"></div>
+      <span class="sp-num">04</span>
       <span class="sp-name">COMPLY</span>
       <span class="sp-cmd">agentward comply</span>
+      <div class="sp-divider"></div>
     </div>
     <div class="split">
       <div class="split-left">
@@ -620,9 +624,10 @@
   <!-- 05 VERIFY -->
   <div class="sp-wrap" data-panel="verify">
     <div class="sp-header">
-      <span class="sp-num">05</span><div class="sp-divider"></div>
+      <span class="sp-num">05</span>
       <span class="sp-name">VERIFY</span>
-      <span class="sp-cmd">agentward test</span>
+      <span class="sp-cmd">agentward probe</span>
+      <div class="sp-divider"></div>
     </div>
     <div class="split">
       <div class="split-left">
@@ -785,7 +790,7 @@ function runScan(loop) {
   const sb=document.getElementById('scanSummary'),cu=document.getElementById('scanCursor');
   lc.innerHTML=''; rc.innerHTML=''; cu.style.opacity='0';
   ca.classList.remove('show'); sb.classList.remove('show');
-  appendLog(lc, sc, scanLog, () => { cu.style.opacity='1'; if(loop) setTimeout(()=>runScan(true),2500); });
+  appendLog(lc, sc, scanLog, () => { cu.style.opacity='1'; });
   scanRiskData.forEach(r => {
     setTimeout(() => {
       const row=document.createElement('div'); row.className='risk-row';
@@ -799,7 +804,7 @@ function runScan(loop) {
 
 // ── 02 CONFIGURE ──
 const cfgLog = [
-  {text:'$ agentward init',                                        color:'var(--green)', delay:0},
+  {text:'$ agentward configure',                                    color:'var(--green)', delay:0},
   {text:'',                                                                               delay:180},
   {text:'✓ Scan loaded — 9 tools analysed',                       color:'#5eead4',      delay:300},
   {text:'  3 critical · 4 high · 1 medium · 1 low',              color:'#888',         delay:420},
@@ -813,7 +818,7 @@ const cfgLog = [
   {text:'  ✓ chaining    → blanket, max_depth: 2',               color:'#d8d8d8',      delay:1700},
   {text:'',                                                                               delay:1820},
   {text:'Policy written → agentward.yaml',                        color:'#00ff88',      delay:1900},
-  {text:'→ agentward inspect  (start proxy)',                      color:'var(--green)', delay:2100},
+  {text:'→ agentward inspect  (start proxy)',                      color:'var(--green)', delay:2000},
 ];
 const cfgYaml = [
   {html:`<span class="yaml-comment"># agentward.yaml — auto-generated</span>`,                                                        delay:640},
@@ -842,7 +847,7 @@ function runConfigure(loop) {
   const yc=document.getElementById('cfgYamlLines'), sb=document.getElementById('cfgSummary');
   const cu=document.getElementById('cfgCursor');
   lc.innerHTML=''; yc.innerHTML=''; cu.style.opacity='0'; sb.classList.remove('show');
-  appendLog(lc, sc, cfgLog, () => { cu.style.opacity='1'; if(loop) setTimeout(()=>runConfigure(true),2500); });
+  appendLog(lc, sc, cfgLog, () => { cu.style.opacity='1'; });
   cfgYaml.forEach(line => {
     setTimeout(() => {
       const div=document.createElement('div'); div.className='yaml-line';
@@ -893,7 +898,7 @@ function runEnforce(loop) {
   const ac=document.getElementById('enfAudit'), sb=document.getElementById('enfSummary');
   const cu=document.getElementById('enfCursor');
   lc.innerHTML=''; ac.innerHTML=''; cu.style.opacity='0'; sb.classList.remove('show');
-  appendLog(lc, sc, enfLog, () => { cu.style.opacity='1'; if(loop) setTimeout(()=>runEnforce(true),2500); });
+  appendLog(lc, sc, enfLog, () => { cu.style.opacity='1'; });
   enfAuditData.forEach(a => {
     setTimeout(() => {
       const el=document.createElement('div'); el.className=`audit-entry audit-${a.cls}`;
@@ -938,7 +943,7 @@ function runComply(loop) {
   const fc=document.getElementById('complyFindings'), sb=document.getElementById('complySummary');
   const cu=document.getElementById('complyCursor');
   lc.innerHTML=''; fc.innerHTML=''; cu.style.opacity='0'; sb.classList.remove('show');
-  appendLog(lc, sc, complyLog, () => { cu.style.opacity='1'; if(loop) setTimeout(()=>runComply(true),2500); });
+  appendLog(lc, sc, complyLog, () => { cu.style.opacity='1'; });
   complyFindingsData.forEach(f => {
     setTimeout(() => {
       const el=document.createElement('div'); el.className=`comply-finding ${f.pass?'comply-pass':'comply-fail'}`;
@@ -951,7 +956,7 @@ function runComply(loop) {
 
 // ── 05 VERIFY ──
 const verifyLog = [
-  {text:'$ agentward test --policy agentward.yaml',          color:'var(--green)', delay:0},
+  {text:'$ agentward probe --policy agentward.yaml',         color:'var(--green)', delay:0},
   {text:'',                                                                          delay:200},
   {text:'Loading 68 adversarial probes…',                   color:'#888',         delay:320},
   {text:'',                                                                          delay:460},
@@ -984,7 +989,7 @@ function runVerify(loop) {
   const pc=document.getElementById('verifyProbes'), sb=document.getElementById('verifySummary');
   const cu=document.getElementById('verifyCursor');
   lc.innerHTML=''; pc.innerHTML=''; cu.style.opacity='0'; sb.classList.remove('show');
-  appendLog(lc, sc, verifyLog, () => { cu.style.opacity='1'; if(loop) setTimeout(()=>runVerify(true),2500); });
+  appendLog(lc, sc, verifyLog, () => { cu.style.opacity='1'; });
   verifyProbesData.forEach(p => {
     setTimeout(() => {
       const el=document.createElement('div');
@@ -1007,7 +1012,7 @@ function observePanel(id, runFn) {
   const obs = new IntersectionObserver(entries => {
     if (entries[0].isIntersecting && !started) {
       started = true;
-      runFn(true);
+      runFn();
       obs.disconnect();
     }
   }, {threshold: 0.15});
