@@ -769,28 +769,28 @@ class TestReporterOutput:
 
 
 class TestCLI:
-    """Smoke tests for the ``agentward test`` command via Typer's test runner."""
+    """Smoke tests for the ``agentward probe`` command via Typer's test runner."""
 
     runner = CliRunner()
 
     def test_list_flag_exits_zero(self) -> None:
-        result = self.runner.invoke(app, ["test", "--list"])
+        result = self.runner.invoke(app, ["probe", "--list"])
         assert result.exit_code == 0, result.output
 
     def test_list_shows_probe_names(self) -> None:
-        result = self.runner.invoke(app, ["test", "--list"])
+        result = self.runner.invoke(app, ["probe", "--list"])
         # At least one built-in probe name should appear
         assert "ssh" in result.output.lower() or "protected" in result.output.lower()
 
     def test_list_with_category_filter(self) -> None:
-        result = self.runner.invoke(app, ["test", "--list", "--category", "protected_paths"])
+        result = self.runner.invoke(app, ["probe", "--list", "--category", "protected_paths"])
         assert result.exit_code == 0
 
     def test_no_policy_runs_safety_floor(self) -> None:
         """Without --policy, only protected_path probes pass; others show as GAP."""
         result = self.runner.invoke(
             app,
-            ["test", "--category", "protected_paths"],
+            ["probe", "--category", "protected_paths"],
         )
         # Exit code 0: protected_paths always pass (safety floor)
         assert result.exit_code == 0, result.output
@@ -809,14 +809,14 @@ class TestCLI:
         )
         result = self.runner.invoke(
             app,
-            ["test", "--policy", str(policy), "--category", "protected_paths"],
+            ["probe", "--policy", str(policy), "--category", "protected_paths"],
         )
         assert result.exit_code == 0
 
     def test_invalid_policy_path_exits_one(self) -> None:
         result = self.runner.invoke(
             app,
-            ["test", "--policy", "/nonexistent/policy.yaml"],
+            ["probe", "--policy", "/nonexistent/policy.yaml"],
         )
         assert result.exit_code == 1
 
@@ -838,7 +838,7 @@ class TestCLI:
         result = self.runner.invoke(
             app,
             [
-                "test",
+                "probe",
                 "--list",
                 "--probes",
                 str(custom),
@@ -852,7 +852,7 @@ class TestCLI:
         result = self.runner.invoke(
             app,
             [
-                "test",
+                "probe",
                 "--policy",
                 str(policy),
                 "--verbose",
@@ -868,7 +868,7 @@ class TestCLI:
         result = self.runner.invoke(
             app,
             [
-                "test",
+                "probe",
                 "--policy",
                 str(policy),
                 "--category",
@@ -884,7 +884,7 @@ class TestCLI:
         result = self.runner.invoke(
             app,
             [
-                "test",
+                "probe",
                 "--policy",
                 str(policy),
                 "--category",
@@ -898,6 +898,6 @@ class TestCLI:
         bad_probes.write_text("not valid probe format: {", encoding="utf-8")
         result = self.runner.invoke(
             app,
-            ["test", "--list", "--probes", str(bad_probes)],
+            ["probe", "--list", "--probes", str(bad_probes)],
         )
         assert result.exit_code == 1
