@@ -1,17 +1,17 @@
-"""CLI entry point for ``agentward test``.
+"""CLI entry point for ``agentward probe``.
 
 Registered in the main CLI via:
     from agentward.testing.cli import app as _testing_app
     app.add_typer(_testing_app)
 
 This exposes:
-    agentward test [OPTIONS]            – run all probes
-    agentward test --list               – list available probes
-    agentward test --category X         – filter by attack category
-    agentward test --severity Y         – filter by severity
-    agentward test --probes path        – add custom probe files/dirs
-    agentward test --verbose            – print per-probe detail always
-    agentward test --strict             – treat GAPs as failures (CI)
+    agentward probe [OPTIONS]            – run all probes
+    agentward probe --list               – list available probes
+    agentward probe --category X         – filter by attack category
+    agentward probe --severity Y         – filter by severity
+    agentward probe --probes path        – add custom probe files/dirs
+    agentward probe --verbose            – print per-probe detail always
+    agentward probe --strict             – treat GAPs as failures (CI)
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ import typer
 from rich.console import Console
 
 app = typer.Typer(
-    name="test",
+    name="probe",
     help=(
         "Run policy regression tests against your live AgentWard configuration.\n\n"
         "Fires curated adversarial tool calls through the policy engine and "

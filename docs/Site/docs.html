@@ -197,7 +197,7 @@
       <a href="#setup">agentward setup</a>
       <a href="#inspect">agentward inspect</a>
       <a href="#comply">agentward comply</a>
-      <a href="#test">agentward test</a>
+      <a href="#probe">agentward probe</a>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-label">Configuration</div>
@@ -420,24 +420,24 @@ agentward comply --framework pci-dss --policy custom.yaml  <span class="dim"># c
     </div>
 
     <!-- TEST -->
-    <div class="doc-section" id="test">
+    <div class="doc-section" id="probe">
       <div class="eyebrow">Stage 5 — Verification</div>
       <div class="cmd-block">
         <div class="cmd-header">
-          <span class="cmd-name">agentward test</span>
+          <span class="cmd-name">agentward probe</span>
           <span class="cmd-badge live">LIVE</span>
         </div>
         <div class="cmd-desc">
-          <p>Policy regression testing. Fires a curated library of adversarial tool calls through the live policy engine and reports which attack categories your policy correctly handles. Policies drift over time — <code>agentward test</code> catches regressions before they reach production.</p>
+          <p>Policy regression testing. Fires a curated library of adversarial tool calls through the live policy engine and reports which attack categories your policy correctly handles. Policies drift over time — <code>agentward probe</code> catches regressions before they reach production.</p>
         </div>
         <div class="cmd-body">
-          <pre>agentward test --policy agentward.yaml           <span class="dim"># run all 68 built-in probes</span>
-agentward test --category protected_paths        <span class="dim"># filter by attack category</span>
-agentward test --severity critical               <span class="dim"># filter by severity</span>
-agentward test --probes my_probes.yaml           <span class="dim"># add custom probe file</span>
-agentward test --list                            <span class="dim"># catalogue all available probes</span>
-agentward test --strict                          <span class="dim"># treat GAPs as failures (CI mode)</span>
-agentward test --verbose                         <span class="dim"># per-probe detail even when all pass</span></pre>
+          <pre>agentward probe --policy agentward.yaml           <span class="dim"># run all 68 built-in probes</span>
+agentward probe --category protected_paths        <span class="dim"># filter by attack category</span>
+agentward probe --severity critical               <span class="dim"># filter by severity</span>
+agentward probe --probes my_probes.yaml           <span class="dim"># add custom probe file</span>
+agentward probe --list                            <span class="dim"># catalogue all available probes</span>
+agentward probe --strict                          <span class="dim"># treat GAPs as failures (CI mode)</span>
+agentward probe --verbose                         <span class="dim"># per-probe detail even when all pass</span></pre>
           <table class="option-table">
             <tr><th>OPTION</th><th>DESCRIPTION</th></tr>
             <tr><td>-p / --policy PATH</td><td>Policy file to test against (default: safety-floor only)</td></tr>
@@ -505,13 +505,13 @@ agentward test --verbose                         <span class="dim"># per-probe d
           <p>Optional: <code>arguments</code> (dict), <code>rationale</code> (shown on failure), <code>requires_policy_feature</code> (skip probe if feature absent — values: <code>skill_chaining</code>, <code>require_approval</code>, <code>sensitive_content</code>, <code>data_boundaries</code>, <code>llm_judge</code>).</p>
 
           <h3>CI integration</h3>
-          <pre>agentward test --policy agentward.yaml                    <span class="dim"># exit 0 on pass, 1 on fail</span>
-agentward test --policy agentward.yaml --strict           <span class="dim"># exit 1 on fail OR gap</span>
-agentward test --policy agentward.yaml --severity critical <span class="dim"># fast: only critical probes</span></pre>
+          <pre>agentward probe --policy agentward.yaml                    <span class="dim"># exit 0 on pass, 1 on fail</span>
+agentward probe --policy agentward.yaml --strict           <span class="dim"># exit 1 on fail OR gap</span>
+agentward probe --policy agentward.yaml --severity critical <span class="dim"># fast: only critical probes</span></pre>
           <p>Exit code <code>0</code> — all probes passed (or were skipped). Exit code <code>1</code> — at least one FAIL (or GAP in <code>--strict</code> mode). Designed for direct integration into CI pipelines.</p>
           <pre><span class="dim"># .github/workflows/ci.yaml</span>
 - <span class="w">name</span>: Policy regression test
-  <span class="w">run</span>: agentward test --policy agentward.yaml --strict --severity critical,high</pre>
+  <span class="w">run</span>: agentward probe --policy agentward.yaml --strict --severity critical,high</pre>
         </div>
       </div>
     </div>

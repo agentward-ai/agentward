@@ -215,7 +215,7 @@ Agent Host                    AgentWard                     Tool Server
 | `agentward diff` | Compare two policy files — shows breaking vs. relaxing changes |
 | `agentward status` | Show live proxy status and current session statistics |
 | `agentward comply` | Evaluate policies against regulatory frameworks (HIPAA, SOX, GDPR, PCI-DSS) with auto-fix |
-| `agentward test` | Policy regression testing — fire adversarial probes through the engine, verify policies block what they should |
+| `agentward probe` | Policy regression testing — fire adversarial probes through the engine, verify policies block what they should |
 
 ## Policy Actions
 
@@ -300,10 +300,10 @@ All processing is local — zero network calls, zero dependencies (stdlib only f
 
 ## Policy Regression Testing
 
-Policies drift. Rules get relaxed to unblock an agent, a new skill gets added without a corresponding policy entry, and suddenly `shell_execute` is allowed where it shouldn't be. `agentward test` catches this before it reaches production.
+Policies drift. Rules get relaxed to unblock an agent, a new skill gets added without a corresponding policy entry, and suddenly `shell_execute` is allowed where it shouldn't be. `agentward probe` catches this before it reaches production.
 
 ```bash
-agentward test --policy agentward.yaml
+agentward probe --policy agentward.yaml
 ```
 
 Fires a curated library of adversarial tool calls through the live policy engine and reports which attack categories your policy correctly blocks.
@@ -340,17 +340,17 @@ AgentWard Policy Regression Test
 #### Filtering
 
 ```bash
-agentward test --category protected_paths        # always-passing safety floor only
-agentward test --category scope_creep            # specific attack category
-agentward test --severity critical               # only critical-severity probes
-agentward test --category scope_creep,skill_chaining --severity high,critical
+agentward probe --category protected_paths        # always-passing safety floor only
+agentward probe --category scope_creep            # specific attack category
+agentward probe --severity critical               # only critical-severity probes
+agentward probe --category scope_creep,skill_chaining --severity high,critical
 ```
 
 #### See what probes are available
 
 ```bash
-agentward test --list                            # all 68 built-in probes
-agentward test --list --category deserialization # filter the list
+agentward probe --list                            # all 68 built-in probes
+agentward probe --list --category deserialization # filter the list
 ```
 
 #### Custom probes
@@ -385,8 +385,8 @@ probes:
 ```
 
 ```bash
-agentward test --policy agentward.yaml --probes my_org_probes.yaml
-agentward test --policy agentward.yaml --probes ./security-tests/    # entire directory
+agentward probe --policy agentward.yaml --probes my_org_probes.yaml
+agentward probe --policy agentward.yaml --probes ./security-tests/    # entire directory
 ```
 
 Probe YAML fields:
@@ -409,20 +409,20 @@ Probe YAML fields:
 
 ```bash
 # Exit 0 if all pass, exit 1 if any FAIL
-agentward test --policy agentward.yaml
+agentward probe --policy agentward.yaml
 
 # Exit 1 on any FAIL or GAP (full coverage enforcement)
-agentward test --policy agentward.yaml --strict
+agentward probe --policy agentward.yaml --strict
 
 # Scope to critical probes only in fast CI
-agentward test --policy agentward.yaml --severity critical
+agentward probe --policy agentward.yaml --severity critical
 ```
 
 Example GitHub Actions step:
 
 ```yaml
 - name: Policy regression test
-  run: agentward test --policy agentward.yaml --strict --severity critical,high
+  run: agentward probe --policy agentward.yaml --strict --severity critical,high
 ```
 
 #### Built-in attack categories (68 probes)
