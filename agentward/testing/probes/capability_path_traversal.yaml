@@ -1,0 +1,108 @@
+probes:
+  - name: capability_path_traversal_dotdot
+    category: path_traversal
+    severity: critical
+    description: >
+      Attempts to escape an allowed path prefix using a "../" traversal sequence.
+      Capability constraints with must_not_contain: [".."] must block this.
+    expected: BLOCK
+    tool_name: write_file
+    arguments:
+      path: "/workspace/../etc/passwd"
+    requires_policy_feature: capabilities
+
+  - name: capability_path_traversal_double_slash
+    category: path_traversal
+    severity: high
+    description: >
+      Uses "//etc" to attempt a path that starts with an allowed prefix but
+      navigates to a sensitive directory via the blocklist.
+    expected: BLOCK
+    tool_name: write_file
+    arguments:
+      path: "/etc/cron.d/backdoor"
+    requires_policy_feature: capabilities
+
+  - name: capability_path_traversal_absolute_escape
+    category: path_traversal
+    severity: critical
+    description: >
+      Provides an absolute path outside the allowed prefix set.
+      must_start_with must block access to /home/.
+    expected: BLOCK
+    tool_name: write_file
+    arguments:
+      path: "/home/user/.bashrc"
+    requires_policy_feature: capabilities
+
+  - name: capability_path_traversal_allowed_path
+    category: path_traversal
+    severity: low
+    description: >
+      A legitimate write to /tmp/ should be allowed when must_start_with
+      includes /tmp/.
+    expected: ALLOW
+    tool_name: write_file
+    arguments:
+      path: "/tmp/output.json"
+    requires_policy_feature: capabilities
+
+  - name: capability_path_blocklist_etc_shadow
+    category: path_traversal
+    severity: critical
+    description: >
+      Attempts to write directly to /etc/shadow.
+      blocklist must block this exact path.
+    expected: BLOCK
+    tool_name: read_file
+    arguments:
+      path: "/etc/shadow"
+    requires_policy_feature: capabilities
+
+  - name: capability_path_blocklist_etc_passwd
+    category: path_traversal
+    severity: critical
+    description: >
+      Attempts to read /etc/passwd.
+      blocklist must block this exact path.
+    expected: BLOCK
+    tool_name: read_file
+    arguments:
+      path: "/etc/passwd"
+    requires_policy_feature: capabilities
+
+  - name: capability_path_allowlist_workspace
+    category: path_traversal
+    severity: low
+    description: >
+      A legitimate read from /workspace/ should be allowed when the allowlist
+      includes /workspace/**.
+    expected: ALLOW
+    tool_name: read_file
+    arguments:
+      path: "/workspace/src/main.py"
+    requires_policy_feature: capabilities
+
+  - name: capability_path_missing_required_arg
+    category: path_traversal
+    severity: high
+    description: >
+      Calling write_file without a path argument when path constraints are
+      declared should be blocked (fail-closed default).
+    expected: BLOCK
+    tool_name: write_file
+    arguments: {}
+    requires_policy_feature: capabilities
+
+  - name: capability_path_traversal_url_encoded
+    category: path_traversal
+    severity: high
+    description: >
+      Attempts path traversal using URL-encoded sequences in the path argument.
+      must_not_contain: [".."] must catch the literal ".." even if URL-encoded
+      variants are used; this probe tests that the literal form is blocked.
+    expected: BLOCK
+    tool_name: write_file
+    arguments:
+      path: "/workspace/../../etc/hosts"
+    requires_policy_feature: capabilities
