@@ -251,6 +251,128 @@ Agent Host                    AgentWard                     Tool Server
 | `agentward comply` | Evaluate policies against regulatory frameworks (HIPAA, SOX, GDPR, PCI-DSS) with auto-fix |
 | `agentward probe` | Policy regression testing — fire adversarial probes through the engine, verify policies block what they should |
 
+## Capability Scoping
+
+AgentWard's capability scoping turns per-resource allow/block switches into fine-grained **per-argument constraints** — evaluated in code at every tool call, outside the LLM context window.
+
+Where the top-level policy controls *which tools* can run, capability constraints control *what those tools can do with their arguments*.
+
+### YAML syntax
+
+```yaml
+skills:
+  filesystem-manager:
+    resources:
+      file:
+        read: true
+        write: true
+        capabilities:
+          write_file:
+            path:
+              must_start_with: ["/tmp/", "/workspace/"]
+              must_not_start_with: ["/etc/", "/home/"]
+              must_not_contain: [".."]          # block path traversal sequences
+
+  network-tools:
+    resources:
+      http:
+        read: true
+        capabilities:
+          http_request:
+            url:
+              allowed_domains: ["api.github.com", "api.slack.com"]
+              blocked_domains: ["*.internal.corp"]
+              allowed_schemes: ["https"]        # enforce TLS
+            method:
+              one_of: ["GET", "POST"]           # no DELETE/PUT
+
+  scanning-tools:
+    resources:
+      nmap:
+        read: true
+        capabilities:
+          nmap_scan:
+            target:
+              allowed_cidrs: ["10.0.0.0/8", "192.168.0.0/16"]
+              blocked_cidrs: ["0.0.0.0/0"]     # catch-all applied after allowlist
+            scan_type:
+              one_of: ["connect", "version"]
+            max_ports:
+              max_value: 100
+```
+
+### Constraint reference
+
+**String constraints** — apply to any `str`-valued argument:
+
+| Constraint | Effect |
+|---|---|
+| `must_start_with: [prefixes]` | Value must start with at least one prefix |
+| `must_not_start_with: [prefixes]` | Value must NOT start with any prefix |
+| `must_contain: [substrings]` | Value must contain at least one substring |
+| `must_not_contain: [substrings]` | Value must NOT contain any substring |
+| `matches: [regex_patterns]` | Value must match at least one regex |
+| `not_matches: [regex_patterns]` | Value must NOT match any regex |
+| `one_of: [values]` | Value must be exactly one of these |
+| `not_one_of: [values]` | Value must NOT be any of these |
+| `allowlist: [glob_patterns]` | Value must match at least one glob (supports `**`) |
+| `blocklist: [glob_patterns]` | Value must NOT match any glob |
+| `max_length: N` | String length must be ≤ N |
+
+**Network constraints** — applied to URL/hostname/IP string arguments (stdlib only, no DNS resolution):
+
+| Constraint | Effect |
+|---|---|
+| `allowed_domains: [domains]` | Hostname must be in list (supports `*.example.com` wildcards) |
+| `blocked_domains: [domains]` | Hostname must NOT match any entry |
+| `allowed_schemes: [schemes]` | URL scheme must be in list (e.g. `["https"]`) |
+| `allowed_cidrs: [cidrs]` | IP must fall in at least one CIDR range |
+| `blocked_cidrs: [cidrs]` | IP must NOT fall in any CIDR range |
+| `allowed_ports: [ports]` | Port must be in list (integers or `"8000-9000"` range strings) |
+
+**Numeric constraints** — apply to `int`/`float` arguments:
+
+| Constraint | Effect |
+|---|---|
+| `min_value: N` | Value must be ≥ N (inclusive) |
+| `max_value: N` | Value must be ≤ N (inclusive) |
+| `one_of: [values]` | Value must be exactly one of these |
+
+**Boolean constraints:**
+
+| Constraint | Effect |
+|---|---|
+| `must_be: true/false` | Argument must be exactly this boolean |
+
+**Array constraints** — apply to `list`-valued arguments:
+
+| Constraint | Effect |
+|---|---|
+| `max_items: N` | List must have ≤ N elements |
+| `item_constraints: {}` | Apply any constraint set to each list element |
+
+### Design principles
+
+- **AND logic** — every specified constraint must pass; a single failure blocks the call.
+- **Fail-closed by default** — if a constraint is declared and the argument is missing, the call is blocked. Add `fail_open: true` to a specific argument constraint to allow it to be absent.
+- **Dot notation for nested arguments** — use `options.timeout` to constrain `arguments["options"]["timeout"]`.
+- **Zero new dependencies** — all evaluation uses Python stdlib (`ipaddress`, `fnmatch`, `re`, `urllib.parse`).
+- **Last gate before ALLOW** — constraints run after action-level and filter-level checks, immediately before the final ALLOW is returned. They cannot be bypassed by tool-name policy decisions.
+
+### Error messages
+
+When a constraint fails, AgentWard produces a specific, actionable block reason:
+
+```
+BLOCKED: Argument 'path' value '/etc/shadow' violates capability constraint
+'blocklist'. Matched forbidden pattern: '/etc/shadow'.
+
+BLOCKED: Argument 'url' value 'http://api.github.com' violates capability
+constraint 'allowed_schemes'. Scheme 'http' is not in allowed list: ['https'].
+```
+
+These messages appear in the audit log, the terminal proxy output, and `agentward status`.
+
 ## Policy Actions
 
 | Action | Behavior |

@@ -1,7 +1,7 @@
 """Pydantic v2 models for AgentWard policy YAML.
 
 Defines the complete schema for agentward.yaml, including skill permissions,
-chaining rules, approval gates, and data boundary zones.
+chaining rules, approval gates, data boundary zones, and argument constraints.
 """
 
 from __future__ import annotations
@@ -53,6 +53,184 @@ class ViolationAction(str, Enum):
     LOG_ONLY = "log_only"
 
 
+class ArgumentConstraints(BaseModel):
+    """Declarative constraints on a single tool argument for capability scoping.
+
+    All defined constraints use AND logic — every specified constraint must
+    pass for the argument to be accepted.  If any constraint fails, the tool
+    call is BLOCKED with a specific, actionable error message.
+
+    Constraints are grouped by the type of value they apply to:
+    - String constraints apply to any string-valued argument.
+    - Network constraints apply to URL/hostname/IP string arguments.
+    - Numeric constraints apply to int/float arguments.
+    - Boolean constraints apply to bool arguments.
+    - Array constraints apply to list arguments.
+
+    Regex patterns in ``matches``/``not_matches`` are compiled at policy
+    load time so invalid patterns fail fast rather than crashing mid-session.
+
+    Example YAML::
+
+        capabilities:
+          write_file:
+            path:
+              must_start_with: ["/tmp/", "/workspace/"]
+              must_not_contain: [".."]
+              blocklist: ["/etc/shadow", "/etc/passwd"]
+          http_request:
+            url:
+              allowed_domains: ["api.github.com"]
+              allowed_schemes: ["https"]
+            method:
+              one_of: ["GET", "POST"]
+    """
+
+    # ── String constraints ─────────────────────────────────────────────────
+    must_start_with: list[str] = Field(
+        default_factory=list,
+        description="Value must start with at least one of these prefixes.",
+    )
+    must_not_start_with: list[str] = Field(
+        default_factory=list,
+        description="Value must NOT start with any of these prefixes.",
+    )
+    must_contain: list[str] = Field(
+        default_factory=list,
+        description="Value must contain at least one of these substrings.",
+    )
+    must_not_contain: list[str] = Field(
+        default_factory=list,
+        description="Value must NOT contain any of these substrings.",
+    )
+    matches: list[str] = Field(
+        default_factory=list,
+        description="Regex patterns — value must match at least one.",
+    )
+    not_matches: list[str] = Field(
+        default_factory=list,
+        description="Regex patterns — value must NOT match any.",
+    )
+    one_of: list[Any] = Field(
+        default_factory=list,
+        description="Value must be exactly one of these (enum allowlist).",
+    )
+    not_one_of: list[Any] = Field(
+        default_factory=list,
+        description="Value must NOT be any of these.",
+    )
+    allowlist: list[str] = Field(
+        default_factory=list,
+        description="Glob patterns — string value must match at least one.",
+    )
+    blocklist: list[str] = Field(
+        default_factory=list,
+        description="Glob patterns — string value must NOT match any.",
+    )
+    max_length: int | None = Field(
+        default=None,
+        description="Maximum allowed string length.",
+    )
+
+    # ── Network constraints (URL / hostname / IP arguments) ───────────────
+    allowed_domains: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Allowed hostnames. Supports wildcard prefix: *.example.com "
+            "matches api.example.com but not example.com itself."
+        ),
+    )
+    blocked_domains: list[str] = Field(
+        default_factory=list,
+        description="Blocked hostnames with the same wildcard support.",
+    )
+    allowed_schemes: list[str] = Field(
+        default_factory=list,
+        description="Allowed URL schemes, e.g. ['https'].",
+    )
+    allowed_cidrs: list[str] = Field(
+        default_factory=list,
+        description="Allowed IP/CIDR ranges, e.g. ['10.0.0.0/8'].",
+    )
+    blocked_cidrs: list[str] = Field(
+        default_factory=list,
+        description="Blocked IP/CIDR ranges, e.g. ['0.0.0.0/0'].",
+    )
+    allowed_ports: list[str | int] = Field(
+        default_factory=list,
+        description=(
+            "Allowed ports or port ranges. "
+            "Accepts integers (443) or range strings ('8000-9000')."
+        ),
+    )
+
+    # ── Numeric constraints ────────────────────────────────────────────────
+    min_value: float | None = Field(
+        default=None,
+        description="Minimum allowed numeric value (inclusive).",
+    )
+    max_value: float | None = Field(
+        default=None,
+        description="Maximum allowed numeric value (inclusive).",
+    )
+
+    # ── Boolean constraints ────────────────────────────────────────────────
+    must_be: bool | None = Field(
+        default=None,
+        description="Argument must be exactly this boolean value.",
+    )
+
+    # ── Array constraints ──────────────────────────────────────────────────
+    max_items: int | None = Field(
+        default=None,
+        description="Maximum number of items in a list argument.",
+    )
+    item_constraints: ArgumentConstraints | None = Field(
+        default=None,
+        description="Constraints applied to each element of a list argument.",
+    )
+
+    # ── Missing-argument behaviour ─────────────────────────────────────────
+    fail_open: bool = Field(
+        default=False,
+        description=(
+            "When True, a missing argument silently passes all constraints "
+            "(fail-open). Default False: missing required arguments BLOCK."
+        ),
+    )
+
+    # Pre-compiled regex patterns (populated by the validator below).
+    _compiled_matches: list[re.Pattern[str]] = PrivateAttr(default_factory=list)
+    _compiled_not_matches: list[re.Pattern[str]] = PrivateAttr(default_factory=list)
+
+    @model_validator(mode="after")
+    def _compile_regex_patterns(self) -> "ArgumentConstraints":
+        """Pre-compile regex patterns at load time — fail fast on bad patterns."""
+        for pattern_str in self.matches:
+            try:
+                self._compiled_matches.append(re.compile(pattern_str))
+            except re.error as e:
+                msg = (
+                    f"Invalid regex in 'matches': {pattern_str!r} — {e}. "
+                    f"Fix this pattern in your capability constraints."
+                )
+                raise ValueError(msg) from e
+        for pattern_str in self.not_matches:
+            try:
+                self._compiled_not_matches.append(re.compile(pattern_str))
+            except re.error as e:
+                msg = (
+                    f"Invalid regex in 'not_matches': {pattern_str!r} — {e}. "
+                    f"Fix this pattern in your capability constraints."
+                )
+                raise ValueError(msg) from e
+        return self
+
+
+# Self-referential model requires rebuild after initial class definition.
+ArgumentConstraints.model_rebuild()
+
+
 class ResourcePermissions(BaseModel):
     """Permissions for one resource within a skill.
 
@@ -66,6 +244,14 @@ class ResourcePermissions(BaseModel):
     denied: bool = False
     actions: dict[str, bool] = Field(default_factory=dict)
     filters: dict[str, list[str]] = Field(default_factory=dict)
+    capabilities: dict[str, dict[str, ArgumentConstraints]] = Field(
+        default_factory=dict,
+        description=(
+            "Per-tool argument constraints for capability scoping. "
+            "Keyed by tool name, then argument name. "
+            "All constraints on an argument use AND logic."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -77,14 +263,21 @@ class ResourcePermissions(BaseModel):
 
         # If explicitly denied, nothing else matters
         if data.get("denied") is True:
-            return {"denied": True, "actions": {}, "filters": {}}
+            return {"denied": True, "actions": {}, "filters": {}, "capabilities": {}}
 
         actions: dict[str, bool] = {}
         filters: dict[str, list[str]] = {}
+        # Raw dict passed through to Pydantic for ArgumentConstraints parsing.
+        capabilities: dict[str, Any] = {}
 
         for key, value in data.items():
             if key == "denied":
                 continue
+            elif key == "capabilities":
+                if not isinstance(value, dict):
+                    msg = "capabilities must be a mapping"
+                    raise ValueError(msg)
+                capabilities = value
             elif key == "filters":
                 if not isinstance(value, dict):
                     msg = "filters must be a mapping"
@@ -116,7 +309,12 @@ class ResourcePermissions(BaseModel):
                     )
                     raise ValueError(msg)
 
-        return {"denied": False, "actions": actions, "filters": filters}
+        return {
+            "denied": False,
+            "actions": actions,
+            "filters": filters,
+            "capabilities": capabilities,
+        }
 
     def is_action_allowed(self, action: str) -> bool | None:
         """Check if a specific action is allowed.
