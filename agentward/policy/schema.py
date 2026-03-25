@@ -843,6 +843,65 @@ class LlmJudgeConfig(BaseModel):
         return result
 
 
+class ArgumentConstraint(BaseModel):
+    """Capability scoping constraints for a single tool argument.
+
+    Each field activates one constraint type. Multiple constraint types on the
+    same argument use AND logic — all must pass for the call to be allowed.
+
+    Example YAML::
+
+        capabilities:
+          read_file:
+            args:
+              path:
+                allowed_prefixes:
+                  - /workspace
+                  - /tmp
+                fail_open: false
+
+    Attributes:
+        allowed_prefixes: Path must resolve under one of these prefixes.
+            Defends against directory traversal.
+        allowed_cidrs: IP address must fall within one of these CIDR ranges.
+            Supports IPv4, IPv6, and IPv4-mapped IPv6.
+        allowed_domains: URL/hostname must match one of these domain patterns.
+            Supports ``*.example.com`` wildcard subdomains.
+        allowed_patterns: Value must match one of these glob patterns.
+        min_value: Numeric value must be ≥ this bound (inclusive).
+        max_value: Numeric value must be ≤ this bound (inclusive).
+        fail_open: If True, a missing/None argument value passes all checks.
+            Default False (fail-closed): missing required args are violations.
+    """
+
+    allowed_prefixes: list[str] = Field(default_factory=list)
+    allowed_cidrs: list[str] = Field(default_factory=list)
+    allowed_domains: list[str] = Field(default_factory=list)
+    allowed_patterns: list[str] = Field(default_factory=list)
+    min_value: float | None = None
+    max_value: float | None = None
+    fail_open: bool = False
+
+
+class CapabilitySpec(BaseModel):
+    """Capability constraints for a single tool.
+
+    Maps argument names to their constraint specifications.
+
+    Example YAML::
+
+        capabilities:
+          fetch_url:
+            args:
+              url:
+                allowed_domains:
+                  - "*.github.com"
+                  - "api.npmjs.com"
+    """
+
+    args: dict[str, ArgumentConstraint] = Field(default_factory=dict)
+
+
 class AuditConfig(BaseModel):
     """Configuration for audit log output paths.
 
@@ -928,5 +987,16 @@ class AgentWardPolicy(BaseModel):
             "Session-level evasion detection configuration. "
             "When enabled, analyzes sequences of tool calls to detect multi-step "
             "attacks where no individual call violates policy."
+        ),
+    )
+    capabilities: dict[str, CapabilitySpec] = Field(
+        default_factory=dict,
+        description=(
+            "Per-tool argument constraints (capability scoping). "
+            "Maps tool names to argument-level restrictions such as path prefix "
+            "allowlists, CIDR ranges, domain allowlists, glob patterns, and "
+            "numeric bounds. Evaluated after action-level permissions: a tool "
+            "call must pass both its action permission AND all capability "
+            "constraints before being allowed."
         ),
     )

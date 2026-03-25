@@ -3,6 +3,9 @@ CLAUDE.md
 BRIEF.md
 .claude/
 
+# Demo recording pipeline (local only — not shipped)
+demo/
+
 # Local config files
 /agentward.yaml
 /agentward-report.md

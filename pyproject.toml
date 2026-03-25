@@ -29,6 +29,8 @@ dependencies = [
     "pyyaml>=6.0",
     "rich>=13.0",
     "aiohttp>=3.9",
+    "anthropic>=0.40",
+    "openai>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -36,14 +38,8 @@ sanitize = [
     "pypdf>=4.0",
     "spacy>=3.7",
 ]
-# LLM-as-judge intent analysis — semantic second-opinion layer for tool calls.
-# Uses the Anthropic and/or OpenAI Python SDKs to call a fast judge model.
-# Install with: pip install agentward[judge]
-# Then enable in your policy YAML: llm_judge: {enabled: true, provider: anthropic}
-judge = [
-    "anthropic>=0.40",
-    "openai>=1.0",
-]
+# Backward-compatible alias — all judge deps are now in core dependencies.
+judge = []
 
 [project.scripts]
 agentward = "agentward.cli:app"
