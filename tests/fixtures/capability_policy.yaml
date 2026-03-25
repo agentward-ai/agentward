@@ -1,0 +1,67 @@
+version: "1.0"
+
+skills:
+  file-manager:
+    filesystem:
+      read: true
+      write: true
+
+  web-client:
+    http:
+      fetch: true
+
+  data-processor:
+    compute:
+      run: true
+
+capabilities:
+  # Path-constrained file reader
+  filesystem_read:
+    args:
+      path:
+        allowed_prefixes:
+          - /workspace
+          - /tmp
+        fail_open: false
+
+  # Path-constrained file writer
+  filesystem_write:
+    args:
+      path:
+        allowed_prefixes:
+          - /workspace/output
+        fail_open: false
+
+  # Domain-constrained HTTP fetch
+  http_fetch:
+    args:
+      url:
+        allowed_domains:
+          - "api.github.com"
+          - "*.npmjs.com"
+          - "registry.npmjs.org"
+        fail_open: false
+
+  # IP/CIDR-constrained connector
+  compute_run:
+    args:
+      host:
+        allowed_cidrs:
+          - "10.0.0.0/8"
+          - "192.168.0.0/16"
+          - "127.0.0.1/32"
+        fail_open: false
+      count:
+        min_value: 1
+        max_value: 100
+        fail_open: true
+
+  # Glob-constrained file selector
+  filesystem_select:
+    args:
+      pattern:
+        allowed_patterns:
+          - "*.txt"
+          - "*.json"
+          - "/workspace/**"
+        fail_open: false

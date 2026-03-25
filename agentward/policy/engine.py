@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from agentward.policy.constraints import ConstraintViolation, evaluate_capabilities
 from agentward.policy.protected_paths import check_arguments as _check_protected_paths
 from agentward.policy.schema import (
     AgentWardPolicy,
@@ -141,9 +142,10 @@ class PolicyEngine:
         match = self._match_tool(tool_name, skill_filter=self._skill_context)
         if match is not None:
             skill_name, resource_name, action, permissions = match
-            return self._evaluate_permissions(
+            result = self._evaluate_permissions(
                 tool_name, skill_name, resource_name, action, permissions, arguments
             )
+            return self._apply_capabilities(tool_name, arguments, result)
 
         # No match — use the configured default action
         if self._policy.default_action == DefaultAction.BLOCK:
@@ -152,10 +154,11 @@ class PolicyEngine:
                 reason=f"No policy rule matches tool '{tool_name}'. "
                 f"Blocked by default (default_action: block).",
             )
-        return EvaluationResult(
+        default_allow = EvaluationResult(
             decision=PolicyDecision.ALLOW,
             reason=f"No policy rule matches tool '{tool_name}'. Allowing by default.",
         )
+        return self._apply_capabilities(tool_name, arguments, default_allow)
 
     def evaluate_chaining(self, source_skill: str, target_skill: str) -> EvaluationResult:
         """Check if a skill-to-skill chain is allowed.
@@ -529,3 +532,45 @@ class PolicyEngine:
                         )
 
         return None
+
+    def _apply_capabilities(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any] | None,
+        base_result: EvaluationResult,
+    ) -> EvaluationResult:
+        """Apply capability constraints on top of a base evaluation result.
+
+        Only runs capability checks when the base result is ALLOW or LOG —
+        if the action is already blocked, there is nothing to further restrict.
+
+        Args:
+            tool_name: The MCP tool name.
+            arguments: The tool call arguments.
+            base_result: The result from action-level permission evaluation.
+
+        Returns:
+            The base result unchanged if it is not ALLOW/LOG, or a BLOCK result
+            if any capability constraint is violated.
+        """
+        if base_result.decision not in (PolicyDecision.ALLOW, PolicyDecision.LOG):
+            return base_result
+
+        if not self._policy.capabilities:
+            return base_result
+
+        violations = evaluate_capabilities(tool_name, arguments, self._policy.capabilities)
+        if not violations:
+            return base_result
+
+        # Build a message that lists ALL violations (not just the first)
+        violation_lines = "; ".join(v.reason for v in violations)
+        return EvaluationResult(
+            decision=PolicyDecision.BLOCK,
+            reason=(
+                f"Capability constraint violated for tool '{tool_name}': "
+                f"{violation_lines}"
+            ),
+            skill=base_result.skill,
+            resource=base_result.resource,
+        )
