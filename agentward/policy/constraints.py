@@ -67,12 +67,24 @@ class ConstraintViolation:
             (``path``, ``cidr``, ``domain``, ``glob``, ``numeric``).
         value: The raw argument value that was checked.
         reason: Human-readable explanation of why the check failed.
+        message: Alias for ``reason`` — compatibility with the main-branch API.
+        argument: Alias for ``arg_name`` — compatibility with the main-branch API.
     """
 
     arg_name: str
     constraint_type: str
     value: Any
     reason: str
+
+    @property
+    def message(self) -> str:
+        """Alias for ``reason`` for API compatibility."""
+        return self.reason
+
+    @property
+    def argument(self) -> str:
+        """Alias for ``arg_name`` for API compatibility."""
+        return self.arg_name
 
 
 # ---------------------------------------------------------------------------
@@ -915,3 +927,67 @@ def evaluate_capabilities(
             ))
 
     return violations
+
+
+# ---------------------------------------------------------------------------
+# Compatibility shims — main-branch API
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ConstraintResult:
+    """Result wrapper matching the main-branch evaluate_argument_constraints API.
+
+    Attributes:
+        passed: True only when all constraints were satisfied.
+        violations: List of individual failures (empty when passed is True).
+    """
+
+    passed: bool
+    violations: list[ConstraintViolation] = field(default_factory=list)
+
+
+def evaluate_argument_constraints(
+    arguments: "dict[str, Any] | None",
+    arg_constraints: "dict[str, ArgumentConstraint]",
+) -> ConstraintResult:
+    """Evaluate arguments against a per-argument constraint dict.
+
+    Compatibility shim wrapping the per-check functions so both the
+    resource-level ``_check_capabilities`` path (main-branch engine) and the
+    policy-level ``_apply_capabilities`` path (our engine) can coexist.
+
+    Args:
+        arguments: The tool call arguments, or None.
+        arg_constraints: Mapping of argument name → ArgumentConstraint.
+
+    Returns:
+        ConstraintResult(passed=True) if all constraints pass,
+        ConstraintResult(passed=False, violations=[...]) otherwise.
+    """
+    if not arg_constraints:
+        return ConstraintResult(passed=True)
+
+    args = arguments or {}
+    violations: list[ConstraintViolation] = []
+
+    for arg_name, constraint in arg_constraints.items():
+        raw_value = args.get(arg_name)
+        fail_open = constraint.fail_open
+
+        if constraint.allowed_prefixes:
+            violations.extend(check_path(arg_name, raw_value, constraint.allowed_prefixes, fail_open))
+        if constraint.allowed_cidrs:
+            violations.extend(check_cidr(arg_name, raw_value, constraint.allowed_cidrs, fail_open))
+        if constraint.allowed_domains:
+            violations.extend(check_domain(arg_name, raw_value, constraint.allowed_domains, fail_open))
+        if constraint.allowed_patterns:
+            violations.extend(check_glob(arg_name, raw_value, constraint.allowed_patterns, fail_open))
+        if constraint.min_value is not None or constraint.max_value is not None:
+            violations.extend(check_numeric(
+                arg_name, raw_value,
+                min_value=constraint.min_value, max_value=constraint.max_value,
+                fail_open=fail_open,
+            ))
+
+    return ConstraintResult(passed=len(violations) == 0, violations=violations)

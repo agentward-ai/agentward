@@ -9,7 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from agentward.policy.constraints import ConstraintViolation, evaluate_capabilities
+
+ 
+from agentward.policy.constraints import (
+    ConstraintViolation,
+    evaluate_argument_constraints,
+    evaluate_capabilities,
+)
 from agentward.policy.protected_paths import check_arguments as _check_protected_paths
 from agentward.policy.schema import (
     AgentWardPolicy,
@@ -41,6 +47,25 @@ class EvaluationResult:
     reason: str
     skill: str | None = None
     resource: str | None = None
+
+
+def _format_constraint_violations(
+    tool_name: str,
+    violations: list[ConstraintViolation],
+) -> str:
+    """Format constraint violations into a concise, actionable block reason.
+
+    Args:
+        tool_name: The tool name (used in the first violation message).
+        violations: Non-empty list of constraint violations.
+
+    Returns:
+        A human-readable string suitable for audit logs and operator dashboards.
+    """
+    if not violations:
+        return f"Tool '{tool_name}' blocked by capability constraints."
+    # Violations already contain BLOCKED: prefixed messages.
+    return " ".join(v.message for v in violations)
 
 
 class PolicyEngine:
@@ -287,12 +312,17 @@ class PolicyEngine:
         if action is not None:
             allowed = permissions.is_action_allowed(action)
             if allowed is True:
-                # Action allowed — check filters before final ALLOW
+                # Action allowed — check filters then capability constraints.
                 filter_result = self._check_filters(
                     tool_name, skill_name, resource_name, permissions, arguments
                 )
                 if filter_result is not None:
                     return filter_result
+                cap_result = self._check_capabilities(
+                    tool_name, skill_name, resource_name, permissions, arguments
+                )
+                if cap_result is not None:
+                    return cap_result
                 return EvaluationResult(
                     decision=PolicyDecision.ALLOW,
                     reason=(
@@ -346,12 +376,18 @@ class PolicyEngine:
                 resource=resource_name,
             )
 
-        # Final ALLOW — check filters first
+        # Final ALLOW — check filters then capability constraints.
         filter_result = self._check_filters(
             tool_name, skill_name, resource_name, permissions, arguments
         )
         if filter_result is not None:
             return filter_result
+
+        cap_result = self._check_capabilities(
+            tool_name, skill_name, resource_name, permissions, arguments
+        )
+        if cap_result is not None:
+            return cap_result
 
         return EvaluationResult(
             decision=PolicyDecision.ALLOW,
@@ -446,6 +482,49 @@ class PolicyEngine:
             return role_result
 
         return None
+
+    def _check_capabilities(
+        self,
+        tool_name: str,
+        skill_name: str,
+        resource_name: str,
+        permissions: ResourcePermissions,
+        arguments: dict[str, Any] | None,
+    ) -> EvaluationResult | None:
+        """Check argument constraints from the capabilities block.
+
+        This is the last gate before ALLOW — runs after action-level and
+        filter-level checks have already passed.
+
+        Args:
+            tool_name: The full MCP tool name (used to look up capability constraints).
+            skill_name: The matched skill (for EvaluationResult context).
+            resource_name: The matched resource (for EvaluationResult context).
+            permissions: Resource permissions, which may carry ``capabilities``.
+            arguments: Tool call arguments to evaluate.
+
+        Returns:
+            A BLOCK EvaluationResult if any constraint fails, None if all pass
+            or if no capability constraints are defined for this tool.
+        """
+        if not permissions.capabilities:
+            return None
+
+        tool_caps = permissions.capabilities.get(tool_name)
+        if not tool_caps:
+            return None
+
+        result = evaluate_argument_constraints(arguments, tool_caps)
+        if result.passed:
+            return None
+
+        reason = _format_constraint_violations(tool_name, result.violations)
+        return EvaluationResult(
+            decision=PolicyDecision.BLOCK,
+            reason=reason,
+            skill=skill_name,
+            resource=resource_name,
+        )
 
     def _check_role_filters(
         self,
