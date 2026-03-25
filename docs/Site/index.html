@@ -280,6 +280,49 @@
     .lc-emap-arr{color:var(--muted2);font-family:var(--font-mono);font-size:11px}
     @media(max-width:760px){.lc-pipeline{flex-direction:column;gap:8px}.lc-conn{display:none}}
 
+    /* ── Full-demo modal ── */
+    .demo-cta{text-align:center;margin-top:20px}
+    .btn-demo{
+      display:inline-flex;align-items:center;gap:9px;
+      padding:11px 22px;border-radius:8px;
+      background:transparent;border:1px solid var(--border2);
+      color:var(--text);font-family:var(--font-sans);font-size:14px;font-weight:500;
+      cursor:pointer;transition:border-color .15s,color .15s,background .15s;
+      text-decoration:none;
+    }
+    .btn-demo:hover{border-color:var(--green);color:var(--green);background:var(--green-dim)}
+    .btn-demo .play-icon{
+      width:26px;height:26px;border-radius:50%;
+      background:var(--green);display:flex;align-items:center;justify-content:center;
+      flex-shrink:0;
+    }
+    .btn-demo .play-icon svg{width:10px;height:10px;fill:var(--bg);margin-left:2px}
+    .demo-modal-overlay{
+      display:none;position:fixed;inset:0;z-index:900;
+      background:rgba(0,0,0,0.92);backdrop-filter:blur(8px);
+      align-items:center;justify-content:center;padding:24px;
+    }
+    .demo-modal-overlay.open{display:flex}
+    .demo-modal{
+      position:relative;width:100%;max-width:1100px;
+      background:#050505;border:1px solid var(--border2);border-radius:14px;overflow:hidden;
+      box-shadow:0 32px 80px rgba(0,0,0,.7);
+    }
+    .demo-modal-bar{
+      display:flex;align-items:center;justify-content:space-between;
+      padding:10px 16px;background:#0d0d0d;border-bottom:1px solid var(--border);
+    }
+    .demo-modal-dots{display:flex;gap:6px}
+    .demo-modal-dots span{width:11px;height:11px;border-radius:50%;background:var(--border2)}
+    .demo-modal-title{font-family:var(--font-mono);font-size:12px;color:var(--muted);letter-spacing:.03em}
+    .demo-modal-close{
+      background:none;border:none;cursor:pointer;
+      color:var(--muted);font-size:20px;line-height:1;padding:2px 6px;
+      transition:color .15s;
+    }
+    .demo-modal-close:hover{color:var(--white)}
+    .demo-modal video{width:100%;display:block;max-height:80vh}
+
     /* ── CTA bottom ── */
     .cta-bottom{
       text-align:center;border-top:1px solid var(--border);
@@ -503,6 +546,14 @@
         style="width:100%;display:block;border-radius:0 0 12px 12px"
       ></video>
     </div>
+  </div>
+  <div class="demo-cta">
+    <button class="btn-demo" onclick="openDemoModal()">
+      <span class="play-icon">
+        <svg viewBox="0 0 10 10"><polygon points="2,1 9,5 2,9"/></svg>
+      </span>
+      Watch full walkthrough&nbsp;<span style="color:var(--muted);font-size:13px">2:00</span>
+    </button>
   </div>
 </div>
 
@@ -1018,6 +1069,35 @@ observePanel('configure', runConfigure);
 observePanel('enforce',   runEnforce);
 observePanel('comply',    runComply);
 observePanel('verify',    runVerify);
+</script>
+
+<!-- FULL DEMO MODAL -->
+<div class="demo-modal-overlay" id="demoOverlay" onclick="handleOverlayClick(event)">
+  <div class="demo-modal" id="demoModal">
+    <div class="demo-modal-bar">
+      <div class="demo-modal-dots"><span></span><span></span><span></span></div>
+      <span class="demo-modal-title">agentward — full walkthrough</span>
+      <button class="demo-modal-close" onclick="closeDemoModal()" aria-label="Close">✕</button>
+    </div>
+    <video id="demoVideo" src="demo-full.mp4" controls playsinline preload="none"></video>
+  </div>
+</div>
+<script>
+  function openDemoModal() {
+    document.getElementById('demoOverlay').classList.add('open');
+    document.getElementById('demoVideo').play();
+    document.addEventListener('keydown', onDemoKey);
+  }
+  function closeDemoModal() {
+    const v = document.getElementById('demoVideo');
+    v.pause(); v.currentTime = 0;
+    document.getElementById('demoOverlay').classList.remove('open');
+    document.removeEventListener('keydown', onDemoKey);
+  }
+  function handleOverlayClick(e) {
+    if (e.target === document.getElementById('demoOverlay')) closeDemoModal();
+  }
+  function onDemoKey(e) { if (e.key === 'Escape') closeDemoModal(); }
 </script>
 </body>
 </html>
