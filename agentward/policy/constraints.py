@@ -502,13 +502,18 @@ def _domain_matches(host: str, pattern: str) -> bool:
 
     Pattern rules:
       - ``example.com`` — exact match only
-      - ``*.example.com`` — any single subdomain (``api.example.com`` matches,
-        ``evil.example.com.example.com`` does NOT)
+      - ``*.example.com`` — any subdomain at ANY depth:
+        ``api.example.com`` and ``deep.api.example.com`` both match.
+        This is intentional: for ``blocked_domains``, blocking all subdomains
+        is the correct security posture. For ``allowed_domains``, use exact
+        patterns (``api.example.com``) when you want single-level precision.
       - ``**`` or ``*`` alone — matches everything
 
     Specifically does NOT match:
+      - ``example.com`` against rule ``*.example.com`` (bare domain, no subdomain)
       - ``evil.com`` against rule ``notevil.com``
       - ``notevil.com`` against rule ``evil.com``
+      - ``safe.com.evil.com`` against rule ``*.safe.com`` (suffix attack prevention)
 
     Args:
         host: The extracted hostname (lowercase, IDNA-encoded).
@@ -517,6 +522,8 @@ def _domain_matches(host: str, pattern: str) -> bool:
     Returns:
         True if the host is covered by the pattern.
     """
+    # Lowercase both host and pattern for case-insensitive comparison
+    host = host.lower()
     pattern = pattern.lower().rstrip(".")
 
     # Normalize the pattern hostname too
@@ -532,15 +539,15 @@ def _domain_matches(host: str, pattern: str) -> bool:
     # Wildcard subdomain: "*.example.com"
     if pattern.startswith("*."):
         suffix = pattern[2:]  # e.g., "example.com"
-        # host must end with ".example.com" and have exactly one extra label
-        # to prevent "evil.example.com.attacker.com" matches
+        # host must end with ".example.com" and have exactly one extra label.
+        # This prevents "evil.example.com.attacker.com" matches and also prevents
+        # multi-level subdomain matches: "deep.api.example.com" does NOT match
+        # "*.example.com". Use "*.api.example.com" for nested subdomain matching.
         if host == suffix:
             return False  # bare domain, not a subdomain
         if host.endswith("." + suffix):
-            # Ensure there's exactly one extra label (no sub-sub-domains unless
-            # pattern allows it). A single "*" only matches one label.
             prefix = host[: -(len(suffix) + 1)]
-            return "." not in prefix  # True if only one label remains
+            return "." not in prefix  # True only if exactly one extra label
         return False
 
     # Exact match
@@ -825,6 +832,46 @@ def check_numeric(
 
 
 # ---------------------------------------------------------------------------
+# Dot-notation argument resolver (shared by evaluate_capabilities and
+# evaluate_argument_constraints)
+# ---------------------------------------------------------------------------
+
+
+_SENTINEL = object()  # Unique marker for "key not found"
+
+
+def _resolve_dotted_key(args: dict[str, Any], key: str) -> Any:
+    """Resolve a dot-notation key against a (possibly nested) arguments dict.
+
+    A key like ``"options.timeout"`` traverses ``args["options"]["timeout"]``.
+    A key with no dots is equivalent to ``args.get(key)``.
+
+    If any segment is missing, or if an intermediate value is not a dict,
+    returns ``None`` (treated as "argument absent" by callers).
+
+    Args:
+        args: The top-level arguments dict.
+        key: The argument name, potentially with dot separators.
+
+    Returns:
+        The resolved value, or ``None`` if the key is not found.
+    """
+    if "." not in key:
+        return args.get(key)
+
+    segments = key.split(".")
+    current: Any = args
+    for segment in segments:
+        if not isinstance(current, dict):
+            return None
+        result = current.get(segment, _SENTINEL)
+        if result is _SENTINEL:
+            return None
+        current = result
+    return current
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -930,6 +977,553 @@ def evaluate_capabilities(
 
 
 # ---------------------------------------------------------------------------
+# Helpers exposed for testing and the rich ArgumentConstraints evaluator
+# ---------------------------------------------------------------------------
+
+
+def _ip_in_cidr(
+    ip: "ipaddress.IPv4Address | ipaddress.IPv6Address",
+    cidr_str: str,
+) -> bool:
+    """Return True if *ip* falls within the CIDR range *cidr_str*.
+
+    Handles malformed CIDR strings by returning False rather than raising.
+    IPv4-mapped IPv6 unwrapping is the responsibility of the caller.
+
+    Args:
+        ip: A parsed IP address object (IPv4Address or IPv6Address).
+        cidr_str: A CIDR string such as ``"10.0.0.0/8"`` or ``"::1/128"``.
+
+    Returns:
+        True if *ip* is contained in the network, False otherwise (including
+        when *cidr_str* is malformed).
+    """
+    try:
+        network = ipaddress.ip_network(cidr_str, strict=False)
+    except ValueError:
+        return False
+    if type(ip) is not type(network.network_address):
+        return False
+    return ip in network
+
+
+class _ParsedURL:
+    """Minimal URL parse result — mirrors the fields used by tests.
+
+    Attributes:
+        hostname: The extracted hostname (lowercased), or None.
+        scheme: The URL scheme (lowercased), or empty string.
+        port: The explicit port number, or None.
+        path: The URL path component.
+    """
+
+    __slots__ = ("hostname", "scheme", "port", "path")
+
+    def __init__(
+        self,
+        hostname: str | None,
+        scheme: str,
+        port: int | None,
+        path: str,
+    ) -> None:
+        self.hostname = hostname
+        self.scheme = scheme
+        self.port = port
+        self.path = path
+
+
+def _parse_url_lenient(value: str) -> _ParsedURL:
+    """Parse a URL or bare hostname/IP into a :class:`_ParsedURL` object.
+
+    Handles URLs without a scheme by prepending a dummy ``dummy://`` scheme
+    so that :func:`urllib.parse.urlparse` extracts the hostname correctly.
+    Port extraction preserves ``None`` for URLs that don't specify a port.
+
+    Args:
+        value: A URL string with or without scheme, or a bare hostname/IP.
+
+    Returns:
+        A :class:`_ParsedURL` with ``hostname``, ``scheme``, ``port``, and
+        ``path`` attributes.  ``hostname`` is ``None`` only when extraction
+        fails entirely.
+    """
+    if not value:
+        return _ParsedURL(hostname=None, scheme="", port=None, path="")
+
+    if "://" in value:
+        parsed = urllib.parse.urlparse(value)
+        return _ParsedURL(
+            hostname=parsed.hostname,
+            scheme=parsed.scheme or "",
+            port=parsed.port,
+            path=parsed.path or "",
+        )
+
+    # No scheme — try with dummy scheme so urlparse sees the hostname
+    parsed = urllib.parse.urlparse("dummy://" + value)
+    return _ParsedURL(
+        hostname=parsed.hostname,
+        scheme="",
+        port=parsed.port,
+        path=parsed.path or "",
+    )
+
+
+def _port_in_list(port: int, allowed: list[str | int]) -> bool:
+    """Return True if *port* is in *allowed*.
+
+    *allowed* is a list of integers or range strings of the form
+    ``"low-high"`` (e.g., ``"8000-9000"``).
+
+    Args:
+        port: The port number to check.
+        allowed: A list of allowed ports or ranges.
+
+    Returns:
+        True if *port* is found or falls within a range; False otherwise.
+    """
+    for entry in allowed:
+        if isinstance(entry, int):
+            if port == entry:
+                return True
+        elif isinstance(entry, str):
+            if "-" in entry:
+                try:
+                    low_str, high_str = entry.split("-", 1)
+                    low, high = int(low_str), int(high_str)
+                    if low <= port <= high:
+                        return True
+                except (ValueError, TypeError):
+                    pass
+            else:
+                try:
+                    if port == int(entry):
+                        return True
+                except (ValueError, TypeError):
+                    pass
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Rich ArgumentConstraints evaluator (main-branch schema model)
+# ---------------------------------------------------------------------------
+
+
+def _check_rich_constraint(
+    arg_name: str,
+    raw_value: Any,
+    constraint: Any,  # ArgumentConstraints from schema.py
+) -> list[ConstraintViolation]:
+    """Evaluate a single argument against an ``ArgumentConstraints`` (rich model).
+
+    Called by :func:`evaluate_argument_constraints` when the constraint object
+    is the rich ``ArgumentConstraints`` pydantic model from ``schema.py``
+    (which has ``must_start_with``, ``one_of``, ``blocklist``, etc.).
+
+    This function does NOT import ``ArgumentConstraints`` at module level to
+    avoid circular imports.  It accesses constraint attributes via duck typing.
+
+    Args:
+        arg_name: The argument name (for error context).
+        raw_value: The raw argument value (may be None if absent).
+        constraint: An ``ArgumentConstraints`` pydantic model instance.
+
+    Returns:
+        A list of :class:`ConstraintViolation` objects.  Empty means the
+        argument passes all constraints.
+    """
+    fail_open: bool = getattr(constraint, "fail_open", False)
+    violations: list[ConstraintViolation] = []
+
+    # --- Boolean: must_be -------------------------------------------------------
+    must_be = getattr(constraint, "must_be", None)
+    if must_be is not None:
+        if raw_value is None:
+            if fail_open:
+                return []
+            return [ConstraintViolation(
+                arg_name=arg_name,
+                constraint_type="required",
+                value=raw_value,
+                reason=f"Argument '{arg_name}' is required but was not provided.",
+            )]
+        if not isinstance(raw_value, bool) or raw_value is not must_be:
+            return [ConstraintViolation(
+                arg_name=arg_name,
+                constraint_type="must_be",
+                value=raw_value,
+                reason=(
+                    f"Argument '{arg_name}' must be {must_be!r}, "
+                    f"got {raw_value!r}."
+                ),
+            )]
+        # must_be is the only constraint — all others are irrelevant for bool
+        return []
+
+    # --- Array constraints -------------------------------------------------------
+    max_items = getattr(constraint, "max_items", None)
+    item_constraints_obj = getattr(constraint, "item_constraints", None)
+    if max_items is not None or item_constraints_obj is not None:
+        if raw_value is None:
+            if fail_open:
+                return []
+            return [ConstraintViolation(
+                arg_name=arg_name,
+                constraint_type="required",
+                value=raw_value,
+                reason=f"Argument '{arg_name}' is required but was not provided.",
+            )]
+        if isinstance(raw_value, list):
+            if max_items is not None and len(raw_value) > max_items:
+                violations.append(ConstraintViolation(
+                    arg_name=arg_name,
+                    constraint_type="max_items",
+                    value=raw_value,
+                    reason=(
+                        f"Argument '{arg_name}' has {len(raw_value)} items, "
+                        f"exceeds maximum {max_items}."
+                    ),
+                ))
+            if item_constraints_obj is not None:
+                for idx, item in enumerate(raw_value):
+                    item_violations = _check_rich_constraint(
+                        f"{arg_name}[{idx}]", item, item_constraints_obj
+                    )
+                    violations.extend(item_violations)
+        return violations
+
+    # --- Missing value (non-array, non-bool) ------------------------------------
+    if raw_value is None:
+        if fail_open:
+            return []
+        return [ConstraintViolation(
+            arg_name=arg_name,
+            constraint_type="required",
+            value=raw_value,
+            reason=f"Argument '{arg_name}' is required but was not provided.",
+        )]
+
+    # --- String constraints (only apply to string values) -----------------------
+    if isinstance(raw_value, str):
+        val_str: str = raw_value
+
+        # must_start_with
+        must_start_with = getattr(constraint, "must_start_with", [])
+        if must_start_with:
+            if not any(val_str.startswith(p) for p in must_start_with):
+                violations.append(ConstraintViolation(
+                    arg_name=arg_name,
+                    constraint_type="must_start_with",
+                    value=val_str,
+                    reason=(
+                        f"BLOCKED [must_start_with]: Argument '{arg_name}' value "
+                        f"{val_str!r} must start with one of {must_start_with}."
+                    ),
+                ))
+
+        # must_not_start_with
+        must_not_start_with = getattr(constraint, "must_not_start_with", [])
+        for prefix in must_not_start_with:
+            if val_str.startswith(prefix):
+                violations.append(ConstraintViolation(
+                    arg_name=arg_name,
+                    constraint_type="must_not_start_with",
+                    value=val_str,
+                    reason=(
+                        f"BLOCKED [must_not_start_with]: Argument '{arg_name}' value "
+                        f"{val_str!r} must NOT start with {prefix!r}."
+                    ),
+                ))
+                break
+
+        # must_contain
+        must_contain = getattr(constraint, "must_contain", [])
+        if must_contain:
+            if not any(sub in val_str for sub in must_contain):
+                violations.append(ConstraintViolation(
+                    arg_name=arg_name,
+                    constraint_type="must_contain",
+                    value=val_str,
+                    reason=(
+                        f"BLOCKED [must_contain]: Argument '{arg_name}' value "
+                        f"{val_str!r} must contain one of {must_contain}."
+                    ),
+                ))
+
+        # must_not_contain
+        must_not_contain = getattr(constraint, "must_not_contain", [])
+        for sub in must_not_contain:
+            if sub in val_str:
+                violations.append(ConstraintViolation(
+                    arg_name=arg_name,
+                    constraint_type="must_not_contain",
+                    value=val_str,
+                    reason=(
+                        f"BLOCKED [must_not_contain]: Argument '{arg_name}' value "
+                        f"{val_str!r} must NOT contain {sub!r}."
+                    ),
+                ))
+                break
+
+        # matches — value must match at least one compiled pattern
+        compiled_matches: list[Any] = getattr(constraint, "_compiled_matches", [])
+        matches_patterns = getattr(constraint, "matches", [])
+        if matches_patterns:
+            if not any(p.search(val_str) for p in compiled_matches):
+                violations.append(ConstraintViolation(
+                    arg_name=arg_name,
+                    constraint_type="matches",
+                    value=val_str,
+                    reason=(
+                        f"BLOCKED: Argument '{arg_name}' value {val_str!r} must match "
+                        f"one of {matches_patterns}."
+                    ),
+                ))
+
+        # not_matches — value must NOT match any compiled pattern
+        compiled_not_matches: list[Any] = getattr(constraint, "_compiled_not_matches", [])
+        not_matches_patterns = getattr(constraint, "not_matches", [])
+        if not_matches_patterns:
+            for pat in compiled_not_matches:
+                if pat.search(val_str):
+                    violations.append(ConstraintViolation(
+                        arg_name=arg_name,
+                        constraint_type="not_matches",
+                        value=val_str,
+                        reason=(
+                            f"BLOCKED: Argument '{arg_name}' value {val_str!r} must NOT "
+                            f"match {pat.pattern!r}."
+                        ),
+                    ))
+                    break
+
+        # max_length
+        max_length = getattr(constraint, "max_length", None)
+        if max_length is not None and len(val_str) > max_length:
+            violations.append(ConstraintViolation(
+                arg_name=arg_name,
+                constraint_type="max_length",
+                value=val_str,
+                reason=(
+                    f"BLOCKED: Argument '{arg_name}' value has length {len(val_str)}, "
+                    f"exceeds maximum {max_length}."
+                ),
+            ))
+
+        # allowlist — value must match at least one glob pattern
+        allowlist = getattr(constraint, "allowlist", [])
+        if allowlist:
+            if not any(fnmatch.fnmatch(val_str, p.replace("**", "*")) for p in allowlist if p):
+                violations.append(ConstraintViolation(
+                    arg_name=arg_name,
+                    constraint_type="allowlist",
+                    value=val_str,
+                    reason=(
+                        f"BLOCKED [allowlist]: Argument '{arg_name}' value {val_str!r} "
+                        f"is not in the allowlist: {allowlist}."
+                    ),
+                ))
+
+        # blocklist — value must NOT match any glob pattern
+        blocklist = getattr(constraint, "blocklist", [])
+        for pat in blocklist:
+            if pat and fnmatch.fnmatch(val_str, pat.replace("**", "*")):
+                violations.append(ConstraintViolation(
+                    arg_name=arg_name,
+                    constraint_type="blocklist",
+                    value=val_str,
+                    reason=(
+                        f"BLOCKED [blocklist]: Argument '{arg_name}' value {val_str!r} "
+                        f"matches blocklist pattern {pat!r}."
+                    ),
+                ))
+                break
+
+    # --- Network: allowed_domains / blocked_domains / allowed_schemes -----------
+    allowed_domains = getattr(constraint, "allowed_domains", [])
+    if allowed_domains and isinstance(raw_value, str):
+        host = _extract_domain(raw_value)
+        if host:
+            matched = any(_domain_matches(host, p) for p in allowed_domains)
+            if not matched:
+                violations.append(ConstraintViolation(
+                    arg_name=arg_name,
+                    constraint_type="allowed_domains",
+                    value=raw_value,
+                    reason=(
+                        f"BLOCKED: Domain '{host}' (argument '{arg_name}') does not "
+                        f"match any allowed domain: {allowed_domains}."
+                    ),
+                ))
+        else:
+            violations.append(ConstraintViolation(
+                arg_name=arg_name,
+                constraint_type="allowed_domains",
+                value=raw_value,
+                reason=(
+                    f"BLOCKED: Cannot extract domain from argument '{arg_name}' "
+                    f"value {raw_value!r}."
+                ),
+            ))
+
+    blocked_domains = getattr(constraint, "blocked_domains", [])
+    if blocked_domains and isinstance(raw_value, str):
+        host = _extract_domain(raw_value)
+        if host:
+            for pat in blocked_domains:
+                if _domain_matches(host, pat):
+                    violations.append(ConstraintViolation(
+                        arg_name=arg_name,
+                        constraint_type="blocked_domains",
+                        value=raw_value,
+                        reason=(
+                            f"BLOCKED: Domain '{host}' (argument '{arg_name}') matches "
+                            f"blocked domain pattern {pat!r}."
+                        ),
+                    ))
+                    break
+
+    allowed_schemes = getattr(constraint, "allowed_schemes", [])
+    if allowed_schemes and isinstance(raw_value, str):
+        parsed_url = _parse_url_lenient(raw_value)
+        scheme = parsed_url.scheme.lower() if parsed_url.scheme else ""
+        if scheme not in [s.lower() for s in allowed_schemes]:
+            violations.append(ConstraintViolation(
+                arg_name=arg_name,
+                constraint_type="allowed_schemes",
+                value=raw_value,
+                reason=(
+                    f"BLOCKED: Scheme {scheme!r} (argument '{arg_name}') is not in "
+                    f"allowed schemes: {allowed_schemes}."
+                ),
+            ))
+
+    # --- Network: allowed_cidrs / blocked_cidrs ---------------------------------
+    allowed_cidrs = getattr(constraint, "allowed_cidrs", [])
+    if allowed_cidrs and isinstance(raw_value, str):
+        ip_str = _extract_ip_from_value(raw_value)
+        if ip_str:
+            # Only check CIDR if we can parse an IP address — DNS names skip CIDR check
+            try:
+                addr: ipaddress.IPv4Address | ipaddress.IPv6Address = ipaddress.ip_address(ip_str)
+                if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+                    addr = addr.ipv4_mapped
+                if not any(_ip_in_cidr(addr, c) for c in allowed_cidrs):
+                    violations.append(ConstraintViolation(
+                        arg_name=arg_name,
+                        constraint_type="allowed_cidrs",
+                        value=raw_value,
+                        reason=(
+                            f"BLOCKED [allowed_cidrs]: IP '{addr}' (argument "
+                            f"'{arg_name}') is not in any allowed CIDR: {allowed_cidrs}."
+                        ),
+                    ))
+            except ValueError:
+                pass  # Not an IP address — skip CIDR check (DNS name)
+
+    blocked_cidrs = getattr(constraint, "blocked_cidrs", [])
+    if blocked_cidrs and isinstance(raw_value, str):
+        ip_str = _extract_ip_from_value(raw_value)
+        if ip_str:
+            try:
+                addr = ipaddress.ip_address(ip_str)
+                if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+                    addr = addr.ipv4_mapped
+                for c in blocked_cidrs:
+                    if _ip_in_cidr(addr, c):
+                        violations.append(ConstraintViolation(
+                            arg_name=arg_name,
+                            constraint_type="blocked_cidrs",
+                            value=raw_value,
+                            reason=(
+                                f"BLOCKED: IP '{addr}' (argument '{arg_name}') matches "
+                                f"blocked CIDR {c!r}."
+                            ),
+                        ))
+                        break
+            except ValueError:
+                pass  # Not an IP address — skip
+
+    # --- Network: allowed_ports -------------------------------------------------
+    allowed_ports = getattr(constraint, "allowed_ports", [])
+    if allowed_ports and isinstance(raw_value, str):
+        parsed_url = _parse_url_lenient(raw_value)
+        if parsed_url.port is not None:
+            if not _port_in_list(parsed_url.port, allowed_ports):
+                violations.append(ConstraintViolation(
+                    arg_name=arg_name,
+                    constraint_type="allowed_ports",
+                    value=raw_value,
+                    reason=(
+                        f"BLOCKED: Port {parsed_url.port} (argument '{arg_name}') "
+                        f"is not in allowed ports: {allowed_ports}."
+                    ),
+                ))
+
+    # --- Numeric: min_value / max_value -----------------------------------------
+    min_value = getattr(constraint, "min_value", None)
+    max_value = getattr(constraint, "max_value", None)
+    if min_value is not None or max_value is not None:
+        # booleans are int subclass — skip numeric check for booleans
+        if not isinstance(raw_value, bool):
+            numeric: float | None = None
+            if isinstance(raw_value, (int, float)):
+                numeric = float(raw_value)
+            # Numeric checks do not coerce strings here (min_value/max_value are
+            # for actual numeric fields, not string-encoded numbers in this context)
+            if numeric is not None:
+                if min_value is not None and numeric < min_value:
+                    violations.append(ConstraintViolation(
+                        arg_name=arg_name,
+                        constraint_type="min_value",
+                        value=raw_value,
+                        reason=(
+                            f"BLOCKED [min_value]: Argument '{arg_name}' value "
+                            f"{numeric} is below minimum {min_value}."
+                        ),
+                    ))
+                if max_value is not None and numeric > max_value:
+                    violations.append(ConstraintViolation(
+                        arg_name=arg_name,
+                        constraint_type="max_value",
+                        value=raw_value,
+                        reason=(
+                            f"BLOCKED [max_value]: Argument '{arg_name}' value "
+                            f"{numeric} exceeds maximum {max_value}."
+                        ),
+                    ))
+
+    # --- Enum: one_of / not_one_of ---------------------------------------------
+    one_of = getattr(constraint, "one_of", [])
+    if one_of:
+        if raw_value not in one_of:
+            violations.append(ConstraintViolation(
+                arg_name=arg_name,
+                constraint_type="one_of",
+                value=raw_value,
+                reason=(
+                    f"BLOCKED [one_of]: Argument '{arg_name}' value {raw_value!r} "
+                    f"is not in allowed values: {one_of}."
+                ),
+            ))
+
+    not_one_of = getattr(constraint, "not_one_of", [])
+    if not_one_of:
+        if raw_value in not_one_of:
+            violations.append(ConstraintViolation(
+                arg_name=arg_name,
+                constraint_type="not_one_of",
+                value=raw_value,
+                reason=(
+                    f"BLOCKED: Argument '{arg_name}' value {raw_value!r} "
+                    f"is in the forbidden list: {not_one_of}."
+                ),
+            ))
+
+    return violations
+
+
+# ---------------------------------------------------------------------------
 # Compatibility shims — main-branch API
 # ---------------------------------------------------------------------------
 
@@ -949,17 +1543,23 @@ class ConstraintResult:
 
 def evaluate_argument_constraints(
     arguments: "dict[str, Any] | None",
-    arg_constraints: "dict[str, ArgumentConstraint]",
+    arg_constraints: "dict[str, Any]",
 ) -> ConstraintResult:
     """Evaluate arguments against a per-argument constraint dict.
 
-    Compatibility shim wrapping the per-check functions so both the
-    resource-level ``_check_capabilities`` path (main-branch engine) and the
-    policy-level ``_apply_capabilities`` path (our engine) can coexist.
+    Handles both the simple ``ArgumentConstraint`` model (this branch, with
+    ``allowed_prefixes``, ``allowed_cidrs``, ``allowed_domains``,
+    ``allowed_patterns``) and the rich ``ArgumentConstraints`` model from the
+    main branch (with ``must_start_with``, ``one_of``, ``blocklist``, etc.).
+
+    The two models are distinguished by duck typing: if the constraint object
+    has a ``must_start_with`` attribute, it is treated as the rich model.
 
     Args:
         arguments: The tool call arguments, or None.
-        arg_constraints: Mapping of argument name → ArgumentConstraint.
+        arg_constraints: Mapping of argument name → constraint object.
+            Accepts either ``ArgumentConstraint`` or ``ArgumentConstraints``
+            model instances.
 
     Returns:
         ConstraintResult(passed=True) if all constraints pass,
@@ -972,22 +1572,38 @@ def evaluate_argument_constraints(
     violations: list[ConstraintViolation] = []
 
     for arg_name, constraint in arg_constraints.items():
-        raw_value = args.get(arg_name)
-        fail_open = constraint.fail_open
+        raw_value = _resolve_dotted_key(args, arg_name)
+        fail_open = getattr(constraint, "fail_open", False)
 
-        if constraint.allowed_prefixes:
-            violations.extend(check_path(arg_name, raw_value, constraint.allowed_prefixes, fail_open))
-        if constraint.allowed_cidrs:
-            violations.extend(check_cidr(arg_name, raw_value, constraint.allowed_cidrs, fail_open))
-        if constraint.allowed_domains:
-            violations.extend(check_domain(arg_name, raw_value, constraint.allowed_domains, fail_open))
-        if constraint.allowed_patterns:
-            violations.extend(check_glob(arg_name, raw_value, constraint.allowed_patterns, fail_open))
-        if constraint.min_value is not None or constraint.max_value is not None:
-            violations.extend(check_numeric(
-                arg_name, raw_value,
-                min_value=constraint.min_value, max_value=constraint.max_value,
-                fail_open=fail_open,
-            ))
+        # Detect which model we're dealing with via duck typing.
+        # The rich ArgumentConstraints model has must_start_with; the simple
+        # ArgumentConstraint model has allowed_prefixes (not must_start_with).
+        if hasattr(constraint, "must_start_with"):
+            # Rich model (ArgumentConstraints from schema.py)
+            violations.extend(_check_rich_constraint(arg_name, raw_value, constraint))
+        else:
+            # Simple model (ArgumentConstraint from schema.py)
+            if constraint.allowed_prefixes:
+                violations.extend(
+                    check_path(arg_name, raw_value, constraint.allowed_prefixes, fail_open)
+                )
+            if constraint.allowed_cidrs:
+                violations.extend(
+                    check_cidr(arg_name, raw_value, constraint.allowed_cidrs, fail_open)
+                )
+            if constraint.allowed_domains:
+                violations.extend(
+                    check_domain(arg_name, raw_value, constraint.allowed_domains, fail_open)
+                )
+            if constraint.allowed_patterns:
+                violations.extend(
+                    check_glob(arg_name, raw_value, constraint.allowed_patterns, fail_open)
+                )
+            if constraint.min_value is not None or constraint.max_value is not None:
+                violations.extend(check_numeric(
+                    arg_name, raw_value,
+                    min_value=constraint.min_value, max_value=constraint.max_value,
+                    fail_open=fail_open,
+                ))
 
     return ConstraintResult(passed=len(violations) == 0, violations=violations)
