@@ -773,6 +773,20 @@ def scan(
             help="Output format: 'html' for shareable HTML report, 'sarif' for GitHub Security (CI).",
         ),
     ] = None,
+    scan_site_packages: Annotated[
+        bool,
+        typer.Option(
+            "--scan-site-packages",
+            help="Scan site-packages directories for malicious .pth files (supply chain detection).",
+        ),
+    ] = False,
+    skip_site_packages: Annotated[
+        bool,
+        typer.Option(
+            "--skip-site-packages",
+            help="Skip .pth file scanning even if included by default.",
+        ),
+    ] = False,
 ) -> None:
     """Scan MCP configs, Python codebases, and OpenClaw skills for tool definitions.
 
@@ -790,6 +804,8 @@ def scan(
       agentward scan --json > report.json               # machine-readable output
       agentward scan --format html                      # shareable HTML report
       agentward scan --format sarif                     # SARIF for GitHub Security tab
+      agentward scan --scan-site-packages               # also scan .pth files in site-packages
+      agentward scan --skip-site-packages               # skip .pth scanning
     """
     from agentward.scan.report import (
         generate_scan_markdown,
@@ -798,6 +814,34 @@ def scan(
     )
 
     scan_result, recommendations, _config_paths, chains = _run_scan(target, timeout, _console)
+
+    # .pth supply chain scanning
+    if scan_site_packages and not skip_site_packages:
+        from agentward.scan.pth_scanner import scan_pth_files
+
+        _console.print(
+            "[bold #5eead4]⚡[/bold #5eead4] Scanning site-packages for malicious .pth files...",
+            highlight=False,
+        )
+        pth_result = scan_pth_files()
+        scan_result.pth_result = pth_result
+        if pth_result.has_critical:
+            _console.print(
+                f"[bold #ff3366]🔴 CRITICAL:[/bold #ff3366] {sum(1 for f in pth_result.findings if f.severity == 'CRITICAL')} "
+                "malicious .pth finding(s) — see report for details.",
+                highlight=False,
+            )
+        elif pth_result.has_warning:
+            _console.print(
+                f"[#ffcc00]⚠ WARNING:[/#ffcc00] {sum(1 for f in pth_result.findings if f.severity == 'WARNING')} "
+                ".pth finding(s) — see report for details.",
+                highlight=False,
+            )
+        else:
+            _console.print(
+                f"[#00ff88]✓[/#00ff88] {pth_result.files_scanned} .pth file(s) scanned — no suspicious content found.",
+                highlight=False,
+            )
 
     if output_json:
         output_console = Console()
