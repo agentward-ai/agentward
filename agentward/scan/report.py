@@ -130,6 +130,10 @@ def print_scan_report(
     if recommendations:
         _print_recommendations(recommendations, scan, console)
 
+    # .pth supply chain findings
+    if scan.pth_result is not None:
+        _print_pth_findings(scan.pth_result, console)
+
     console.print()
 
 
@@ -357,6 +361,46 @@ def generate_scan_markdown(
                 lines.append(f"**Issue:** {reason}  ")
                 lines.append(f"**Fix:** {fix}")
                 lines.append("")
+        lines.append("")
+
+    # .pth supply chain findings
+    if scan.pth_result is not None:
+        pth = scan.pth_result
+        lines.append("## Supply Chain: .pth File Scan")
+        lines.append("")
+        lines.append(f"**Site-packages directories scanned:** {len(pth.site_packages_dirs)}  ")
+        lines.append(f"**Files scanned:** {pth.files_scanned}")
+        lines.append("")
+
+        if not pth.findings:
+            lines.append("✅ No suspicious .pth files found.")
+        else:
+            _pth_sev_label = {"CRITICAL": "🔴 CRITICAL", "WARNING": "⚠️ WARNING", "OK": "✅ OK"}
+            pth_rows: list[tuple[str, str, str, str]] = []
+            for f in pth.findings:
+                import os
+                fname = os.path.basename(f.file)
+                lineno = str(f.line_number) if f.line_number else "—"
+                pth_rows.append((_pth_sev_label.get(f.severity, f.severity), fname, lineno, f.description))
+
+            pth_headers = ("Severity", "File", "Line", "Description")
+            pth_widths = [len(h) for h in pth_headers]
+            for row in pth_rows:
+                for i, cell in enumerate(row):
+                    pth_widths[i] = max(pth_widths[i], len(cell))
+
+            def _pth_row(cells: tuple[str, ...]) -> str:
+                parts = [cell.ljust(pth_widths[i]) for i, cell in enumerate(cells)]
+                return "| " + " | ".join(parts) + " |"
+
+            def _pth_sep() -> str:
+                return "| " + " | ".join("-" * w for w in pth_widths) + " |"
+
+            lines.append(_pth_row(pth_headers))
+            lines.append(_pth_sep())
+            for row in pth_rows:
+                lines.append(_pth_row(row))
+
         lines.append("")
 
     # Footer
@@ -705,6 +749,61 @@ def _print_chain_analysis(
             )
         console.print(f"  {desc}", style=_CLR_DIM)
         console.print()
+
+
+# ---------------------------------------------------------------------------
+# .pth supply chain findings
+# ---------------------------------------------------------------------------
+
+
+def _print_pth_findings(pth_result: Any, console: Console) -> None:
+    """Print .pth scan findings to the console.
+
+    Args:
+        pth_result: PthScanResult instance.
+        console: Rich console.
+    """
+    from agentward.scan.pth_scanner import PthFinding
+
+    findings: list[PthFinding] = pth_result.findings
+
+    console.print(
+        f"[bold {_CLR_CYAN}]Supply Chain: .pth File Scan[/bold {_CLR_CYAN}]  "
+        f"[{_CLR_DIM}]{pth_result.files_scanned} file(s) across {len(pth_result.site_packages_dirs)} dir(s)[/{_CLR_DIM}]"
+    )
+
+    if not findings:
+        console.print(f"  [{_CLR_LOW}]✓ No suspicious .pth files found[/{_CLR_LOW}]")
+        console.print()
+        return
+
+    _pth_colors = {"CRITICAL": _CLR_CRITICAL, "WARNING": _CLR_MEDIUM, "OK": _CLR_LOW}
+    _pth_badges = {"CRITICAL": "🔴", "WARNING": "⚠", "OK": "✓"}
+
+    import os
+
+    rows: list[tuple[str, str, str, str]] = []
+    for f in findings:
+        fname = os.path.basename(f.file)
+        lineno = str(f.line_number) if f.line_number else "—"
+        badge = _pth_badges.get(f.severity, "?")
+        sev_label = f"{badge} {f.severity}"
+        rows.append((sev_label, fname, lineno, f.description[:80]))
+
+    for row in rows:
+        sev = row[0]
+        fname = row[1]
+        lineno = row[2]
+        desc = row[3]
+        # Determine color from severity label
+        clr = _CLR_CRITICAL if "CRITICAL" in sev else _CLR_MEDIUM if "WARNING" in sev else _CLR_LOW
+        console.print(
+            f"  [{clr}]{sev}[/{clr}] [{_CLR_CYAN}]{fname}[/{_CLR_CYAN}]"
+            f"[{_CLR_DIM}]:{lineno}[/{_CLR_DIM}]  {desc}",
+            highlight=False,
+        )
+
+    console.print()
 
 
 # ---------------------------------------------------------------------------

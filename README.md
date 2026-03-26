@@ -33,6 +33,7 @@ AI agents now have access to your email, calendar, filesystem, shell, databases,
 | What exists today | What it does | What it doesn't do |
 |---|---|---|
 | **Static scanners** (mcp-scan, Cisco Skill Scanner) | Scan tool definitions, report risks | No runtime enforcement. Scan and walk away. |
+| **Package scanners** (Snyk, Socket) | Flag known-vulnerable packages | Don't inspect .pth files or install-time code execution vectors. |
 | **Guardrails frameworks** (NeMo, Guardrails AI) | Filter LLM inputs/outputs | Don't touch tool calls. An agent can still `rm -rf /`. |
 | **Prompt-based rules** (SecureClaw) | Inject safety instructions into agent context | Vulnerable to prompt injection. The LLM can be tricked into ignoring them. |
 | **IAM / OAuth** | Control who can access what | Control *humans*, not *agents*. An agent with your OAuth token has your full permissions. |
@@ -62,8 +63,17 @@ agentward init
 
 That's it. `agentward init` scans your tools, shows a risk summary, generates a recommended policy, and wires AgentWard into your environment. Most users don't need anything else.
 
-If you want more control, you can run each step individually:
+If you want more control, you can run each step individually. AgentWard follows a five-step security lifecycle:
 
+```
+SCAN → CONFIGURE → ENFORCE → VERIFY → MONITOR
+```
+
+- **SCAN** — discover tools, classify risk, detect supply chain threats before runtime
+- **CONFIGURE** — generate a policy tailored to what scan found
+- **ENFORCE** — run the proxy; every tool call evaluated against policy in code
+- **VERIFY** — fire adversarial probes through the engine, confirm policies block what they should
+- **MONITOR** — audit trail in JSON Lines and RFC 5424 syslog for SIEM integration
 
 #### 1. Scan your tools
 
@@ -73,12 +83,13 @@ agentward scan
 
 Auto-discovers MCP configs (Claude Desktop, Cursor, Windsurf, VS Code), Python tool definitions (OpenAI, LangChain, CrewAI), and OpenClaw skills. Outputs a permission map with risk ratings, skill chain analysis, security recommendations, and developer fix guidance. A markdown report (`agentward-report.md`) is saved automatically.
 
-The scanner also runs **pre-install security checks** on skill directories before you install them:
+The scanner also runs **pre-install security checks** on skill directories before you install them — catching threats at the supply chain stage, before they can execute code at runtime:
 
 - **Deserialization attack detection** (CRITICAL) — identifies `pickle.loads`, `yaml.load`, Java deserialization, and PHP `unserialize` calls that can execute arbitrary code when the skill processes agent-controlled input
 - **YAML safety analysis** — flags `yaml.load` without `Loader=` and bare `yaml.unsafe_load` calls
-- **Executable hook inspection** — checks `postinstall`, `preinstall`, and lifecycle scripts for suspicious shell commands
+- **Executable hook inspection** — checks `postinstall`, `preinstall`, and lifecycle scripts for suspicious shell commands (ClawHavoc-style install-time code execution)
 - **Dependency analysis** — detects typosquatting candidates and known-malicious package names
+- **.pth file scanning** (`--scan-site-packages`) — scans Python site-packages directories for malicious `.pth` files that execute code at interpreter startup; see [Supply Chain: .pth File Scanner](#supply-chain-pth-file-scanner)
 
 ```bash
 agentward scan ./my-downloaded-skill/    # pre-install check before installing
@@ -90,6 +101,8 @@ agentward scan ~/.cursor/mcp.json             # scan specific MCP config
 agentward scan ~/project/                     # scan directory
 agentward scan --format html                  # shareable HTML report with security score
 agentward scan --format sarif                 # SARIF output for GitHub Security tab
+agentward scan --scan-site-packages           # also scan .pth files in site-packages
+agentward scan --skip-site-packages           # skip .pth scanning
 ```
 
 #### 2. Generate a policy
@@ -170,7 +183,29 @@ Every tool call is now intercepted, evaluated against your policy, and either al
  [APPROVE] gmail.send_email            → waiting for human approval
 ```
 
-#### 5. Visualize your permission graph
+#### 5. Verify your policy
+
+```bash
+agentward probe --policy agentward.yaml
+```
+
+Fires adversarial tool calls through the live policy engine and reports which attack categories your policy correctly blocks. Catches policy drift before it reaches production — rules get relaxed, new skills get added without policy entries, and suddenly dangerous tools are allowed.
+
+```
+  Category                  Total  Pass  Fail  Gap  Coverage
+  ─────────────────────────────────────────────────────────
+  protected_paths              14    14     0    0   ████████ 100%
+  path_traversal                7     7     0    0   ████████ 100%
+  privilege_escalation          9     0     0    9   ░░░░░░░░   0%
+```
+
+```bash
+agentward probe --severity critical           # only critical probes (fast CI check)
+agentward probe --strict                      # exit 1 on any FAIL or GAP
+agentward probe --list                        # show all 68 built-in probes
+```
+
+#### 6. Visualize your permission graph
 
 ```bash
 agentward map                                   # terminal visualization
@@ -180,7 +215,7 @@ agentward map --format mermaid -o graph.md      # export as Mermaid diagram
 
 Shows servers, tools, data access types, risk levels, and detected skill chains. With `--policy`, overlays ALLOW/BLOCK/APPROVE decisions on the graph.
 
-#### 6. Review audit trail
+#### 8. Review audit trail
 
 ```bash
 agentward audit                                # read default log (agentward-audit.jsonl)
@@ -193,7 +228,7 @@ agentward audit --json                         # machine-readable output
 
 Shows summary stats, decision breakdowns (ALLOW/BLOCK/APPROVE counts), top tools, chain violations, and optionally a chronological timeline.
 
-#### 7. Enterprise SIEM integration
+#### 9. Enterprise SIEM integration
 
 AgentWard writes every audit event in **two formats simultaneously**:
 
@@ -227,7 +262,7 @@ audit:
   syslog_path: /var/log/agentward/audit.syslog   # default: alongside the JSONL file
 ```
 
-#### 8. Compare policy changes
+#### 10. Compare policy changes
 
 ```bash
 agentward diff old.yaml new.yaml               # rich diff output
@@ -755,6 +790,36 @@ Example GitHub Actions step:
 
 The `protected_paths` category always passes — it tests the non-overridable safety floor that runs before policy evaluation, regardless of what's in `agentward.yaml`. If these ever fail, the safety floor has been bypassed.
 
+## Supply Chain: .pth File Scanner
+
+Python's `.pth` mechanism executes any line starting with `import` in every `.pth` file in `site-packages` at interpreter startup — before any user code runs. In March 2026, the `litellm` package was compromised via a `litellm_init.pth` file that used double-encoded base64 to execute a malicious payload silently on every Python invocation.
+
+AgentWard scans site-packages directories for `.pth` files that contain suspicious executable content.
+
+```bash
+agentward scan --scan-site-packages          # include .pth scanning
+agentward scan --skip-site-packages          # skip .pth scanning
+```
+
+**What it checks:**
+
+| Pattern | Severity | Example |
+|---------|----------|---------|
+| Double base64 decode (litellm attack) | CRITICAL | `exec(b64decode(b64decode(...)))` |
+| Any base64/binary decode | CRITICAL | `base64.b64decode(...)` |
+| Subprocess execution | CRITICAL | `subprocess.Popen([...])` |
+| OS command execution | CRITICAL | `os.system(...)`, `os.popen(...)` |
+| `eval` / `exec` / `compile` | CRITICAL | `eval(open(...).read())` |
+| Network calls | CRITICAL | `urllib.urlopen(...)`, `requests.get(...)`, `socket.connect(...)` |
+| Sensitive file reads | CRITICAL | `open('~/.ssh/id_rsa')` |
+| Binary content | CRITICAL | Non-printable bytes >5% of file |
+| Oversized file (>1MB) | CRITICAL | Anomalously large .pth file |
+| Unknown executable import | WARNING | Any `import` line not on the allowlist |
+
+**Allowlist:** Known-good files (`distutils-precedence.pth`, editable installs `__editable__*.pth`, namespace packages `*-nspkg.pth`, pytest enabler, etc.) are checked against expected content patterns and skipped if they match. The allowlist is shipped with AgentWard and can be extended in the source.
+
+Findings appear in the terminal output, markdown report, HTML report, and SARIF output. A CRITICAL `.pth` finding is included as a SARIF `error`-level result.
+
 ## What AgentWard Is NOT
 
 - **Not a static scanner** — Scanners like mcp-scan analyze and walk away. AgentWard scans *and* enforces at runtime.
@@ -804,7 +869,7 @@ AgentWard is early-stage software. We're being upfront about what works well and
 
 **Tested end-to-end and working well:**
 - `agentward init` — one-command scan, policy generation, and environment wiring (macOS)
-- `agentward scan` — static analysis across MCP configs, Python tools, and OpenClaw skills (macOS)
+- `agentward scan` — static analysis across MCP configs, Python tools, and OpenClaw skills (macOS); `.pth` supply chain scanner (59 tests)
 - `agentward configure` — policy YAML generation from scan results
 - `agentward setup --gateway openclaw` — OpenClaw gateway port swapping + LaunchAgent plist patching
 - `agentward inspect --gateway openclaw` — runtime enforcement of OpenClaw skill calls via LLM API interception (Anthropic provider, streaming mode). This is our most thoroughly tested path.

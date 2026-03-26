@@ -169,6 +169,48 @@ def generate_sarif(
             }],
         })
 
+    # --- .pth supply chain results ---
+    if scan.pth_result is not None:
+        _pth_sarif_level = {"CRITICAL": "error", "WARNING": "warning", "OK": "note"}
+        for pth_finding in scan.pth_result.findings:
+            if pth_finding.severity == "OK":
+                continue
+            rule_id = f"agentward/pth/{pth_finding.pattern}"
+            if rule_id not in rule_ids:
+                rule_ids.add(rule_id)
+                rules.append({
+                    "id": rule_id,
+                    "name": f"PthFile{'Critical' if pth_finding.severity == 'CRITICAL' else 'Warning'}",
+                    "shortDescription": {
+                        "text": f"Suspicious .pth file: {pth_finding.pattern}",
+                    },
+                    "defaultConfiguration": {
+                        "level": _pth_sarif_level.get(pth_finding.severity, "warning"),
+                    },
+                    "helpUri": "https://agentward.ai/docs/supply-chain",
+                })
+
+            import os as _os
+            uri = pth_finding.file.replace("\\", "/")
+            result_entry: dict = {
+                "ruleId": rule_id,
+                "level": _pth_sarif_level.get(pth_finding.severity, "warning"),
+                "message": {"text": pth_finding.description},
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": {
+                            "uri": uri,
+                            "uriBaseId": "SITE_PACKAGES",
+                        },
+                    },
+                }],
+            }
+            if pth_finding.line_number is not None:
+                result_entry["locations"][0]["physicalLocation"]["region"] = {
+                    "startLine": pth_finding.line_number,
+                }
+            results.append(result_entry)
+
     sarif = {
         "$schema": "https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0-rtm.5.json",
         "version": "2.1.0",

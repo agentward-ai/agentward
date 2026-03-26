@@ -84,6 +84,9 @@ class ScanResult(BaseModel):
     servers: list[ServerPermissionMap] = Field(default_factory=list)
     config_sources: list[str] = Field(default_factory=list)
     scan_timestamp: str = ""
+    # .pth supply chain scan results (present when --scan-site-packages is used
+    # or when site-packages scanning is included in the default scan)
+    pth_result: Any | None = None
 
 
 # --- Schema property name patterns for data access classification ---
