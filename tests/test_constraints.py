@@ -486,10 +486,10 @@ class TestDomainMatching:
     def test_wildcard_does_not_match_root(self) -> None:
         assert not _domain_matches("github.com", "*.github.com")
 
-    def test_wildcard_matches_deep_subdomain(self) -> None:
-        # *.github.com DOES match deep.api.github.com — for blocked_domains this
-        # is the correct security behaviour: block all subdomains, not just one level.
-        assert _domain_matches("deep.api.github.com", "*.github.com")
+    def test_wildcard_does_not_match_deep_subdomain(self) -> None:
+        # *.github.com matches only single-level subdomains.
+        # deep.api.github.com does NOT match — use *.api.github.com for that.
+        assert not _domain_matches("deep.api.github.com", "*.github.com")
 
     def test_case_insensitive(self) -> None:
         assert _domain_matches("API.GITHUB.COM", "api.github.com")
