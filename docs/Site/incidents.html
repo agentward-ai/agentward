@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Real-World Incidents — AgentWard</title>
+  <meta name="description" content="How AgentWard responds to real AI agent security incidents — LiteLLM supply chain, ClawHavoc, MCP tool poisoning, and more."/>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iOCIgZmlsbD0iIzBhMGEwYSIvPgogIDxwYXRoIGQ9Ik0yNCA0TDYgMTJ2MTJjMCAxMS4xIDcuNyAyMS41IDE4IDI0IDEwLjMtMi41IDE4LTEyLjkgMTgtMjRWMTJMMjQgNHoiIGZpbGw9IiMxMTEiIHN0cm9rZT0iIzAwZmY4OCIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgPHBhdGggZD0iTTE4IDI0bDQgNCA4LTgiIHN0cm9rZT0iIzAwZmY4OCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgZmlsbD0ibm9uZSIvPgo8L3N2Zz4=">
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --green:#00ff88;--green2:#00cc6a;--green-dim:#00ff8820;--green-border:#00ff8830;
+      --bg:#080808;--bg1:#0d0d0d;--bg2:#111;--bg3:#161616;
+      --border:#1c1c1c;--border2:#242424;
+      --text:#d8d8d8;--muted:#666;--muted2:#444;--white:#f0f0f0;
+      --red:#ff4444;--yellow:#ffcc00;--orange:#ff8c42;
+      --font-sans:'IBM Plex Sans',system-ui,sans-serif;
+      --font-mono:'IBM Plex Mono',monospace;
+    }
+    html{scroll-behavior:smooth}
+    body{background:var(--bg);color:var(--text);font-family:var(--font-sans);min-height:100vh;line-height:1.6}
+    ::selection{background:var(--green-dim)}
+    a{color:var(--green);text-decoration:none}
+    a:hover{color:var(--green2)}
+
+    /* ── Nav ── */
+    nav{position:sticky;top:0;z-index:200;height:52px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;background:rgba(8,8,8,0.94);backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
+    .nav-logo{display:flex;align-items:center;gap:10px;color:var(--white);font-weight:600;font-size:15px;letter-spacing:-0.3px}
+    .nav-links{display:flex;align-items:center;gap:2px}
+    .nav-links a{padding:5px 12px;border-radius:6px;font-size:13px;font-weight:500;color:var(--muted);transition:color .15s,background .15s}
+    .nav-links a:hover{color:var(--white);background:var(--bg2)}
+    .nav-links a.active{color:var(--green);background:var(--green-dim)}
+    .nav-gh{display:flex;align-items:center;gap:7px;padding:6px 14px;border-radius:7px;background:var(--green);color:var(--bg)!important;font-size:12.5px;font-weight:600;margin-left:8px;transition:background .15s}
+    .nav-gh:hover{background:var(--green2)!important}
+    .nav-hamburger{display:none;background:none;border:none;cursor:pointer;padding:6px}
+    .nav-hamburger svg{display:block}
+    .nav-mobile{display:none;position:absolute;top:52px;left:0;right:0;background:rgba(8,8,8,0.98);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:8px 16px 12px;z-index:199;flex-direction:column;gap:2px}
+    .nav-mobile.open{display:flex}
+    .nav-mobile a{display:block;padding:10px 14px;border-radius:6px;font-size:14px;font-weight:500;color:var(--muted);transition:color .15s,background .15s}
+    .nav-mobile a:hover{color:var(--white);background:var(--bg2)}
+    .nav-mobile a.active{color:var(--green);background:var(--green-dim)}
+    @media(max-width:600px){.nav-links{display:none}.nav-hamburger{display:block}}
+
+    /* ── Hero ── */
+    .page-hero{
+      padding:72px 24px 52px;max-width:860px;margin:0 auto;
+      background:radial-gradient(ellipse 60% 30% at 50% 0%,#00ff8806 0%,transparent 65%);
+    }
+    .eyebrow{font-family:var(--font-mono);font-size:10.5px;font-weight:600;color:var(--green);letter-spacing:2px;text-transform:uppercase;margin-bottom:14px}
+    .page-title{font-size:clamp(26px,4vw,40px);font-weight:700;color:var(--white);letter-spacing:-1px;margin-bottom:16px;line-height:1.1}
+    .page-sub{font-size:15.5px;color:var(--muted);line-height:1.75;max-width:620px}
+
+    /* ── Summary pills ── */
+    .summary-row{
+      display:flex;gap:12px;flex-wrap:wrap;
+      max-width:860px;margin:0 auto;padding:0 24px 52px;
+    }
+    .pill{
+      display:flex;align-items:center;gap:8px;
+      padding:8px 16px;border-radius:8px;border:1px solid var(--border2);
+      font-size:13px;font-weight:500;
+    }
+    .pill-yes{background:#00ff8810;border-color:#00ff8828;color:var(--green)}
+    .pill-no{background:#ff444410;border-color:#ff444428;color:var(--red)}
+    .pill-dot{width:7px;height:7px;border-radius:50%}
+    .pill-yes .pill-dot{background:var(--green)}
+    .pill-no .pill-dot{background:var(--red)}
+
+    /* ── Incident cards ── */
+    .incidents{max-width:860px;margin:0 auto;padding:0 24px 80px;display:flex;flex-direction:column;gap:14px}
+
+    .incident{
+      border-radius:12px;border:1px solid var(--border);
+      background:var(--bg1);overflow:hidden;
+      transition:border-color .2s;
+    }
+    .incident:hover{border-color:var(--border2)}
+    .incident.yes{border-left:3px solid var(--green)}
+    .incident.no{border-left:3px solid #ff444450}
+
+    .incident-header{
+      display:flex;align-items:flex-start;gap:16px;
+      padding:22px 24px 18px;
+      cursor:pointer;
+      user-select:none;
+    }
+    .incident-header:hover .inc-title{color:var(--white)}
+
+    .inc-badge{
+      flex-shrink:0;margin-top:2px;
+      font-family:var(--font-mono);font-size:10px;font-weight:700;
+      padding:3px 10px;border-radius:5px;letter-spacing:0.5px;
+    }
+    .inc-badge.yes{background:#00ff8818;color:var(--green);border:1px solid #00ff8830}
+    .inc-badge.no{background:#ff444418;color:var(--red);border:1px solid #ff444430}
+
+    .inc-meta{flex:1;min-width:0}
+    .inc-title{font-size:15px;font-weight:600;color:#ccc;margin-bottom:5px;transition:color .15s;line-height:1.4}
+    .inc-desc{font-size:13.5px;color:var(--muted);line-height:1.6}
+
+    .inc-date{
+      flex-shrink:0;
+      font-family:var(--font-mono);font-size:10.5px;color:var(--muted2);
+      white-space:nowrap;margin-top:3px;
+    }
+
+    .incident-body{
+      padding:0 24px 22px 64px;
+      border-top:1px solid var(--border);
+    }
+
+    .inc-how{
+      padding-top:18px;
+    }
+    .inc-how-label{
+      font-family:var(--font-mono);font-size:10px;font-weight:600;
+      color:var(--green);letter-spacing:1.5px;text-transform:uppercase;
+      margin-bottom:8px;
+    }
+    .inc-how-label.no-label{color:#ff4444}
+    .inc-how p{font-size:14px;line-height:1.7;color:#bbb}
+    .inc-how p strong{color:var(--white)}
+
+    .inc-type{
+      display:inline-flex;align-items:center;gap:6px;
+      margin-top:12px;
+      font-family:var(--font-mono);font-size:10.5px;color:var(--muted2);
+    }
+    .inc-type-dot{width:5px;height:5px;border-radius:50%;background:var(--muted2)}
+
+    /* ── Disclaimer ── */
+    .disclaimer{
+      max-width:860px;margin:0 auto;padding:0 24px 72px;
+    }
+    .disclaimer-box{
+      background:var(--bg2);border:1px solid var(--border2);
+      border-radius:10px;padding:20px 24px;
+      font-size:13.5px;color:var(--muted);line-height:1.7;
+    }
+    .disclaimer-box strong{color:#aaa}
+
+    /* ── Footer ── */
+    footer{border-top:1px solid var(--border);padding:24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+    .footer-logo{display:flex;align-items:center;gap:8px;color:var(--muted2);font-size:13px}
+    .footer-links{display:flex;gap:16px;font-size:13px;flex-wrap:wrap}
+    .footer-links a{color:var(--muted);transition:color .15s}
+    .footer-links a:hover{color:var(--green)}
+    .footer-right{font-size:12px;color:var(--muted2);font-family:var(--font-mono)}
+    @media(max-width:600px){footer{flex-direction:column;text-align:center}}
+
+    @media(max-width:560px){
+      .incident-body{padding-left:24px}
+      .inc-date{display:none}
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="nav-logo">
+    <svg width="24" height="24" viewBox="0 0 48 48" fill="none">
+      <path d="M24 4L6 12v12c0 11.1 7.7 21.5 18 24 10.3-2.5 18-12.9 18-24V12L24 4z" fill="#0d1a0d" stroke="#00ff88" stroke-width="2.5"/>
+      <path d="M17 24l5 5 9-9" stroke="#00ff88" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    AgentWard
+  </a>
+  <div class="nav-links">
+    <a href="index.html">Home</a>
+    <a href="how-it-works.html">How It Works</a>
+    <a href="docs.html">Docs</a>
+    <a href="compare.html">Compare</a>
+    <a href="incidents.html" class="active">Known Incidents</a>
+    <a href="about.html">About</a>
+    <a href="https://github.com/agentward-ai/agentward" target="_blank" rel="noopener" class="nav-gh">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      GitHub
+    </a>
+  </div>
+  <button class="nav-hamburger" onclick="document.getElementById('mobile-menu').classList.toggle('open')" aria-label="Menu">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#999" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
+</nav>
+<div class="nav-mobile" id="mobile-menu">
+  <a href="index.html">Home</a>
+  <a href="how-it-works.html">How It Works</a>
+  <a href="docs.html">Docs</a>
+  <a href="compare.html">Compare</a>
+  <a href="incidents.html" class="active">Incidents</a>
+  <a href="about.html">About</a>
+  <a href="https://github.com/agentward-ai/agentward" target="_blank" rel="noopener">GitHub</a>
+</div>
+
+<div class="page-hero">
+  <div class="eyebrow">Real-World Incidents</div>
+  <h1 class="page-title">How AgentWard responds<br>to real attacks</h1>
+  <p class="page-sub">A factual record of known AI agent security incidents and exactly what AgentWard catches — and what it doesn't. We're not trying to claim coverage we don't have.</p>
+</div>
+
+<div class="summary-row">
+  <div class="pill pill-yes">
+    <div class="pill-dot"></div>
+    6 incidents caught
+  </div>
+  <div class="pill pill-no">
+    <div class="pill-dot"></div>
+    2 outside AgentWard's layer
+  </div>
+</div>
+
+<div class="incidents">
+
+  <!-- 1. LiteLLM -->
+  <div class="incident yes">
+    <div class="incident-header">
+      <span class="inc-badge yes">CAUGHT</span>
+      <div class="inc-meta">
+        <div class="inc-title">LiteLLM supply chain attack (TeamPCP)</div>
+        <div class="inc-desc">3.4 million daily downloads backdoored via a hidden file that ran malicious code on every Python startup. Downstream victims included Microsoft GraphRAG, Google ADK, CrewAI, and DSPy.</div>
+      </div>
+      <div class="inc-date">Mar 2026</div>
+    </div>
+    <div class="incident-body">
+      <div class="inc-how">
+        <div class="inc-how-label">How AgentWard catches this</div>
+        <p>The attackers planted a file called <strong>litellm_init.pth</strong> in Python's site-packages directory. Any line starting with <code>import</code> in a .pth file runs automatically every time Python starts — no one ever calls it, imports it, or sees it in normal use. This one used double-encoded base64 to hide a credential-stealing payload.</p>
+        <p style="margin-top:10px"><strong><code>agentward scan --scan-site-packages</code></strong> walks every site-packages directory and flags .pth files containing executable code. The double base64 pattern triggers a CRITICAL finding immediately, before any Python process runs the payload.</p>
+      </div>
+      <div class="inc-type"><div class="inc-type-dot"></div>Supply chain · .pth backdoor · Credential theft</div>
+    </div>
+  </div>
+
+  <!-- 2. ClawHavoc -->
+  <div class="incident yes">
+    <div class="incident-header">
+      <span class="inc-badge yes">CAUGHT</span>
+      <div class="inc-meta">
+        <div class="inc-title">ClawHavoc — malicious skills on ClawHub</div>
+        <div class="inc-desc">~1,200 malicious skills published to ClawHub (roughly 20% of the ecosystem). The #1 downloaded skill installed AMOS credential-stealing malware. Snyk's audit found malicious payloads in 76 skills.</div>
+      </div>
+      <div class="inc-date">Jan–Feb 2026</div>
+    </div>
+    <div class="incident-body">
+      <div class="inc-how">
+        <div class="inc-how-label">How AgentWard catches this</div>
+        <p>Before installing any skill from a marketplace, run <strong><code>agentward scan ./skill-directory/</code></strong>. The pre-install scanner checks lifecycle scripts (postinstall, preinstall hooks), shell commands, and code patterns associated with credential theft — flagging them as CRITICAL before the skill ever runs on your machine.</p>
+        <p style="margin-top:10px">This is the same principle as reading a package's source before running <code>npm install</code> — except automated and threat-aware.</p>
+      </div>
+      <div class="inc-type"><div class="inc-type-dot"></div>Supply chain · Malicious marketplace skill · Malware dropper</div>
+    </div>
+  </div>
+
+  <!-- 3. MCP tool poisoning -->
+  <div class="incident yes">
+    <div class="incident-header">
+      <span class="inc-badge yes">CAUGHT</span>
+      <div class="inc-meta">
+        <div class="inc-title">MCP tool poisoning &amp; rug pull attacks</div>
+        <div class="inc-desc">Malicious MCP servers embed hidden instructions in tool descriptions that are invisible to users but followed by the AI. Variants include cross-server credential theft, a fake Postmark server that BCC'd every outgoing email to an attacker, and post-approval "rug pulls" where a tool's behavior changes after it passes vetting.</div>
+      </div>
+      <div class="inc-date">2025–ongoing</div>
+    </div>
+    <div class="incident-body">
+      <div class="inc-how">
+        <div class="inc-how-label">How AgentWard catches this</div>
+        <p>Every tool call is evaluated against your policy before it leaves your machine — regardless of what instructions the AI received. An agent manipulated into forwarding credentials to an attacker's server is blocked at the point of the call, not at the point of the instruction.</p>
+        <p style="margin-top:10px">The semantic intent layer adds a second check: it flags tool calls where the arguments don't match what the tool claims to do. A <strong><code>send_email</code></strong> call that adds an unexpected BCC recipient, or a file tool suddenly pointed at <code>~/.ssh/</code>, triggers a review before the action completes.</p>
+      </div>
+      <div class="inc-type"><div class="inc-type-dot"></div>Prompt injection · Tool description manipulation · Credential theft</div>
+    </div>
+  </div>
+
+  <!-- 4. GitHub MCP -->
+  <div class="incident yes">
+    <div class="incident-header">
+      <span class="inc-badge yes">CAUGHT</span>
+      <div class="inc-meta">
+        <div class="inc-title">GitHub MCP prompt injection — private repo exfiltration</div>
+        <div class="inc-desc">An attacker creates a malicious GitHub issue in a public repo. An AI agent reads it, gets hijacked by the embedded instructions, and starts exfiltrating data from the developer's private repositories to a public one.</div>
+      </div>
+      <div class="inc-date">May 2025</div>
+    </div>
+    <div class="incident-body">
+      <div class="inc-how">
+        <div class="inc-how-label">How AgentWard catches this</div>
+        <p>AgentWard enforces that tools can only write to destinations you've approved. An agent reading a public issue cannot suddenly start writing to unrelated repositories — that cross-repo move is blocked as a chaining violation the moment it's attempted.</p>
+        <p style="margin-top:10px">Capability scoping lets you restrict which repositories a tool can write to, turning the agent's broad GitHub token into a narrow, policy-bounded permission set.</p>
+      </div>
+      <div class="inc-type"><div class="inc-type-dot"></div>Prompt injection · Cross-repo data exfiltration · Skill chaining</div>
+    </div>
+  </div>
+
+  <!-- 5. Anthropic Git MCP CVEs -->
+  <div class="incident yes">
+    <div class="incident-header">
+      <span class="inc-badge yes">CAUGHT</span>
+      <div class="inc-meta">
+        <div class="inc-title">Anthropic Git MCP server — CVE-2025-68143/44/45</div>
+        <div class="inc-desc">Three chained vulnerabilities in Anthropic's official Git MCP server. A malicious README triggers prompt injection → path traversal → remote code execution via git's own file processing filters. No direct system access required.</div>
+      </div>
+      <div class="inc-date">Jan 2026</div>
+    </div>
+    <div class="incident-body">
+      <div class="inc-how">
+        <div class="inc-how-label">How AgentWard catches this</div>
+        <p>Path traversal in tool arguments — <code>../</code> sequences, tilde expansion reaching outside the repository — is blocked by capability scoping before the call reaches the server. The semantic layer also flags file operations pointed at locations inconsistent with the agent's stated task.</p>
+        <p style="margin-top:10px">Note: AgentWard doesn't patch the server-side CVEs. You still need to update <code>mcp-server-git</code> to a patched version. What AgentWard blocks is the exploitation path — the argument values that trigger the vulnerability.</p>
+      </div>
+      <div class="inc-type"><div class="inc-type-dot"></div>Prompt injection · Path traversal · RCE via git filters</div>
+    </div>
+  </div>
+
+  <!-- 6. CVE-2026-25253 -->
+  <div class="incident yes">
+    <div class="incident-header">
+      <span class="inc-badge yes">CAUGHT</span>
+      <div class="inc-meta">
+        <div class="inc-title">CVE-2026-25253 — OpenClaw gateway token leak</div>
+        <div class="inc-desc">A malicious link tricks an authenticated user into handing over their OpenClaw gateway auth token, giving an attacker full administrative control over the gateway. CVSS 8.8.</div>
+      </div>
+      <div class="inc-date">Jan 2026</div>
+    </div>
+    <div class="incident-body">
+      <div class="inc-how">
+        <div class="inc-how-label">How AgentWard catches this</div>
+        <p>AgentWard can't prevent the token theft itself — that's a browser-level attack. But the stolen token doesn't grant the attacker anything beyond your existing policy. Every tool call through the gateway is still evaluated: they still can't exfiltrate files you haven't permitted, send email without approval, or execute shell commands you've blocked.</p>
+        <p style="margin-top:10px">Your credentials being stolen is a serious problem. Your agent's blast radius being bounded regardless is what AgentWard provides.</p>
+      </div>
+      <div class="inc-type"><div class="inc-type-dot"></div>Auth token exfiltration · Gateway compromise · Credential theft</div>
+    </div>
+  </div>
+
+  <!-- 7. LangGrinch - NO -->
+  <div class="incident no">
+    <div class="incident-header">
+      <span class="inc-badge no">NOT CAUGHT</span>
+      <div class="inc-meta">
+        <div class="inc-title">LangGrinch — CVE-2025-68664 (LangChain serialization injection)</div>
+        <div class="inc-desc">Prompt injection via an LLM response poisons LangChain's internal serialization. When the application deserializes the output (during logging, streaming, or memory operations), secrets leak from environment variables or arbitrary code runs. CVSS 9.3.</div>
+      </div>
+      <div class="inc-date">Dec 2025</div>
+    </div>
+    <div class="incident-body">
+      <div class="inc-how">
+        <div class="inc-how-label no-label">Why AgentWard doesn't catch this</div>
+        <p>This vulnerability lives inside LangChain's own serialization logic — below the tool call layer where AgentWard operates. By the time AgentWard sees a tool call, the exploit has already run inside the application. <strong>The fix is updating to <code>langchain-core ≥ 0.3.81</code></strong>, which patches the serialization allowlist and disables secrets-from-env by default.</p>
+      </div>
+      <div class="inc-type"><div class="inc-type-dot"></div>Serialization injection · Secrets exfiltration · RCE</div>
+    </div>
+  </div>
+
+  <!-- 8. mcp-remote - NO -->
+  <div class="incident no">
+    <div class="incident-header">
+      <span class="inc-badge no">NOT CAUGHT</span>
+      <div class="inc-meta">
+        <div class="inc-title">mcp-remote CVE-2025-6514 — OAuth command injection</div>
+        <div class="inc-desc">A malicious MCP server injects OS commands through the OAuth authorization URL. The mcp-remote proxy passes it unsanitized to a shell call, giving the attacker full code execution on the client machine. CVSS 9.6.</div>
+      </div>
+      <div class="inc-date">2025</div>
+    </div>
+    <div class="incident-body">
+      <div class="inc-how">
+        <div class="inc-how-label no-label">Why AgentWard doesn't catch this</div>
+        <p>The attack lands during the OAuth handshake, before a connection is established and before AgentWard sees any traffic. It's a vulnerability in the connection layer, not the tool call layer. <strong>Update mcp-remote to v0.1.16 or later.</strong></p>
+      </div>
+      <div class="inc-type"><div class="inc-type-dot"></div>OS command injection · OAuth layer · Full RCE</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="disclaimer">
+  <div class="disclaimer-box">
+    <strong>On coverage claims:</strong> "Caught" means AgentWard has a specific mechanism that intercepts or flags this class of attack. It doesn't mean AgentWard is a complete solution — supply chain attacks evolve, and a sophisticated attacker who avoids known detection patterns may still get through. The "Not Caught" entries are here because the honest answer matters more than the marketing one. For those, the right fix is listed directly.
+  </div>
+</div>
+
+<footer>
+  <div class="footer-logo">
+    <svg width="18" height="18" viewBox="0 0 48 48" fill="none">
+      <path d="M24 4L6 12v12c0 11.1 7.7 21.5 18 24 10.3-2.5 18-12.9 18-24V12L24 4z" fill="#0d1a0d" stroke="#00ff88" stroke-width="2"/>
+      <path d="M17 24l5 5 9-9" stroke="#00ff88" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    AgentWard
+  </div>
+  <div class="footer-links">
+    <a href="index.html">Home</a>
+    <a href="how-it-works.html">How It Works</a>
+    <a href="docs.html">Docs</a>
+    <a href="compare.html">Compare</a>
+    <a href="incidents.html">Known Incidents</a>
+    <a href="about.html">About</a>
+    <a href="https://github.com/agentward-ai/agentward" target="_blank">GitHub</a>
+  </div>
+  <span class="footer-right">Apache 2.0 · Open Source</span>
+</footer>
+
+</body>
+</html>
