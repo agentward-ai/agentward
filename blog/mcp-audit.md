@@ -1,12 +1,12 @@
 # I Audited 10 Popular MCP Servers and Mapped Their Default Blast Radius
 
-MCP (Model Context Protocol) lets AI agents call tools — read files, query databases, browse the web, post messages. If you use Claude Desktop, Cursor, or VS Code with an AI assistant, you probably have MCP servers installed.
+MCP (Model Context Protocol) lets AI agents call tools; read files, query databases, browse the web, post messages. If you use Claude Desktop, Cursor, or VS Code with an AI assistant, you probably have MCP servers installed.
 
 I wanted to understand what a typical MCP setup actually authorizes at the tool level. Not what the README says. What the server declares when you connect to it, perform the protocol handshake, and enumerate its tools.
 
 I selected 10 widely-used MCP servers, started each one, called `tools/list`, and classified every tool by its default authority, write capability, credential exposure, and cross-server escalation potential.
 
-Everything needed to reproduce or challenge this audit — the exact configuration, scoring rubric, chain analysis, and scan commands — is included in this post.
+Everything needed to reproduce or challenge this audit; the exact configuration, scoring rubric, chain analysis, and scan commands; is included in this post.
 
 ---
 
@@ -65,7 +65,7 @@ Each tool was classified across five dimensions:
 
 Desktop Commander's `start_process` runs arbitrary shell commands on the host. Playwright's `browser_evaluate` and `browser_run_code` execute arbitrary JavaScript in the browser context.
 
-These tools accept code as input and execute it. That's their purpose — and if you've installed these servers, you've authorized this capability.
+These tools accept code as input and execute it. That's their purpose; and if you've installed these servers, you've authorized this capability.
 
 | Server | Tool | Execution Type | Self-Annotated Destructive? |
 |--------|------|---------------|:---------------------------:|
@@ -75,19 +75,19 @@ These tools accept code as input and execute it. That's their purpose — and if
 
 Desktop Commander is transparent about the risk: of its 26 tools, **9 are self-annotated as DESTRUCTIVE** (`set_config_value`, `write_file`, `write_pdf`, `move_file`, `edit_block`, `start_process`, `interact_with_process`, `force_terminate`, `kill_process`). The server authors know these tools can cause irreversible damage.
 
-Microsoft's Playwright server is similarly honest: **17 of 22 tools** carry `destructiveHint: true`. This matters because it gives downstream tools — policy engines, approval gates — a signal to act on. But MCP itself defines no mechanism for requiring human confirmation before a destructive tool executes. That's left to the host application.
+Microsoft's Playwright server is similarly honest: **17 of 22 tools** carry `destructiveHint: true`. This matters because it gives downstream tools; policy engines, approval gates; a signal to act on. But MCP itself defines no mechanism for requiring human confirmation before a destructive tool executes. That's left to the host application.
 
-The implication: if either of these servers is active and an attacker can influence what arguments reach these tools — through prompt injection in a webpage, a Slack message, a GitHub issue, or a file on disk — the result is code execution with the user's permissions. The MCP protocol provides no guard against this.
+The implication: if either of these servers is active and an attacker can influence what arguments reach these tools; through prompt injection in a webpage, a Slack message, a GitHub issue, or a file on disk; the result is code execution with the user's permissions. The MCP protocol provides no guard against this.
 
 ### 2. Cross-server capability combinations create escalation paths that no individual server review surfaces
 
 This is the finding I think matters most, because it's the one that per-server review misses entirely.
 
-When I analyzed all 10 servers as a combined configuration, capability pair analysis identified **84 capability pairings** where a unit with a data-reading capability could feed into a unit with a higher-privilege capability (such as shell execution). A "unit" is either a single tool (for servers with heterogeneous capabilities) or an entire server (for servers with one tool or a single capability type — see [Chain Analysis Method](#chain-analysis-method) for details). Of those 84, 75 are cross-server and 9 are same-server (desktop-commander's own filesystem tools pairing with its own `start_process`).
+When I analyzed all 10 servers as a combined configuration, capability pair analysis identified **84 capability pairings** where a unit with a data-reading capability could feed into a unit with a higher-privilege capability (such as shell execution). A "unit" is either a single tool (for servers with heterogeneous capabilities) or an entire server (for servers with one tool or a single capability type; see [Chain Analysis Method](#chain-analysis-method) for details). Of those 84, 75 are cross-server and 9 are same-server (desktop-commander's own filesystem tools pairing with its own `start_process`).
 
-**Important caveat:** These are *inferred from declared capabilities*, not demonstrated runtime exploits. The analysis identifies that the capability pairing *exists* — Unit A can read external content, Unit B can execute code — but does not prove that any specific LLM would actually complete the chain in practice. Real-world exploitability depends on the model's susceptibility to prompt injection, the host application's safeguards, and how the agent orchestrates tool calls. What this analysis surfaces is the *structural possibility* — the blast radius if the agent does bridge these capabilities.
+**Important caveat:** These are *inferred from declared capabilities*, not demonstrated runtime exploits. The analysis identifies that the capability pairing *exists*; Unit A can read external content, Unit B can execute code; but does not prove that any specific LLM would actually complete the chain in practice. Real-world exploitability depends on the model's susceptibility to prompt injection, the host application's safeguards, and how the agent orchestrates tool calls. What this analysis surfaces is the *structural possibility*; the blast radius if the agent does bridge these capabilities.
 
-In this 10-server configuration, the 84 pairings cluster around two sinks: desktop-commander's `start_process` (62 pairings — it's the only shell-execution tool in the set) and playwright's browser tools (22 pairings from slack's messaging capability, via the messaging→browser pattern).
+In this 10-server configuration, the 84 pairings cluster around two sinks: desktop-commander's `start_process` (62 pairings; it's the only shell-execution tool in the set) and playwright's browser tools (22 pairings from slack's messaging capability, via the messaging→browser pattern).
 
 At the server level, that's **10 distinct cross-server pairs** (plus 9 same-server pairings within desktop-commander):
 
@@ -106,11 +106,11 @@ At the server level, that's **10 distinct cross-server pairs** (plus 9 same-serv
 
 Some server pairs produce many unit-level pairings because one server exposes many tools with the matching data-access type. The [complete 84-line listing](#appendix-b-complete-chain-listing-84-pairings) is in the appendix.
 
-None of these require any single server to be misconfigured. Each server works as designed. The risk is in the combination — and no part of MCP tooling currently surfaces it.
+None of these require any single server to be misconfigured. Each server works as designed. The risk is in the combination; and no part of MCP tooling currently surfaces it.
 
 ### 3. The filesystem server's security model depends entirely on the directory argument
 
-The `@modelcontextprotocol/server-filesystem` exposes 14 tools. Two (`write_file`, `edit_file`) are annotated DESTRUCTIVE. The server accepts an allowlist of directories as command-line arguments — this is its only access control mechanism.
+The `@modelcontextprotocol/server-filesystem` exposes 14 tools. Two (`write_file`, `edit_file`) are annotated DESTRUCTIVE. The server accepts an allowlist of directories as command-line arguments; this is its only access control mechanism.
 
 The server itself enforces this boundary correctly. But the security is only as good as the directory you pass. A configuration like:
 
@@ -123,21 +123,21 @@ The server itself enforces this boundary correctly. But the security is only as 
 
 ...authorizes read and write access to your entire home directory. That scope includes `~/.ssh/`, `~/.aws/`, `~/.config/`, browser profile directories, and any secrets stored as files.
 
-The official [MCP quickstart guide](https://modelcontextprotocol.io/docs/develop/connect-local-servers) uses scoped paths like `/Users/username/Desktop` as examples, which is reasonable. But a [security best-practices guide](https://toolradar.com/blog/mcp-server-security-best-practices) explicitly calls out `/Users/you` (full home directory) as a common misconfiguration pattern and recommends project-scoped paths instead. Additionally, two CVEs disclosed in 2025 ([CVE-2025-53109 and CVE-2025-53110](https://cymulate.com/blog/cve-2025-53109-53110-escaperoute-anthropic/)) demonstrated that path validation in versions before 2025.7.1 could be bypassed via symlinks and prefix matching — meaning even correctly scoped configurations were not always enforced.
+The official [MCP quickstart guide](https://modelcontextprotocol.io/docs/develop/connect-local-servers) uses scoped paths like `/Users/username/Desktop` as examples, which is reasonable. But a [security best-practices guide](https://toolradar.com/blog/mcp-server-security-best-practices) explicitly calls out `/Users/you` (full home directory) as a common misconfiguration pattern and recommends project-scoped paths instead. Additionally, two CVEs disclosed in 2025 ([CVE-2025-53109 and CVE-2025-53110](https://cymulate.com/blog/cve-2025-53109-53110-escaperoute-anthropic/)) demonstrated that path validation in versions before 2025.7.1 could be bypassed via symlinks and prefix matching; meaning even correctly scoped configurations were not always enforced.
 
 The server can't protect users from overly-broad configurations, and historically didn't fully protect them from correctly-scoped ones either.
 
-### 4. The memory server has no access boundaries — any server can read or delete the knowledge graph
+### 4. The memory server has no access boundaries; any server can read or delete the knowledge graph
 
 The `@modelcontextprotocol/server-memory` exposes 9 tools. Three are rated HIGH: `delete_entities`, `delete_observations`, and `delete_relations`. The tool `read_graph` returns the entire knowledge graph in a single call.
 
-There is no scoping mechanism. Any MCP session that includes the memory server can read all stored entities, add to them, or delete them. In a multi-server setup, this means any other server — or an agent influenced by content from another server — can access or destroy the full persistent knowledge store.
+There is no scoping mechanism. Any MCP session that includes the memory server can read all stored entities, add to them, or delete them. In a multi-server setup, this means any other server; or an agent influenced by content from another server; can access or destroy the full persistent knowledge store.
 
-This is worth noting because the memory server is designed for cross-session persistence. The data it stores may span conversations, contain user preferences, project context, or accumulated knowledge — and all of it is accessible to every tool in the current session with no granularity control.
+This is worth noting because the memory server is designed for cross-session persistence. The data it stores may span conversations, contain user preferences, project context, or accumulated knowledge; and all of it is accessible to every tool in the current session with no granularity control.
 
 ### 5. SQLite is the only server that declares dynamic tool registration
 
-The SQLite server (`mcp-server-sqlite-npx`) reports `listChanged: true` in its MCP capabilities response. This means it supports **dynamic tool registration** — new tools can appear after the initial handshake, and the server will notify the client via `notifications/tools/list_changed`.
+The SQLite server (`mcp-server-sqlite-npx`) reports `listChanged: true` in its MCP capabilities response. This means it supports **dynamic tool registration**; new tools can appear after the initial handshake, and the server will notify the client via `notifications/tools/list_changed`.
 
 No other server in this audit declares this capability.
 
@@ -171,7 +171,7 @@ Capability pair analysis: **84 unit-to-unit pairings** (75 cross-server, 9 same-
 
 **Chain analysis is heuristic, not empirical.** The 84 figure counts unit-to-unit capability pairings (75 cross-server, 9 same-server) where one unit's data-access type matches a source pattern and another's matches a sink pattern. A "unit" is either a single tool or an entire server, depending on whether the server has heterogeneous capabilities. The pairings cluster around two sinks: desktop-commander's `start_process` (62) and playwright's browser tools (22, from slack's messaging capability). The number represents structural exposure, not confirmed vulnerabilities.
 
-**Risk classification is based on metadata, not execution.** Tools are classified by analyzing their names, input schemas, and MCP annotations — not by invoking them and observing behavior. A tool with an innocuous name and schema could be more dangerous than it appears; a tool with a dangerous-sounding name could have runtime guards not visible in its metadata.
+**Risk classification is based on metadata, not execution.** Tools are classified by analyzing their names, input schemas, and MCP annotations; not by invoking them and observing behavior. A tool with an innocuous name and schema could be more dangerous than it appears; a tool with a dangerous-sounding name could have runtime guards not visible in its metadata.
 
 **Server versions are pinned to this audit.** Tool surfaces can change between versions. The findings here apply to the specific versions listed in the selection table.
 
@@ -187,7 +187,7 @@ This audit doesn't mean these servers are broken. Most are well-built and do wha
 
 **2. Cross-server authority is invisible.** No part of the MCP protocol or its tooling surfaces the compound risk of running multiple servers together. Each server's README describes its own capabilities. Nobody describes the interactions.
 
-**3. The protocol lacks approval gates.** MCP defines tool annotations (`destructiveHint`, `readOnlyHint`) but doesn't define a mechanism for requiring human confirmation before a tool executes. That's left to the host application — and most hosts don't implement it.
+**3. The protocol lacks approval gates.** MCP defines tool annotations (`destructiveHint`, `readOnlyHint`) but doesn't define a mechanism for requiring human confirmation before a tool executes. That's left to the host application; and most hosts don't implement it.
 
 **4. Static analysis tells you what's possible. Runtime enforcement tells you what's allowed.** You can audit tool lists all day. But unless something is enforcing policy at the moment of each `tools/call`, the audit is a snapshot of authority, not a control.
 
