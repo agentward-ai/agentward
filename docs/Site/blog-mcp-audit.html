@@ -57,6 +57,37 @@
     article strong{color:var(--white)}
     article h2{font-size:22px;font-weight:700;color:var(--white);letter-spacing:-0.5px;margin:48px 0 16px;padding-top:24px;border-top:1px solid var(--border)}
     article h3{font-size:17px;font-weight:600;color:var(--white);margin:36px 0 12px}
+
+    .finding{margin:36px 0 0;padding:24px;border-radius:10px;border:1px solid var(--border);background:var(--bg1)}
+    .finding-num{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;background:var(--green-dim);border:1px solid var(--green-border);font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--green);margin-bottom:10px}
+    .finding-title{font-size:16px;font-weight:600;color:var(--white);margin-bottom:10px;line-height:1.4}
+    .finding p{font-size:15px;line-height:1.75;color:var(--text);margin-bottom:14px}
+    .finding p:last-child{margin-bottom:0}
+    .finding-critical{border-color:rgba(255,68,68,0.2)}
+    .finding-critical .finding-num{background:rgba(255,68,68,0.15);border-color:rgba(255,68,68,0.3);color:var(--red)}
+
+    .audit-table{width:100%;border-collapse:collapse;margin:24px 0;font-size:13.5px}
+    .audit-table th{text-align:left;padding:10px 12px;border-bottom:2px solid var(--border2);color:var(--muted);font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase}
+    .audit-table td{padding:9px 12px;border-bottom:1px solid var(--border);color:var(--text);font-size:13.5px}
+    .audit-table tr:last-child td{border-bottom:none}
+    .audit-table .server-name{color:var(--white);font-weight:500}
+    .audit-table .risk-crit{color:var(--red);font-weight:600}
+    .audit-table .risk-high{color:var(--orange);font-weight:600}
+    .audit-table .risk-med{color:var(--yellow)}
+    .audit-table .risk-low{color:var(--green)}
+    .audit-table .num{text-align:right;font-family:var(--font-mono)}
+
+    .toc{margin:32px 0;padding:20px 24px;border-radius:10px;border:1px solid var(--border);background:var(--bg1)}
+    .toc-title{font-size:12px;font-family:var(--font-mono);font-weight:600;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:12px}
+    .toc-list{list-style:none;margin:0;padding:0}
+    .toc-list li{margin-bottom:6px;font-size:14px}
+    .toc-list li a{color:var(--text);transition:color .15s}
+    .toc-list li a:hover{color:var(--green)}
+    .toc-list .toc-num{display:inline-block;width:22px;color:var(--muted);font-family:var(--font-mono);font-size:12px}
+    .toc-list .toc-severity{font-size:11px;font-family:var(--font-mono);padding:2px 6px;border-radius:4px;margin-left:8px}
+    .toc-list .sev-critical{background:rgba(255,68,68,0.15);color:var(--red)}
+    .toc-list .sev-note{background:var(--green-dim);color:var(--green)}
+
     article ul,article ol{margin:0 0 20px 24px}
     article li{font-size:15px;line-height:1.7;color:var(--text);margin-bottom:6px}
     article li strong{color:var(--white)}
@@ -152,37 +183,72 @@
     </div>
   </div>
 
-  <p>Each server was started as a subprocess, handshaked via the MCP protocol, and queried with <code>tools/list</code>. Servers selected from the <a href="https://github.com/modelcontextprotocol/servers">official MCP repo</a>, <a href="https://modelcontextprotocol.io/docs/develop/connect-local-servers">Anthropic's docs</a>, and <a href="https://mcp.directory">mcp.directory</a> top-20. <a href="https://github.com/agentward-ai/agentward/blob/897ba8c/blog/mcp-audit.md">Full methodology and data &rarr;</a></p>
+  <p>Each server was started as a subprocess, handshaked via the MCP protocol, and queried with <code>tools/list</code>. Servers selected from the <a href="https://github.com/modelcontextprotocol/servers">official MCP repo</a>, <a href="https://modelcontextprotocol.io/docs/develop/connect-local-servers">Anthropic's docs</a>, and <a href="https://mcp.directory">mcp.directory</a> top-20. <a href="https://github.com/agentward-ai/agentward/blob/main/blog/mcp-audit.md">Full methodology and data &rarr;</a></p>
 
-  <hr/>
+  <h2>At a glance</h2>
 
-  <h3>Playwright and Desktop Commander hand your agent code execution &mdash; with no approval gate</h3>
+  <table class="audit-table">
+    <thead>
+      <tr><th>Server</th><th class="num">Tools</th><th class="num">High+</th><th class="num">Destructive</th><th>Access</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="server-name">filesystem</td><td class="num">14</td><td class="num risk-high">2</td><td class="num">2</td><td>filesystem</td></tr>
+      <tr><td class="server-name">github</td><td class="num">26</td><td class="num risk-low">0</td><td class="num">0</td><td>filesystem, code, database</td></tr>
+      <tr><td class="server-name">playwright</td><td class="num">22</td><td class="num risk-high">17</td><td class="num">17</td><td>browser, network, code</td></tr>
+      <tr><td class="server-name">desktop-commander</td><td class="num">26</td><td class="num risk-crit">9</td><td class="num">9</td><td>filesystem, shell</td></tr>
+      <tr><td class="server-name">fetch</td><td class="num">1</td><td class="num risk-low">0</td><td class="num">0</td><td>network</td></tr>
+      <tr><td class="server-name">postgres</td><td class="num">1</td><td class="num risk-low">0</td><td class="num">0</td><td>database</td></tr>
+      <tr><td class="server-name">sqlite</td><td class="num">5</td><td class="num risk-high">2</td><td class="num">0</td><td>database</td></tr>
+      <tr><td class="server-name">slack</td><td class="num">8</td><td class="num risk-low">0</td><td class="num">0</td><td>messaging</td></tr>
+      <tr><td class="server-name">git</td><td class="num">12</td><td class="num risk-low">0</td><td class="num">0</td><td>filesystem, code</td></tr>
+      <tr><td class="server-name">memory</td><td class="num">9</td><td class="num risk-high">3</td><td class="num">0</td><td>database</td></tr>
+    </tbody>
+  </table>
 
-  <p>Two of the 10 servers expose tools that accept and execute arbitrary code. Desktop Commander's <code>start_process</code> runs shell commands on your host. Playwright's <code>browser_evaluate</code> runs JavaScript in the browser &mdash; with your session cookies.</p>
+  <div class="toc">
+    <div class="toc-title">Findings</div>
+    <ol class="toc-list">
+      <li><a href="#f1"><span class="toc-num">1.</span> Two servers expose arbitrary code execution<span class="toc-severity sev-critical">critical</span></a></li>
+      <li><a href="#f2"><span class="toc-num">2.</span> Cross-server chains create emergent risk<span class="toc-severity sev-critical">critical</span></a></li>
+      <li><a href="#f3"><span class="toc-num">3.</span> Filesystem boundary depends on your config</a></li>
+      <li><a href="#f4"><span class="toc-num">4.</span> Memory server has no access boundaries</a></li>
+      <li><a href="#f5"><span class="toc-num">5.</span> SQLite can add tools after connection</a></li>
+    </ol>
+  </div>
 
-  <p>Desktop Commander self-annotates 9 of its 26 tools as DESTRUCTIVE. Playwright marks 17 of 22. The server authors know these are dangerous. But MCP defines no mechanism for requiring human confirmation before a destructive tool fires. That's left to the host app, and most don't implement it.</p>
+  <div class="finding finding-critical" id="f1">
+    <div class="finding-num">1</div>
+    <div class="finding-title">Two servers hand your agent arbitrary code execution; with no approval gate</div>
+    <p>Desktop Commander's <code>start_process</code> runs shell commands on your host. Playwright's <code>browser_evaluate</code> runs JavaScript in the browser; with your session cookies.</p>
+    <p>Desktop Commander self-annotates 9 of its 26 tools as DESTRUCTIVE. Playwright marks 17 of 22. The server authors know these are dangerous. But MCP defines no mechanism for requiring human confirmation before a destructive tool fires. That's left to the host app; most don't implement it.</p>
+  </div>
 
-  <h3>The real risk is the combination, not the individual servers</h3>
+  <div class="finding finding-critical" id="f2">
+    <div class="finding-num">2</div>
+    <div class="finding-title">The real risk is the combination; not the individual servers</div>
+    <p>Each server looks reasonable in isolation. The risk shows up when you analyze them together.</p>
+    <p>84 structural pairings where a data-reading unit on one server could feed into a code-execution unit on another. Every server that reads external data; filesystem, GitHub, Slack, fetch, Postgres, SQLite, git, memory; has at least one capability that structurally pairs with desktop-commander's <code>start_process</code>.</p>
+    <p>These are inferred from declared capabilities, not demonstrated exploits. But the structural exposure is real: if the agent bridges them, the blast radius is code execution with your user permissions. No individual server is misconfigured. The risk is emergent.</p>
+  </div>
 
-  <p>This is the finding that surprised me most. Each server looks reasonable in isolation. The risk shows up when you analyze them together.</p>
+  <div class="finding" id="f3">
+    <div class="finding-num">3</div>
+    <div class="finding-title">The filesystem server's boundary is whatever you configured; and it's been bypassed before</div>
+    <p>The most popular MCP server does exactly one thing for access control: check the directory you passed as an argument. Common guides use <code>/Users/you</code>. That gives your agent read/write to <code>~/.ssh/</code>, <code>~/.aws/</code>, and everything else in your home directory.</p>
+    <p>Two CVEs in 2025 (<a href="https://cymulate.com/blog/cve-2025-53109-53110-escaperoute-anthropic/">CVE-2025-53109, CVE-2025-53110</a>) showed that even scoped configurations could be bypassed via symlinks and prefix matching. Fixed in 2025.7.1; but it illustrates how thin the boundary is.</p>
+  </div>
 
-  <p>Capability pair analysis found 84 structural pairings where a data-reading unit on one server could feed into a code-execution unit on another. Every server that reads external data &mdash; filesystem, GitHub, Slack, fetch, Postgres, SQLite, git, memory &mdash; has at least one capability that structurally pairs with desktop-commander's <code>start_process</code>.</p>
+  <div class="finding" id="f4">
+    <div class="finding-num">4</div>
+    <div class="finding-title">The memory server has no boundaries at all</div>
+    <p>A persistent knowledge graph across sessions. Any server in the same MCP session can read the entire graph or delete entities from it. No scoping, no access control, no per-server isolation. If an agent is influenced by content from another server, it can access or destroy the full store.</p>
+  </div>
 
-  <p>These are inferred from declared capabilities, not demonstrated exploits. But the structural exposure is real: if the agent bridges them, the blast radius is code execution with your user permissions. No individual server is misconfigured. The risk is emergent.</p>
-
-  <h3>The filesystem server's boundary is whatever you configured &mdash; and it's been bypassed before</h3>
-
-  <p>The most popular MCP server (filesystem, from the official repo) does exactly one thing for access control: check the directory you passed as an argument. Common guides use <code>/Users/you</code>. That gives your agent read/write to <code>~/.ssh/</code>, <code>~/.aws/</code>, and everything else in your home directory.</p>
-
-  <p>Two CVEs in 2025 (<a href="https://cymulate.com/blog/cve-2025-53109-53110-escaperoute-anthropic/">CVE-2025-53109, CVE-2025-53110</a>) showed that even scoped configurations could be bypassed via symlinks and prefix matching. Fixed in 2025.7.1, but it illustrates how thin the boundary is.</p>
-
-  <h3>The memory server has no boundaries at all</h3>
-
-  <p>The memory server stores a persistent knowledge graph across sessions. Any server in the same MCP session can read the entire graph or delete entities from it. There's no scoping, no access control, no per-server isolation. If an agent is influenced by content from another server, it can access or destroy the full store.</p>
-
-  <h3>SQLite can add tools after you've connected</h3>
-
-  <p>SQLite is the only server in this audit that declares <code>listChanged: true</code> &mdash; meaning new tools can appear after the initial handshake. The tool surface you reviewed at connection time may not be the tool surface five minutes later.</p>
+  <div class="finding" id="f5">
+    <div class="finding-num">5</div>
+    <div class="finding-title">SQLite can add tools after you've connected</div>
+    <p>The only server in this audit that declares <code>listChanged: true</code>; new tools can appear after the initial handshake. The tool surface you reviewed at connection time may not be the tool surface five minutes later.</p>
+  </div>
 
   <hr/>
 
@@ -199,7 +265,7 @@
   <p>Static analysis tells you what's <em>possible</em>. Runtime enforcement tells you what's <em>allowed</em>. Right now, most MCP setups have the first and none of the second.</p>
 
   <div class="cta-box">
-    <p><strong><a href="https://github.com/agentward-ai/agentward/blob/897ba8c/blog/mcp-audit.md">Full methodology, scoring rubric, and complete 84-pairing chain listing &rarr;</a></strong></p>
+    <p><strong><a href="https://github.com/agentward-ai/agentward/blob/main/blog/mcp-audit.md">Full methodology, scoring rubric, and complete 84-pairing chain listing &rarr;</a></strong></p>
     <p>The audit used <a href="https://github.com/agentward-ai/agentward">AgentWard</a>, an open-source permission scanner for MCP tool calls. To run the same audit on your own config:</p>
     <pre><code>pip install agentward
 agentward scan ~/.cursor/mcp.json</code></pre>
