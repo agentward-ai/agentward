@@ -11,6 +11,17 @@ demo/
 /agentward-report.md
 sample_mcp_config.json
 
+# Local outputs and scratch files
+PLAN.md
+list
+/agentward-audit.jsonl
+/agentward-gdpr.yaml
+/agentward-report.html
+/agentward-report.sarif
+/scan-report.md
+/example_patient_intake.txt
+/demo.cast
+
 # Python
 __pycache__/
 *.py[cod]

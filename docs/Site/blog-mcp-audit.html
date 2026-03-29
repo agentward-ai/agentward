@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>I Audited 10 Popular MCP Servers and Mapped Their Default Blast Radius — AgentWard</title>
+  <meta name="description" content="Security audit of 10 widely-used MCP servers: 124 tools, 28 self-declared destructive, 84 structural escalation paths. Full methodology and data included."/>
+  <meta property="og:title" content="I Audited 10 Popular MCP Servers and Mapped Their Default Blast Radius"/>
+  <meta property="og:description" content="124 tools. 28 self-declared destructive. 84 structural escalation paths. Here's what your MCP setup actually authorizes."/>
+  <meta property="og:type" content="article"/>
+  <meta property="og:url" content="https://agentward.ai/blog-mcp-audit.html"/>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iOCIgZmlsbD0iIzBhMGEwYSIvPgogIDxwYXRoIGQ9Ik0yNCA0TDYgMTJ2MTJjMCAxMS4xIDcuNyAyMS41IDE4IDI0IDEwLjMtMi41IDE4LTEyLjkgMTgtMjRWMTJMMjQgNHoiIGZpbGw9IiMxMTEiIHN0cm9rZT0iIzAwZmY4OCIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgPHBhdGggZD0iTTE4IDI0bDQgNCA4LTgiIHN0cm9rZT0iIzAwZmY4OCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgZmlsbD0ibm9uZSIvPgo8L3N2Zz4=">
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --green:#00ff88;--green2:#00cc6a;--green-dim:#00ff8820;--green-border:#00ff8830;
+      --bg:#080808;--bg1:#0d0d0d;--bg2:#111;--bg3:#161616;
+      --border:#1c1c1c;--border2:#242424;
+      --text:#d8d8d8;--muted:#666;--muted2:#444;--white:#f0f0f0;
+      --red:#ff4444;--yellow:#ffcc00;--orange:#ff8c42;
+      --font-sans:'IBM Plex Sans',system-ui,sans-serif;
+      --font-mono:'IBM Plex Mono',monospace;
+    }
+    html{scroll-behavior:smooth}
+    body{background:var(--bg);color:var(--text);font-family:var(--font-sans);min-height:100vh;line-height:1.6}
+    ::selection{background:var(--green-dim)}
+    a{color:var(--green);text-decoration:none}
+    a:hover{color:var(--green2)}
+
+    nav{position:sticky;top:0;z-index:200;height:52px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;background:rgba(8,8,8,0.94);backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
+    .nav-logo{display:flex;align-items:center;gap:10px;color:var(--white);font-weight:600;font-size:15px;letter-spacing:-0.3px}
+    .nav-links{display:flex;align-items:center;gap:2px}
+    .nav-links a{padding:5px 12px;border-radius:6px;font-size:13px;font-weight:500;color:var(--muted);transition:color .15s,background .15s}
+    .nav-links a:hover{color:var(--white);background:var(--bg2)}
+    .nav-links a.active{color:var(--green);background:var(--green-dim)}
+    .nav-gh{display:flex;align-items:center;gap:7px;padding:6px 14px;border-radius:7px;background:var(--green);color:var(--bg)!important;font-size:12.5px;font-weight:600;margin-left:8px;transition:background .15s}
+    .nav-gh:hover{background:var(--green2)!important}
+    .nav-hamburger{display:none;background:none;border:none;cursor:pointer;padding:6px}
+    .nav-hamburger svg{display:block}
+    .nav-mobile{display:none;position:absolute;top:52px;left:0;right:0;background:rgba(8,8,8,0.98);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:8px 16px 12px;z-index:199;flex-direction:column;gap:2px}
+    .nav-mobile.open{display:flex}
+    .nav-mobile a{display:block;padding:10px 14px;border-radius:6px;font-size:14px;font-weight:500;color:var(--muted);transition:color .15s,background .15s}
+    .nav-mobile a:hover{color:var(--white);background:var(--bg2)}
+    @media(max-width:600px){.nav-links{display:none}.nav-hamburger{display:block}}
+
+    .page-hero{padding:64px 24px 32px;max-width:740px;margin:0 auto}
+    .eyebrow{font-family:var(--font-mono);font-size:10.5px;font-weight:600;color:var(--green);letter-spacing:2px;text-transform:uppercase;margin-bottom:14px}
+    .page-title{font-size:clamp(24px,4vw,36px);font-weight:700;color:var(--white);letter-spacing:-1px;line-height:1.15;margin-bottom:16px}
+    .page-meta{font-size:13px;color:var(--muted);font-family:var(--font-mono)}
+
+    article{max-width:740px;margin:0 auto;padding:0 24px 72px}
+    article .lede{font-size:17px;line-height:1.8;color:var(--white);margin-bottom:32px}
+    article p{font-size:15.5px;line-height:1.8;color:var(--text);margin-bottom:20px}
+    article strong{color:var(--white)}
+    article h2{font-size:22px;font-weight:700;color:var(--white);letter-spacing:-0.5px;margin:48px 0 16px;padding-top:24px;border-top:1px solid var(--border)}
+    article h3{font-size:17px;font-weight:600;color:var(--white);margin:36px 0 12px}
+    article ul,article ol{margin:0 0 20px 24px}
+    article li{font-size:15px;line-height:1.7;color:var(--text);margin-bottom:6px}
+    article li strong{color:var(--white)}
+    article code{font-family:var(--font-mono);font-size:13.5px;background:var(--bg2);padding:2px 7px;border-radius:4px;color:var(--green)}
+    article pre{background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:16px 20px;overflow-x:auto;margin:0 0 24px;font-size:13px;line-height:1.6}
+    article pre code{background:none;padding:0;color:var(--text)}
+    article hr{border:none;border-top:1px solid var(--border);margin:40px 0}
+
+    .stat-row{display:flex;gap:16px;margin:24px 0 32px;flex-wrap:wrap}
+    .stat{padding:16px 20px;border-radius:8px;border:1px solid var(--border);background:var(--bg1);flex:1;min-width:140px}
+    .stat-num{font-size:28px;font-weight:700;color:var(--white);font-family:var(--font-mono);letter-spacing:-1px}
+    .stat-label{font-size:12px;color:var(--muted);margin-top:2px}
+    .stat-red .stat-num{color:var(--red)}
+    .stat-orange .stat-num{color:var(--orange)}
+    .stat-yellow .stat-num{color:var(--yellow)}
+
+    .cta-box{border:1px solid var(--green-border);background:var(--green-dim);border-radius:10px;padding:24px;margin:40px 0}
+    .cta-box p{margin-bottom:12px;color:var(--white)}
+    .cta-box a{font-weight:600}
+    .cta-box pre{border-color:var(--green-border);background:var(--bg);margin-bottom:0}
+
+    footer{border-top:1px solid var(--border);padding:24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+    .footer-logo{display:flex;align-items:center;gap:8px;color:var(--muted2);font-size:13px}
+    .footer-links{display:flex;gap:16px;font-size:13px}
+    .footer-links a{color:var(--muted);transition:color .15s}
+    .footer-links a:hover{color:var(--green)}
+    .footer-right{font-size:12px;color:var(--muted2);font-family:var(--font-mono)}
+    @media(max-width:600px){
+      footer{flex-direction:column;text-align:center}
+      .stat-row{flex-direction:column}
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="nav-logo">
+    <svg width="24" height="24" viewBox="0 0 48 48" fill="none">
+      <path d="M24 4L6 12v12c0 11.1 7.7 21.5 18 24 10.3-2.5 18-12.9 18-24V12L24 4z" fill="#0d1a0d" stroke="#00ff88" stroke-width="2.5"/>
+      <path d="M17 24l5 5 9-9" stroke="#00ff88" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    AgentWard
+  </a>
+  <div class="nav-links">
+    <a href="index.html">Home</a>
+    <a href="how-it-works.html">How It Works</a>
+    <a href="docs.html">Docs</a>
+    <a href="compare.html">Compare</a>
+    <a href="incidents.html">Known Incidents</a>
+    <a href="about.html">About</a>
+    <a href="blog-mcp-audit.html" class="active">Research</a>
+    <a href="https://github.com/agentward-ai/agentward" target="_blank" rel="noopener" class="nav-gh">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      GitHub
+    </a>
+  </div>
+  <button class="nav-hamburger" onclick="document.getElementById('mobile-menu').classList.toggle('open')" aria-label="Menu">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#999" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
+</nav>
+<div class="nav-mobile" id="mobile-menu">
+  <a href="index.html">Home</a>
+  <a href="how-it-works.html">How It Works</a>
+  <a href="docs.html">Docs</a>
+  <a href="compare.html">Compare</a>
+  <a href="incidents.html">Known Incidents</a>
+  <a href="about.html">About</a>
+  <a href="blog-mcp-audit.html" class="active">Research</a>
+  <a href="https://github.com/agentward-ai/agentward" target="_blank" rel="noopener">GitHub</a>
+</div>
+
+<div class="page-hero">
+  <div class="eyebrow">Research</div>
+  <h1 class="page-title">I Audited 10 Popular MCP Servers and Mapped Their Default Blast Radius</h1>
+  <div class="page-meta">March 29, 2026</div>
+</div>
+
+<article>
+  <p class="lede">I connected to the 10 most widely referenced MCP servers, enumerated every tool they expose, and mapped what a default installation actually authorizes. Most people never look.</p>
+
+  <div class="stat-row">
+    <div class="stat">
+      <div class="stat-num">124</div>
+      <div class="stat-label">tools enumerated</div>
+    </div>
+    <div class="stat stat-red">
+      <div class="stat-num">28</div>
+      <div class="stat-label">self-declared destructive</div>
+    </div>
+    <div class="stat stat-orange">
+      <div class="stat-num">84</div>
+      <div class="stat-label">structural escalation paths</div>
+    </div>
+  </div>
+
+  <p>Each server was started as a subprocess, handshaked via the MCP protocol, and queried with <code>tools/list</code>. Servers selected from the <a href="https://github.com/modelcontextprotocol/servers">official MCP repo</a>, <a href="https://modelcontextprotocol.io/docs/develop/connect-local-servers">Anthropic's docs</a>, and <a href="https://mcp.directory">mcp.directory</a> top-20. <a href="https://github.com/agentward-ai/agentward/blob/897ba8c/blog/mcp-audit.md">Full methodology and data &rarr;</a></p>
+
+  <hr/>
+
+  <h3>Playwright and Desktop Commander hand your agent code execution &mdash; with no approval gate</h3>
+
+  <p>Two of the 10 servers expose tools that accept and execute arbitrary code. Desktop Commander's <code>start_process</code> runs shell commands on your host. Playwright's <code>browser_evaluate</code> runs JavaScript in the browser &mdash; with your session cookies.</p>
+
+  <p>Desktop Commander self-annotates 9 of its 26 tools as DESTRUCTIVE. Playwright marks 17 of 22. The server authors know these are dangerous. But MCP defines no mechanism for requiring human confirmation before a destructive tool fires. That's left to the host app, and most don't implement it.</p>
+
+  <h3>The real risk is the combination, not the individual servers</h3>
+
+  <p>This is the finding that surprised me most. Each server looks reasonable in isolation. The risk shows up when you analyze them together.</p>
+
+  <p>Capability pair analysis found 84 structural pairings where a data-reading unit on one server could feed into a code-execution unit on another. Every server that reads external data &mdash; filesystem, GitHub, Slack, fetch, Postgres, SQLite, git, memory &mdash; has at least one capability that structurally pairs with desktop-commander's <code>start_process</code>.</p>
+
+  <p>These are inferred from declared capabilities, not demonstrated exploits. But the structural exposure is real: if the agent bridges them, the blast radius is code execution with your user permissions. No individual server is misconfigured. The risk is emergent.</p>
+
+  <h3>The filesystem server's boundary is whatever you configured &mdash; and it's been bypassed before</h3>
+
+  <p>The most popular MCP server (filesystem, from the official repo) does exactly one thing for access control: check the directory you passed as an argument. Common guides use <code>/Users/you</code>. That gives your agent read/write to <code>~/.ssh/</code>, <code>~/.aws/</code>, and everything else in your home directory.</p>
+
+  <p>Two CVEs in 2025 (<a href="https://cymulate.com/blog/cve-2025-53109-53110-escaperoute-anthropic/">CVE-2025-53109, CVE-2025-53110</a>) showed that even scoped configurations could be bypassed via symlinks and prefix matching. Fixed in 2025.7.1, but it illustrates how thin the boundary is.</p>
+
+  <h3>The memory server has no boundaries at all</h3>
+
+  <p>The memory server stores a persistent knowledge graph across sessions. Any server in the same MCP session can read the entire graph or delete entities from it. There's no scoping, no access control, no per-server isolation. If an agent is influenced by content from another server, it can access or destroy the full store.</p>
+
+  <h3>SQLite can add tools after you've connected</h3>
+
+  <p>SQLite is the only server in this audit that declares <code>listChanged: true</code> &mdash; meaning new tools can appear after the initial handshake. The tool surface you reviewed at connection time may not be the tool surface five minutes later.</p>
+
+  <hr/>
+
+  <h2>The structural takeaway</h2>
+
+  <p>These servers aren't broken. Most are well-built. The issue is the protocol:</p>
+
+  <ul>
+    <li><strong>No per-tool auth.</strong> You authorize every tool a server exposes in one step. No way to say "screenshot yes, evaluate no."</li>
+    <li><strong>No cross-server visibility.</strong> Nothing surfaces the compound risk of running multiple servers together.</li>
+    <li><strong>No approval gates.</strong> <code>destructiveHint</code> exists but nothing enforces it.</li>
+  </ul>
+
+  <p>Static analysis tells you what's <em>possible</em>. Runtime enforcement tells you what's <em>allowed</em>. Right now, most MCP setups have the first and none of the second.</p>
+
+  <div class="cta-box">
+    <p><strong><a href="https://github.com/agentward-ai/agentward/blob/897ba8c/blog/mcp-audit.md">Full methodology, scoring rubric, and complete 84-pairing chain listing &rarr;</a></strong></p>
+    <p>The audit used <a href="https://github.com/agentward-ai/agentward">AgentWard</a>, an open-source permission scanner for MCP tool calls. To run the same audit on your own config:</p>
+    <pre><code>pip install agentward
+agentward scan ~/.cursor/mcp.json</code></pre>
+  </div>
+
+</article>
+
+<footer>
+  <div class="footer-logo">
+    <svg width="18" height="18" viewBox="0 0 48 48" fill="none">
+      <path d="M24 4L6 12v12c0 11.1 7.7 21.5 18 24 10.3-2.5 18-12.9 18-24V12L24 4z" fill="#0d1a0d" stroke="#00ff88" stroke-width="2"/>
+      <path d="M17 24l5 5 9-9" stroke="#00ff88" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    AgentWard
+  </div>
+  <div class="footer-links">
+    <a href="index.html">Home</a>
+    <a href="how-it-works.html">How It Works</a>
+    <a href="docs.html">Docs</a>
+    <a href="compare.html">Compare</a>
+    <a href="incidents.html">Known Incidents</a>
+    <a href="about.html">About</a>
+    <a href="blog-mcp-audit.html">Research</a>
+    <a href="https://github.com/agentward-ai/agentward" target="_blank">GitHub</a>
+  </div>
+  <span class="footer-right">Apache 2.0 &middot; Open Source</span>
+</footer>
+
+</body>
+</html>
