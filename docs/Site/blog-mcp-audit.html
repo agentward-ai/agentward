@@ -189,19 +189,19 @@
 
   <table class="audit-table">
     <thead>
-      <tr><th>Server</th><th class="num">Tools</th><th class="num">High+</th><th class="num">Destructive</th><th>Access</th></tr>
+      <tr><th>Server</th><th class="num">Tools</th><th class="num">Risky</th><th>Top risk found</th></tr>
     </thead>
     <tbody>
-      <tr><td class="server-name">filesystem</td><td class="num">14</td><td class="num risk-high">2</td><td class="num">2</td><td>filesystem</td></tr>
-      <tr><td class="server-name">github</td><td class="num">26</td><td class="num risk-low">0</td><td class="num">0</td><td>filesystem, code, database</td></tr>
-      <tr><td class="server-name">playwright</td><td class="num">22</td><td class="num risk-high">17</td><td class="num">17</td><td>browser, network, code</td></tr>
-      <tr><td class="server-name">desktop-commander</td><td class="num">26</td><td class="num risk-crit">9</td><td class="num">9</td><td>filesystem, shell</td></tr>
-      <tr><td class="server-name">fetch</td><td class="num">1</td><td class="num risk-low">0</td><td class="num">0</td><td>network</td></tr>
-      <tr><td class="server-name">postgres</td><td class="num">1</td><td class="num risk-low">0</td><td class="num">0</td><td>database</td></tr>
-      <tr><td class="server-name">sqlite</td><td class="num">5</td><td class="num risk-high">2</td><td class="num">0</td><td>database</td></tr>
-      <tr><td class="server-name">slack</td><td class="num">8</td><td class="num risk-low">0</td><td class="num">0</td><td>messaging</td></tr>
-      <tr><td class="server-name">git</td><td class="num">12</td><td class="num risk-low">0</td><td class="num">0</td><td>filesystem, code</td></tr>
-      <tr><td class="server-name">memory</td><td class="num">9</td><td class="num risk-high">3</td><td class="num">0</td><td>database</td></tr>
+      <tr><td class="server-name">desktop-commander</td><td class="num">26</td><td class="num risk-crit">9</td><td><code>start_process</code> executes arbitrary shell commands on host</td></tr>
+      <tr><td class="server-name">playwright</td><td class="num">22</td><td class="num risk-high">17</td><td><code>browser_evaluate</code> runs JS with your session cookies</td></tr>
+      <tr><td class="server-name">filesystem</td><td class="num">14</td><td class="num risk-high">2</td><td><code>write_file</code> + <code>edit_file</code> can overwrite <code>~/.ssh</code>, <code>~/.aws</code></td></tr>
+      <tr><td class="server-name">memory</td><td class="num">9</td><td class="num risk-high">3</td><td>Any server can read or delete the entire knowledge graph</td></tr>
+      <tr><td class="server-name">sqlite</td><td class="num">5</td><td class="num risk-high">2</td><td><code>write_query</code> runs arbitrary SQL; dynamic tool loading enabled</td></tr>
+      <tr><td class="server-name">github</td><td class="num">26</td><td class="num risk-low">0</td><td>Full repo access with your PAT; can push code and merge PRs</td></tr>
+      <tr><td class="server-name">slack</td><td class="num">8</td><td class="num risk-low">0</td><td>Can post messages and read DM history as your bot</td></tr>
+      <tr><td class="server-name">git</td><td class="num">12</td><td class="num risk-low">0</td><td>Can commit and reset on any local repo</td></tr>
+      <tr><td class="server-name">fetch</td><td class="num">1</td><td class="num risk-low">0</td><td>Fetches any URL; content feeds into agent context</td></tr>
+      <tr><td class="server-name">postgres</td><td class="num">1</td><td class="num risk-low">0</td><td>Runs queries on your database with connection-string privileges</td></tr>
     </tbody>
   </table>
 
