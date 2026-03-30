@@ -271,6 +271,10 @@ agentward diff old.yaml new.yaml --json        # JSON for CI
 
 Shows exactly what changed between two policy files — permissions added/removed, approval rules, chaining rules. Each change is classified as **breaking** (tightening enforcement) or **relaxing** (loosening enforcement). Useful for PR reviews.
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/agentward-ai-agentward).
+
 ## How It Works
 
 AgentWard operates as a transparent proxy between agents and their tools:
