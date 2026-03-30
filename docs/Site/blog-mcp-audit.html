@@ -183,7 +183,7 @@
     </div>
   </div>
 
-  <p>Each server was started as a subprocess, handshaked via the MCP protocol, and queried with <code>tools/list</code>. Servers selected from the <a href="https://github.com/modelcontextprotocol/servers">official MCP repo</a>, <a href="https://modelcontextprotocol.io/docs/develop/connect-local-servers">Anthropic's docs</a>, and <a href="https://mcp.directory">mcp.directory</a> top-20. <a href="https://github.com/agentward-ai/agentward/blob/main/blog/mcp-audit.md">Full methodology and data &rarr;</a></p>
+  <p>Each server was started as a subprocess, handshaked via the MCP protocol, and queried with <code>tools/list</code>. Servers selected from the <a href="https://github.com/modelcontextprotocol/servers">official MCP repo</a>, <a href="https://modelcontextprotocol.io/docs/develop/connect-local-servers">Anthropic's docs</a>, and <a href="https://mcp.directory">mcp.directory</a> top-20. <a href="https://github.com/agentward-ai/agentward/blob/47605a4fec9d2d5c97973147bfb9163591f7d3b6/blog/mcp-audit.md">Full methodology and data &rarr;</a></p>
 
   <h2>At a glance</h2>
 
@@ -265,7 +265,7 @@
   <p>Static analysis tells you what's <em>possible</em>. Runtime enforcement tells you what's <em>allowed</em>. Right now, most MCP setups have the first and none of the second.</p>
 
   <div class="cta-box">
-    <p><strong><a href="https://github.com/agentward-ai/agentward/blob/main/blog/mcp-audit.md">Full methodology, scoring rubric, and complete 84-pairing chain listing &rarr;</a></strong></p>
+    <p><strong><a href="https://github.com/agentward-ai/agentward/blob/47605a4fec9d2d5c97973147bfb9163591f7d3b6/blog/mcp-audit.md">Full methodology, scoring rubric, and complete 84-pairing chain listing &rarr;</a></strong></p>
     <p>The audit used <a href="https://github.com/agentward-ai/agentward">AgentWard</a>, an open-source permission scanner for MCP tool calls. To run the same audit on your own config:</p>
     <pre><code>pip install agentward
 agentward scan ~/.cursor/mcp.json</code></pre>

@@ -261,7 +261,7 @@ agentward scan mcp-config.json                           # terminal output (incl
 
 **Date:** March 29, 2026. Server versions listed in the selection table.
 
-The raw JSON scan output (250KB, containing full tool enumerations with input schemas and annotations) is published at [`blog/audit-data/scan-results.json`](https://github.com/agentward-ai/agentward/blob/main/blog/audit-data/scan-results.json) in the AgentWard repository.
+The raw JSON scan output (250KB, containing full tool enumerations with input schemas and annotations) is published at [`blog/audit-data/scan-results.json`](https://github.com/agentward-ai/agentward/blob/47605a4fec9d2d5c97973147bfb9163591f7d3b6/blog/audit-data/scan-results.json) in the AgentWard repository.
 
 ---
 
