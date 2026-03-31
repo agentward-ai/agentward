@@ -1,0 +1,673 @@
+servers:
+  - name: "filesystem"
+    package: "@modelcontextprotocol/server-filesystem"
+    aliases: ["mcp-server-filesystem", "server-filesystem"]
+    category: "file-access"
+    risk_level: "high"
+    known_risks:
+      - type: "path-traversal"
+        description: "Can access any file path passed as argument; no built-in path scoping"
+        severity: "high"
+      - type: "symlink-following"
+        description: "May follow symlinks outside allowed directories"
+        severity: "medium"
+      - type: "arbitrary-read"
+        description: "Reads any file the process has permission to access"
+        severity: "high"
+    recommended_constraints:
+      - argument: "path"
+        constraint: "must_start_with"
+        value: ["/tmp/", "/workspace/"]
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "github"
+    package: "@modelcontextprotocol/server-github"
+    aliases: ["mcp-server-github"]
+    category: "code-hosting"
+    risk_level: "high"
+    known_risks:
+      - type: "credential-exposure"
+        description: "Requires GITHUB_TOKEN; can push code, create PRs, delete branches"
+        severity: "critical"
+      - type: "repo-exfiltration"
+        description: "Can read all accessible repositories including private ones"
+        severity: "high"
+      - type: "secrets-leakage"
+        description: "Can read repository secrets and environment variables if token has admin scope"
+        severity: "critical"
+    recommended_constraints:
+      - argument: "owner"
+        constraint: "one_of"
+        value: ["your-org"]
+      - argument: "repo"
+        constraint: "must_start_with"
+        value: ["your-org/"]
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "slack"
+    package: "@modelcontextprotocol/server-slack"
+    aliases: ["mcp-server-slack"]
+    category: "messaging"
+    risk_level: "high"
+    known_risks:
+      - type: "data-exfiltration"
+        description: "Can read message history across all channels the token has access to"
+        severity: "high"
+      - type: "unauthorized-posting"
+        description: "Can post messages to any accessible channel or DM"
+        severity: "high"
+      - type: "token-scope-creep"
+        description: "Bot tokens often have broader permissions than needed"
+        severity: "medium"
+    recommended_constraints:
+      - argument: "channel"
+        constraint: "must_start_with"
+        value: ["#approved-"]
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "postgres"
+    package: "@modelcontextprotocol/server-postgres"
+    aliases: ["mcp-server-postgres", "server-postgres"]
+    category: "database"
+    risk_level: "critical"
+    known_risks:
+      - type: "sql-injection"
+        description: "Raw SQL execution; no built-in parameterization for dynamic queries"
+        severity: "critical"
+      - type: "schema-exfiltration"
+        description: "Can enumerate all tables, columns, and data in accessible databases"
+        severity: "high"
+      - type: "data-modification"
+        description: "Supports INSERT/UPDATE/DELETE if connection user has permissions"
+        severity: "critical"
+      - type: "privilege-escalation"
+        description: "Connection string credentials may have superuser privileges"
+        severity: "critical"
+    recommended_constraints:
+      - argument: "query"
+        constraint: "not_matches"
+        value: ["(?i)(drop|truncate|delete|insert|update|alter|create|grant|revoke)"]
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "sqlite"
+    package: "@modelcontextprotocol/server-sqlite"
+    aliases: ["mcp-server-sqlite"]
+    category: "database"
+    risk_level: "high"
+    known_risks:
+      - type: "sql-injection"
+        description: "Direct SQL execution against local SQLite file"
+        severity: "high"
+      - type: "arbitrary-file-access"
+        description: "Database path can be set to any local .db or .sqlite file"
+        severity: "high"
+      - type: "data-modification"
+        description: "Full write access; no read-only mode by default"
+        severity: "high"
+    recommended_constraints:
+      - argument: "database_path"
+        constraint: "must_start_with"
+        value: ["/workspace/", "/tmp/"]
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "puppeteer"
+    package: "@modelcontextprotocol/server-puppeteer"
+    aliases: ["mcp-server-puppeteer"]
+    category: "browser-automation"
+    risk_level: "critical"
+    known_risks:
+      - type: "ssrf"
+        description: "Can navigate to internal network addresses, cloud metadata endpoints"
+        severity: "critical"
+      - type: "credential-harvesting"
+        description: "Can screenshot pages that display passwords or tokens"
+        severity: "high"
+      - type: "javascript-execution"
+        description: "Can execute arbitrary JavaScript on any page"
+        severity: "critical"
+      - type: "cookie-theft"
+        description: "Can read cookies and session tokens from pages it visits"
+        severity: "high"
+    recommended_constraints:
+      - argument: "url"
+        constraint: "allowed_schemes"
+        value: ["https"]
+      - argument: "url"
+        constraint: "allowed_domains"
+        value: ["*.your-domain.com"]
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "brave-search"
+    package: "@modelcontextprotocol/server-brave-search"
+    aliases: ["mcp-server-brave-search", "brave_search"]
+    category: "web-search"
+    risk_level: "low"
+    known_risks:
+      - type: "data-leakage"
+        description: "Search queries are sent to Brave Search API; avoid PII in queries"
+        severity: "low"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "everything"
+    package: "@modelcontextprotocol/server-everything"
+    aliases: ["mcp-server-everything"]
+    category: "testing"
+    risk_level: "medium"
+    known_risks:
+      - type: "test-only"
+        description: "Reference server for testing; includes echo and sampling tools that should not be in production"
+        severity: "medium"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "sequential-thinking"
+    package: "@modelcontextprotocol/server-sequential-thinking"
+    aliases: ["mcp-server-sequential-thinking"]
+    category: "reasoning"
+    risk_level: "low"
+    known_risks:
+      - type: "prompt-amplification"
+        description: "Multi-step reasoning may amplify injected instructions over multiple turns"
+        severity: "low"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "memory"
+    package: "@modelcontextprotocol/server-memory"
+    aliases: ["mcp-server-memory"]
+    category: "storage"
+    risk_level: "medium"
+    known_risks:
+      - type: "persistent-injection"
+        description: "Stores agent memories; attacker can poison memory with malicious instructions"
+        severity: "high"
+      - type: "data-persistence"
+        description: "Sensitive data written to memory persists across sessions"
+        severity: "medium"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "fetch"
+    package: "@modelcontextprotocol/server-fetch"
+    aliases: ["mcp-server-fetch"]
+    category: "web-access"
+    risk_level: "high"
+    known_risks:
+      - type: "ssrf"
+        description: "Can fetch any URL including internal network addresses and cloud metadata"
+        severity: "critical"
+      - type: "data-exfiltration"
+        description: "Can POST data to external URLs on behalf of the agent"
+        severity: "high"
+      - type: "prompt-injection"
+        description: "Fetched web content may contain prompt injection payloads"
+        severity: "high"
+    recommended_constraints:
+      - argument: "url"
+        constraint: "allowed_schemes"
+        value: ["https"]
+      - argument: "url"
+        constraint: "blocked_cidrs"
+        value: ["169.254.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "gitlab"
+    package: "@modelcontextprotocol/server-gitlab"
+    aliases: ["mcp-server-gitlab"]
+    category: "code-hosting"
+    risk_level: "high"
+    known_risks:
+      - type: "credential-exposure"
+        description: "Requires GitLab personal access token with repo access"
+        severity: "critical"
+      - type: "repo-exfiltration"
+        description: "Can read all accessible GitLab projects including private groups"
+        severity: "high"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "jira"
+    package: "@modelcontextprotocol/server-jira"
+    aliases: ["mcp-server-jira", "atlassian-jira"]
+    category: "project-management"
+    risk_level: "medium"
+    known_risks:
+      - type: "data-exfiltration"
+        description: "Can enumerate and read all accessible Jira projects and issues"
+        severity: "medium"
+      - type: "ticket-manipulation"
+        description: "Can create, update, and transition issues with write token"
+        severity: "medium"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "confluence"
+    package: "@modelcontextprotocol/server-confluence"
+    aliases: ["mcp-server-confluence"]
+    category: "knowledge-management"
+    risk_level: "medium"
+    known_risks:
+      - type: "data-exfiltration"
+        description: "Can read all Confluence spaces and pages accessible with the token"
+        severity: "high"
+      - type: "content-modification"
+        description: "Can edit and create Confluence pages with write token"
+        severity: "medium"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "notion"
+    package: "@notionhq/notion-mcp-server"
+    aliases: ["mcp-server-notion", "notion-mcp"]
+    category: "knowledge-management"
+    risk_level: "medium"
+    known_risks:
+      - type: "data-exfiltration"
+        description: "Can read all databases and pages shared with the integration"
+        severity: "medium"
+      - type: "content-modification"
+        description: "Can create and update Notion pages and database entries"
+        severity: "medium"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "linear"
+    package: "@linear/mcp-server"
+    aliases: ["mcp-server-linear"]
+    category: "project-management"
+    risk_level: "medium"
+    known_risks:
+      - type: "data-exfiltration"
+        description: "Can read all issues, projects, and teams accessible with the API key"
+        severity: "medium"
+      - type: "issue-manipulation"
+        description: "Can create, update, and delete Linear issues"
+        severity: "medium"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "google-drive"
+    package: "@modelcontextprotocol/server-gdrive"
+    aliases: ["mcp-server-gdrive", "gdrive"]
+    category: "file-storage"
+    risk_level: "high"
+    known_risks:
+      - type: "data-exfiltration"
+        description: "Can read any file in Google Drive the OAuth token has access to"
+        severity: "high"
+      - type: "file-modification"
+        description: "Can create, update, and delete Drive files"
+        severity: "high"
+      - type: "oauth-scope-creep"
+        description: "OAuth scopes may grant access beyond what is needed"
+        severity: "medium"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "google-calendar"
+    package: "@modelcontextprotocol/server-google-calendar"
+    aliases: ["mcp-server-google-calendar"]
+    category: "calendar"
+    risk_level: "medium"
+    known_risks:
+      - type: "schedule-exfiltration"
+        description: "Can read meeting schedules including private events"
+        severity: "medium"
+      - type: "calendar-manipulation"
+        description: "Can create, modify, and delete calendar events"
+        severity: "medium"
+      - type: "attendee-harvesting"
+        description: "Can extract email addresses from event attendee lists"
+        severity: "low"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "gmail"
+    package: "@modelcontextprotocol/server-gmail"
+    aliases: ["mcp-server-gmail"]
+    category: "email"
+    risk_level: "critical"
+    known_risks:
+      - type: "email-exfiltration"
+        description: "Can read all emails in the Gmail account"
+        severity: "critical"
+      - type: "phishing"
+        description: "Can send emails from the account; enables phishing/BEC attacks"
+        severity: "critical"
+      - type: "contact-harvesting"
+        description: "Can enumerate all contacts and email addresses"
+        severity: "high"
+      - type: "prompt-injection"
+        description: "Email content may contain prompt injection payloads"
+        severity: "high"
+    recommended_constraints:
+      - argument: "to"
+        constraint: "allowed_domains"
+        value: ["your-company.com"]
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "stripe"
+    package: "@stripe/agent-toolkit"
+    aliases: ["mcp-server-stripe", "stripe-mcp"]
+    category: "payments"
+    risk_level: "critical"
+    known_risks:
+      - type: "financial-transaction"
+        description: "Can initiate real financial transactions with the Stripe API key"
+        severity: "critical"
+      - type: "payment-data-exposure"
+        description: "Can read customer payment methods and transaction history"
+        severity: "critical"
+      - type: "customer-data-access"
+        description: "Can access full customer PII including billing addresses"
+        severity: "high"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "twilio"
+    package: "@modelcontextprotocol/server-twilio"
+    aliases: ["mcp-server-twilio"]
+    category: "messaging"
+    risk_level: "high"
+    known_risks:
+      - type: "unauthorized-sms"
+        description: "Can send SMS messages to arbitrary phone numbers"
+        severity: "high"
+      - type: "phone-number-enumeration"
+        description: "Can enumerate and read Twilio-managed phone numbers"
+        severity: "medium"
+      - type: "account-billing"
+        description: "SMS sending incurs charges on the Twilio account"
+        severity: "medium"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "docker"
+    package: "@modelcontextprotocol/server-docker"
+    aliases: ["mcp-server-docker"]
+    category: "container-management"
+    risk_level: "critical"
+    known_risks:
+      - type: "container-escape"
+        description: "Docker socket access is equivalent to root on the host"
+        severity: "critical"
+      - type: "arbitrary-execution"
+        description: "Can start containers with arbitrary commands and volume mounts"
+        severity: "critical"
+      - type: "network-access"
+        description: "Containers can access internal networks and metadata endpoints"
+        severity: "high"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "kubernetes"
+    package: "@modelcontextprotocol/server-kubernetes"
+    aliases: ["mcp-server-kubernetes", "k8s-mcp"]
+    category: "container-orchestration"
+    risk_level: "critical"
+    known_risks:
+      - type: "cluster-takeover"
+        description: "kubeconfig with cluster-admin role grants full cluster control"
+        severity: "critical"
+      - type: "secret-exfiltration"
+        description: "Can read Kubernetes Secrets which may contain API keys and certs"
+        severity: "critical"
+      - type: "workload-manipulation"
+        description: "Can deploy, modify, or delete workloads across namespaces"
+        severity: "critical"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "redis"
+    package: "@modelcontextprotocol/server-redis"
+    aliases: ["mcp-server-redis"]
+    category: "database"
+    risk_level: "high"
+    known_risks:
+      - type: "data-exfiltration"
+        description: "Can enumerate and read all Redis keys accessible to the connection"
+        severity: "high"
+      - type: "session-hijacking"
+        description: "Redis often stores session tokens; read access enables hijacking"
+        severity: "critical"
+      - type: "data-deletion"
+        description: "Can delete keys or flush the entire database"
+        severity: "high"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "mongodb"
+    package: "@modelcontextprotocol/server-mongodb"
+    aliases: ["mcp-server-mongodb"]
+    category: "database"
+    risk_level: "high"
+    known_risks:
+      - type: "nosql-injection"
+        description: "Query operators can be injected into filter objects"
+        severity: "high"
+      - type: "schema-exfiltration"
+        description: "Can enumerate all collections and documents in accessible databases"
+        severity: "high"
+      - type: "data-modification"
+        description: "Supports insert, update, delete operations"
+        severity: "high"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "playwright"
+    package: "@playwright/mcp"
+    aliases: ["mcp-server-playwright", "playwright-mcp"]
+    category: "browser-automation"
+    risk_level: "critical"
+    known_risks:
+      - type: "ssrf"
+        description: "Can navigate to internal network addresses and cloud metadata endpoints"
+        severity: "critical"
+      - type: "credential-harvesting"
+        description: "Can screenshot and read DOM of pages containing credentials"
+        severity: "high"
+      - type: "javascript-execution"
+        description: "Can execute arbitrary JavaScript in page context"
+        severity: "critical"
+      - type: "prompt-injection"
+        description: "Rendered web content may contain prompt injection payloads"
+        severity: "high"
+    recommended_constraints:
+      - argument: "url"
+        constraint: "allowed_schemes"
+        value: ["https"]
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "sentry"
+    package: "@modelcontextprotocol/server-sentry"
+    aliases: ["mcp-server-sentry"]
+    category: "observability"
+    risk_level: "medium"
+    known_risks:
+      - type: "pii-in-errors"
+        description: "Error events may contain stack traces with PII and secrets"
+        severity: "high"
+      - type: "source-code-exposure"
+        description: "Source maps and stack frames may expose internal code"
+        severity: "medium"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "cloudflare-workers"
+    package: "@cloudflare/mcp-server-cloudflare"
+    aliases: ["mcp-server-cloudflare", "cloudflare-mcp"]
+    category: "serverless"
+    risk_level: "high"
+    known_risks:
+      - type: "worker-deployment"
+        description: "Can deploy arbitrary JavaScript as Cloudflare Workers"
+        severity: "critical"
+      - type: "dns-manipulation"
+        description: "Can modify DNS records for Cloudflare-managed domains"
+        severity: "high"
+      - type: "kv-access"
+        description: "Can read and write Cloudflare KV stores which may contain secrets"
+        severity: "high"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "openapi"
+    package: "@modelcontextprotocol/server-openapi"
+    aliases: ["mcp-server-openapi", "openapi-mcp"]
+    category: "api-gateway"
+    risk_level: "medium"
+    known_risks:
+      - type: "credential-forwarding"
+        description: "API keys injected at runtime may be logged or forwarded to unexpected endpoints"
+        severity: "high"
+      - type: "ssrf-via-spec"
+        description: "Malicious OpenAPI spec can redirect requests to internal endpoints"
+        severity: "high"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "graphql"
+    package: "@modelcontextprotocol/server-graphql"
+    aliases: ["mcp-server-graphql"]
+    category: "api-gateway"
+    risk_level: "medium"
+    known_risks:
+      - type: "introspection-leak"
+        description: "GraphQL introspection exposes full schema including sensitive types"
+        severity: "medium"
+      - type: "deep-query"
+        description: "Deeply nested queries can cause DoS on the GraphQL server"
+        severity: "medium"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "elasticsearch"
+    package: "@modelcontextprotocol/server-elasticsearch"
+    aliases: ["mcp-server-elasticsearch", "elastic-mcp"]
+    category: "database"
+    risk_level: "high"
+    known_risks:
+      - type: "data-exfiltration"
+        description: "Can query and export all indexed documents including sensitive data"
+        severity: "high"
+      - type: "index-modification"
+        description: "Can create, update, and delete Elasticsearch indices"
+        severity: "high"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "aws-kb-retrieval"
+    package: "@modelcontextprotocol/server-aws-kb-retrieval"
+    aliases: ["mcp-server-aws-kb-retrieval"]
+    category: "cloud-storage"
+    risk_level: "medium"
+    known_risks:
+      - type: "iam-credential-exposure"
+        description: "Uses AWS credentials; overly-permissive IAM role grants broad S3/Bedrock access"
+        severity: "high"
+      - type: "data-exfiltration"
+        description: "Can retrieve and return knowledge base documents stored in S3"
+        severity: "medium"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "neo4j"
+    package: "@modelcontextprotocol/server-neo4j"
+    aliases: ["mcp-server-neo4j"]
+    category: "database"
+    risk_level: "high"
+    known_risks:
+      - type: "cypher-injection"
+        description: "Cypher query execution without parameterization enables injection"
+        severity: "high"
+      - type: "graph-exfiltration"
+        description: "Can enumerate entire graph including sensitive relationship data"
+        severity: "high"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "mysql"
+    package: "@modelcontextprotocol/server-mysql"
+    aliases: ["mcp-server-mysql"]
+    category: "database"
+    risk_level: "critical"
+    known_risks:
+      - type: "sql-injection"
+        description: "Raw SQL execution; dynamic queries without parameterization"
+        severity: "critical"
+      - type: "schema-exfiltration"
+        description: "Can read information_schema to map all tables and columns"
+        severity: "high"
+      - type: "file-read"
+        description: "LOAD DATA INFILE can read arbitrary files if MySQL user has FILE privilege"
+        severity: "high"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "operant-mcp"
+    package: "operant-mcp"
+    aliases: ["operant_mcp", "mcp-server-operant"]
+    category: "security"
+    risk_level: "low"
+    known_risks:
+      - type: "policy-bypass"
+        description: "Security tool misconfiguration could weaken rather than strengthen defenses"
+        severity: "medium"
+    notes: "Security monitoring MCP; review configuration carefully before deploying"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "mcp-security-hub"
+    package: "mcp-security-hub"
+    aliases: ["security-hub-mcp"]
+    category: "security"
+    risk_level: "medium"
+    known_risks:
+      - type: "data-aggregation"
+        description: "Aggregates vulnerability data; output may be used to target systems"
+        severity: "medium"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "vercel"
+    package: "@vercel/mcp-adapter"
+    aliases: ["mcp-server-vercel", "vercel-mcp"]
+    category: "serverless"
+    risk_level: "high"
+    known_risks:
+      - type: "deployment"
+        description: "Can deploy code to production Vercel projects"
+        severity: "critical"
+      - type: "env-var-access"
+        description: "Can read and write environment variables which may contain secrets"
+        severity: "high"
+    last_updated: "2026-03-30"
+    source: "manual-review"
+
+  - name: "heroku"
+    package: "@heroku/mcp-server"
+    aliases: ["mcp-server-heroku", "heroku-mcp"]
+    category: "paas"
+    risk_level: "high"
+    known_risks:
+      - type: "deployment"
+        description: "Can deploy and release code to production Heroku apps"
+        severity: "critical"
+      - type: "config-var-access"
+        description: "Can read Heroku config vars which typically contain production secrets"
+        severity: "critical"
+      - type: "dyno-execution"
+        description: "Can run arbitrary commands via heroku run"
+        severity: "critical"
+    last_updated: "2026-03-30"
+    source: "manual-review"
