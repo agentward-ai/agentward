@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from agentward.deobfuscation.decoder import DeobfuscationPipeline
     from agentward.proxy.judge import LlmJudge
     from agentward.session import SessionMonitor
 
@@ -95,6 +96,7 @@ class StdioProxy:
         role_cache: ToolRoleCache | None = None,
         llm_judge: LlmJudge | None = None,
         session_monitor: "SessionMonitor | None" = None,
+        deobfuscation_pipeline: "DeobfuscationPipeline | None" = None,
     ) -> None:
         self._server_command = server_command
         self._policy_engine = policy_engine
@@ -108,6 +110,7 @@ class StdioProxy:
         self._role_cache = role_cache
         self._llm_judge = llm_judge
         self._session_monitor = session_monitor
+        self._deobfuscation_pipeline = deobfuscation_pipeline
         # Stable session ID for the lifetime of this proxy process
         if session_monitor is not None:
             from agentward.session import SessionMonitor as _SM
@@ -744,6 +747,16 @@ class StdioProxy:
             return EvaluationResult(
                 decision=PolicyDecision.ALLOW,
                 reason="No policy loaded (passthrough mode).",
+            )
+        # If deobfuscation is enabled, evaluate all decoded variants
+        if self._policy_engine.policy.deobfuscation:
+            from agentward.deobfuscation.integration import evaluate_with_deobfuscation
+
+            return evaluate_with_deobfuscation(
+                self._policy_engine,
+                tool_name,
+                arguments,
+                pipeline=self._deobfuscation_pipeline,
             )
         return self._policy_engine.evaluate(tool_name, arguments)
 

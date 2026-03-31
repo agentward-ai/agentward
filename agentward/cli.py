@@ -2280,6 +2280,523 @@ def preinstall(
 
 
 # ---------------------------------------------------------------------------
+# decode command — deobfuscation pipeline
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def decode(
+    value: Annotated[str, typer.Argument(help="Value to decode")],
+    max_depth: Annotated[
+        int,
+        typer.Option("--max-depth", help="Max decode depth"),
+    ] = 5,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON"),
+    ] = False,
+) -> None:
+    """Run a value through the deobfuscation pipeline and show all decoded variants.
+
+    Useful for debugging obfuscated tool call arguments.
+
+    Examples:
+      agentward decode "L2V0Yy9wYXNzd2Q="
+      agentward decode "%2F%65%74%63%2F%70%61%73%73%77%64"
+      agentward decode --json "SGVsbG8gV29ybGQ="
+    """
+    import json as _json
+
+    from agentward.deobfuscation.decoder import DeobfuscationPipeline
+
+    pipeline = DeobfuscationPipeline(max_depth=max_depth)
+    variants = pipeline.decode(value)
+
+    if json_output:
+        import sys as _sys
+
+        data = [
+            {
+                "value": v.value,
+                "encoding": v.encoding,
+                "depth": v.depth,
+                "chain": v.chain,
+            }
+            for v in variants
+        ]
+        _sys.stdout.write(_json.dumps(data, indent=2))
+        _sys.stdout.write("\n")
+        return
+
+    if len(variants) == 1:
+        _console.print("[dim]No encoded variants detected.[/dim]", highlight=False)
+        return
+
+    _console.print(
+        f"[bold #5eead4]Deobfuscation results[/bold #5eead4] for: [dim]{value!r}[/dim]",
+        highlight=False,
+    )
+    for v in variants[1:]:
+        chain_str = " → ".join(v.chain) if v.chain else v.encoding
+        _console.print(
+            f"  [bold]{chain_str}[/bold] (depth {v.depth}): {v.value!r}",
+            highlight=False,
+        )
+
+
+# ---------------------------------------------------------------------------
+# registry sub-app
+# ---------------------------------------------------------------------------
+
+registry_app = typer.Typer(name="registry", help="MCP server risk registry commands.")
+app.add_typer(registry_app, name="registry")
+
+
+@registry_app.command("list")
+def registry_list(
+    category: Annotated[
+        Optional[str],
+        typer.Option("--category", "-c", help="Filter by category"),
+    ] = None,
+    min_risk: Annotated[
+        Optional[str],
+        typer.Option("--min-risk", help="Minimum risk level (low/medium/high/critical)"),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON"),
+    ] = False,
+) -> None:
+    """List all servers in the risk registry."""
+    import json as _json
+    import sys as _sys
+
+    from rich.table import Table
+
+    from agentward.registry import ServerRegistry
+
+    reg = ServerRegistry()
+    servers = reg.search(category=category, min_risk=min_risk)  # type: ignore[arg-type]
+    servers = sorted(servers, key=lambda e: (-__import__("agentward.registry.models", fromlist=["RISK_LEVEL_ORDER"]).RISK_LEVEL_ORDER.get(e.risk_level, 0), e.name))
+
+    if json_output:
+        data = [
+            {
+                "name": s.name,
+                "package": s.package,
+                "category": s.category,
+                "risk_level": s.risk_level,
+                "aliases": s.aliases,
+                "known_risks": [
+                    {"type": r.type, "severity": r.severity, "description": r.description}
+                    for r in s.known_risks
+                ],
+            }
+            for s in servers
+        ]
+        _sys.stdout.write(_json.dumps(data, indent=2))
+        _sys.stdout.write("\n")
+        return
+
+    table = Table(title=f"MCP Server Risk Registry ({len(servers)} servers)")
+    table.add_column("Name", style="bold")
+    table.add_column("Category")
+    table.add_column("Risk Level")
+    table.add_column("Top Risk Type")
+
+    _risk_colors = {"critical": "bold red", "high": "#ff6b35", "medium": "yellow", "low": "green"}
+    for s in servers:
+        color = _risk_colors.get(s.risk_level, "white")
+        top_risk = s.known_risks[0].type if s.known_risks else "-"
+        table.add_row(
+            s.name,
+            s.category,
+            f"[{color}]{s.risk_level}[/{color}]",
+            top_risk,
+        )
+    _console.print(table)
+
+
+@registry_app.command("lookup")
+def registry_lookup(
+    server_name: Annotated[str, typer.Argument(help="Server name, package, or alias")],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON"),
+    ] = False,
+) -> None:
+    """Show full risk details for a server."""
+    import json as _json
+    import sys as _sys
+
+    from agentward.registry import ServerRegistry
+
+    reg = ServerRegistry()
+    entry = reg.lookup(server_name)
+    if entry is None:
+        _console.print(
+            f"[bold red]Not found:[/bold red] '{server_name}' is not in the registry.",
+            highlight=False,
+        )
+        raise typer.Exit(1)
+
+    if json_output:
+        data = {
+            "name": entry.name,
+            "package": entry.package,
+            "category": entry.category,
+            "risk_level": entry.risk_level,
+            "aliases": entry.aliases,
+            "known_risks": [
+                {"type": r.type, "severity": r.severity, "description": r.description, "cve": r.cve}
+                for r in entry.known_risks
+            ],
+            "recommended_constraints": [
+                {"argument": c.argument, "constraint": c.constraint, "value": c.value}
+                for c in entry.recommended_constraints
+            ],
+            "notes": entry.notes,
+            "last_updated": entry.last_updated,
+            "source": entry.source,
+        }
+        _sys.stdout.write(_json.dumps(data, indent=2))
+        _sys.stdout.write("\n")
+        return
+
+    _risk_colors = {"critical": "bold red", "high": "#ff6b35", "medium": "yellow", "low": "green"}
+    color = _risk_colors.get(entry.risk_level, "white")
+    _console.print(
+        f"\n[bold]{entry.name}[/bold]  [{color}]{entry.risk_level.upper()}[/{color}]",
+        highlight=False,
+    )
+    _console.print(f"  Package: {entry.package}", highlight=False)
+    _console.print(f"  Category: {entry.category}", highlight=False)
+    if entry.aliases:
+        _console.print(f"  Aliases: {', '.join(entry.aliases)}", highlight=False)
+    if entry.notes:
+        _console.print(f"  Notes: {entry.notes}", highlight=False)
+
+    if entry.known_risks:
+        _console.print("\n  [bold]Known Risks:[/bold]", highlight=False)
+        for r in entry.known_risks:
+            sev_color = _risk_colors.get(r.severity, "white")
+            _console.print(
+                f"    [{sev_color}]{r.severity}[/{sev_color}]  {r.type}: {r.description}",
+                highlight=False,
+            )
+
+    if entry.recommended_constraints:
+        _console.print("\n  [bold]Recommended Constraints:[/bold]", highlight=False)
+        for c in entry.recommended_constraints:
+            _console.print(
+                f"    argument={c.argument!r}  {c.constraint}: {c.value}",
+                highlight=False,
+            )
+
+
+@registry_app.command("check")
+def registry_check_cmd(
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON"),
+    ] = False,
+) -> None:
+    """Scan current MCP config and flag servers by risk level."""
+    import json as _json
+    import sys as _sys
+
+    from agentward.registry import ServerRegistry
+    from agentward.scan.config import discover_configs, parse_config_file
+
+    reg = ServerRegistry()
+    config_paths = discover_configs()
+
+    findings = []
+    for config_path in config_paths:
+        try:
+            servers = parse_config_file(config_path)
+            for server in servers:
+                entry = reg.lookup(server.name)
+                risk = entry.risk_level if entry else "unknown"
+                findings.append({
+                    "server": server.name,
+                    "config": str(config_path),
+                    "risk_level": risk,
+                    "in_registry": entry is not None,
+                    "top_risk": entry.known_risks[0].type if entry and entry.known_risks else None,
+                })
+        except Exception:
+            pass
+
+    if json_output:
+        _sys.stdout.write(_json.dumps(findings, indent=2))
+        _sys.stdout.write("\n")
+        return
+
+    if not findings:
+        _console.print("[dim]No MCP servers found in config files.[/dim]", highlight=False)
+        return
+
+    _risk_colors = {"critical": "bold red", "high": "#ff6b35", "medium": "yellow", "low": "green", "unknown": "dim"}
+    for f in findings:
+        color = _risk_colors.get(f["risk_level"], "white")
+        registry_str = "" if f["in_registry"] else " [dim](not in registry)[/dim]"
+        _console.print(
+            f"  [{color}]{f['risk_level'].upper()}[/{color}]  {f['server']}{registry_str}",
+            highlight=False,
+        )
+
+
+@registry_app.command("export")
+def registry_export(
+    format: Annotated[
+        str,
+        typer.Option("--format", "-f", help="Export format: json or yaml"),
+    ] = "json",
+) -> None:
+    """Export registry data to stdout."""
+    import json as _json
+    import sys as _sys
+
+    from agentward.registry import ServerRegistry
+
+    reg = ServerRegistry()
+    servers = reg.all_servers()
+
+    if format.lower() == "yaml":
+        import yaml
+
+        data = {
+            "servers": [
+                {
+                    "name": s.name,
+                    "package": s.package,
+                    "aliases": s.aliases,
+                    "category": s.category,
+                    "risk_level": s.risk_level,
+                    "known_risks": [
+                        {"type": r.type, "description": r.description, "severity": r.severity}
+                        for r in s.known_risks
+                    ],
+                }
+                for s in servers
+            ]
+        }
+        _sys.stdout.write(yaml.dump(data, default_flow_style=False))
+    else:
+        data_list = [
+            {
+                "name": s.name,
+                "package": s.package,
+                "category": s.category,
+                "risk_level": s.risk_level,
+                "aliases": s.aliases,
+                "known_risks": [
+                    {"type": r.type, "severity": r.severity, "description": r.description}
+                    for r in s.known_risks
+                ],
+            }
+            for s in servers
+        ]
+        _sys.stdout.write(_json.dumps(data_list, indent=2))
+        _sys.stdout.write("\n")
+
+
+# ---------------------------------------------------------------------------
+# baseline sub-app
+# ---------------------------------------------------------------------------
+
+baseline_app = typer.Typer(name="baseline", help="Behavioral baseline tracking commands.")
+app.add_typer(baseline_app, name="baseline")
+
+
+@baseline_app.command("show")
+def baseline_show(
+    server_name: Annotated[str, typer.Argument(help="Server name")],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON"),
+    ] = False,
+) -> None:
+    """Show the recorded baseline for a server."""
+    import json as _json
+    import sys as _sys
+
+    from agentward.baseline import BaselineTracker
+
+    tracker = BaselineTracker()
+    baseline = tracker.load_baseline(server_name)
+
+    if baseline is None:
+        _console.print(
+            f"[bold red]No baseline found[/bold red] for server '{server_name}'.",
+            highlight=False,
+        )
+        raise typer.Exit(1)
+
+    if json_output:
+        from agentward.baseline.tracker import _baseline_to_dict
+
+        _sys.stdout.write(_json.dumps(_baseline_to_dict(baseline), indent=2))
+        _sys.stdout.write("\n")
+        return
+
+    _console.print(
+        f"\n[bold]Baseline:[/bold] {baseline.server_name}  "
+        f"(total calls: {baseline.total_calls})",
+        highlight=False,
+    )
+    for tool_name, tb in baseline.tools.items():
+        _console.print(
+            f"  [bold]{tool_name}[/bold]: {tb.call_count} calls",
+            highlight=False,
+        )
+        for arg_name, patterns in tb.arg_pattern_distributions.items():
+            dist = ", ".join(f"{p}:{c}" for p, c in patterns.items())
+            _console.print(f"    {arg_name}: {dist}", highlight=False)
+
+
+@baseline_app.command("reset")
+def baseline_reset(
+    server_name: Annotated[str, typer.Argument(help="Server name")],
+) -> None:
+    """Delete the recorded baseline for a server."""
+    from agentward.baseline import BaselineTracker
+
+    tracker = BaselineTracker()
+    tracker.clear_baseline(server_name)
+    _console.print(
+        f"[bold #5eead4]Cleared[/bold #5eead4] baseline for '{server_name}'.",
+        highlight=False,
+    )
+
+
+@baseline_app.command("list")
+def baseline_list() -> None:
+    """List all servers with saved baselines."""
+    from agentward.baseline import BaselineTracker
+
+    tracker = BaselineTracker()
+    names = tracker.list_baselines()
+    if not names:
+        _console.print("[dim]No baselines saved yet.[/dim]", highlight=False)
+        return
+    for name in names:
+        _console.print(f"  {name}", highlight=False)
+
+
+@baseline_app.command("export")
+def baseline_export(
+    server_name: Annotated[str, typer.Argument(help="Server name")],
+    format: Annotated[
+        str,
+        typer.Option("--format", "-f", help="Export format: json"),
+    ] = "json",
+) -> None:
+    """Export baseline data to stdout."""
+    import json as _json
+    import sys as _sys
+
+    from agentward.baseline import BaselineTracker
+    from agentward.baseline.tracker import _baseline_to_dict
+
+    tracker = BaselineTracker()
+    baseline = tracker.load_baseline(server_name)
+    if baseline is None:
+        _console.print(
+            f"[bold red]No baseline found[/bold red] for server '{server_name}'.",
+            highlight=False,
+        )
+        raise typer.Exit(1)
+
+    _sys.stdout.write(_json.dumps(_baseline_to_dict(baseline), indent=2))
+    _sys.stdout.write("\n")
+
+
+@baseline_app.command("check")
+def baseline_check_cmd(
+    server_name: Annotated[str, typer.Argument(help="Server name")],
+    tool: Annotated[str, typer.Option("--tool", "-t", help="Tool name to check")],
+    args: Annotated[
+        Optional[str],
+        typer.Option("--args", "-a", help="JSON-encoded arguments dict"),
+    ] = None,
+) -> None:
+    """Check a hypothetical tool call against the baseline and show anomaly score."""
+    import json as _json
+
+    from agentward.baseline import AnomalyDetector, BaselineTracker
+
+    tracker = BaselineTracker()
+    detector = AnomalyDetector(tracker)
+
+    arguments: dict = {}
+    if args:
+        try:
+            arguments = _json.loads(args)
+        except _json.JSONDecodeError as e:
+            _console.print(
+                f"[bold red]Invalid JSON args:[/bold red] {e}",
+                highlight=False,
+            )
+            raise typer.Exit(1) from None
+
+    result = detector.score(server_name, tool, arguments)
+    if not result.baseline_exists:
+        _console.print(
+            f"[dim]No baseline for '{server_name}'. Score: 0.0 (no data)[/dim]",
+            highlight=False,
+        )
+        return
+
+    color = "green" if result.score < 0.3 else ("#ff6b35" if result.score < 0.8 else "bold red")
+    _console.print(
+        f"[{color}]Anomaly score: {result.score:.2f}[/{color}]"
+        + (" (ANOMALOUS)" if result.is_anomalous else " (normal)"),
+        highlight=False,
+    )
+    for detail in result.details:
+        _console.print(
+            f"  +{detail.score_contribution:.1f}  [{detail.type}]  {detail.description}",
+            highlight=False,
+        )
+
+
+@baseline_app.command("record")
+def baseline_record(
+    server_name: Annotated[str, typer.Argument(help="Server name")],
+    tool: Annotated[str, typer.Option("--tool", "-t", help="Tool name")],
+    args: Annotated[
+        Optional[str],
+        typer.Option("--args", "-a", help="JSON-encoded arguments dict"),
+    ] = None,
+) -> None:
+    """Record a tool call into the baseline and save to disk."""
+    import json as _json
+
+    from agentward.baseline import BaselineTracker
+
+    tracker = BaselineTracker()
+    arguments: dict = {}
+    if args:
+        try:
+            arguments = _json.loads(args)
+        except _json.JSONDecodeError as e:
+            _console.print(
+                f"[bold red]Invalid JSON args:[/bold red] {e}",
+                highlight=False,
+            )
+            raise typer.Exit(1) from None
+
+    tracker.record_call(server_name, tool, arguments)
+    path = tracker.save_baseline(server_name)
+    _console.print(
+        f"[bold #5eead4]Recorded[/bold #5eead4] {server_name}/{tool} and saved to {path}",
+        highlight=False,
+    )
+
+
+# ---------------------------------------------------------------------------
 # test command — policy regression testing
 # ---------------------------------------------------------------------------
 from agentward.testing.cli import app as _testing_app  # noqa: E402

@@ -1000,3 +1000,47 @@ class AgentWardPolicy(BaseModel):
             "constraints before being allowed."
         ),
     )
+    deobfuscation: bool = Field(
+        default=True,
+        description=(
+            "When True, run tool call arguments through the deobfuscation pipeline "
+            "before policy evaluation. Detects base64, hex, URL-encoded, unicode, "
+            "ROT13, and reversed-string encoding used to smuggle malicious values past "
+            "string-matching constraints."
+        ),
+    )
+    registry_check: bool = Field(
+        default=True,
+        description=(
+            "When True, cross-reference tool servers against the built-in MCP risk "
+            "registry and surface known risk metadata in audit events."
+        ),
+    )
+    warn_unregistered: bool = Field(
+        default=False,
+        description=(
+            "When True, emit a warning in the audit log when a server is called that "
+            "does not appear in the risk registry."
+        ),
+    )
+    baseline_check: bool = Field(
+        default=False,
+        description=(
+            "Opt-in behavioral baseline anomaly detection. When True, compare each "
+            "tool call against recorded behavioral baselines and log or block anomalies."
+        ),
+    )
+    baseline_warn_threshold: float = Field(
+        default=0.3,
+        description=(
+            "Anomaly score (0.0–1.0) at or above which a tool call is flagged as "
+            "suspicious in the audit log."
+        ),
+    )
+    baseline_block_threshold: float = Field(
+        default=0.8,
+        description=(
+            "Anomaly score (0.0–1.0) at or above which a tool call is blocked. "
+            "Requires baseline_check: true."
+        ),
+    )
