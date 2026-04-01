@@ -28,12 +28,18 @@ def _strip_package_prefix(name: str) -> str:
     Examples:
         "@modelcontextprotocol/server-filesystem" → "filesystem"
         "mcp-server-github" → "github"
+        "github-mcp-server" → "github"
         "filesystem" → "filesystem"
     """
-    m = _PACKAGE_NAME_RE.match(name.lower().strip())
-    if m:
-        return m.group(1)
-    return name.lower().strip()
+    cleaned = name.lower().strip()
+    m = _PACKAGE_NAME_RE.match(cleaned)
+    base = m.group(1) if m else cleaned
+    # Also strip trailing -mcp-server / -mcp / -server suffixes
+    for suffix in ("-mcp-server", "-mcp", "-server"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    return base
 
 
 def _parse_entry(raw: dict[str, Any]) -> ServerEntry:
