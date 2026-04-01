@@ -1181,7 +1181,11 @@ class TestSessionMonitor:
 
 
 class TestLlmJudgeDegradation:
-    """LLM judge behavior — SDK is a core dependency so always available."""
+    """LLM judge behavior — requires agentward[judge] optional dependency."""
+
+    @pytest.fixture(autouse=True)
+    def _require_anthropic(self):
+        pytest.importorskip("anthropic", reason="requires pip install agentward[judge]")
 
     def _make_judge(self, **kwargs):
         from agentward.proxy.judge import LlmJudge

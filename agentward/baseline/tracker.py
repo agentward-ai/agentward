@@ -91,35 +91,14 @@ class BaselineTracker:
                 server_name=server_name,
                 recorded_at=record.timestamp,
             )
-        baseline = self._baselines[server_name]
-        baseline.total_calls += 1
-
-        tool_bl = baseline.tools.setdefault(
-            record.tool_name, ToolBaseline(tool_name=record.tool_name)
-        )
-        tool_bl.call_count += 1
-
-        # Track arg name sets (deduplicated by frozenset equality)
-        arg_set = frozenset(record.arg_names)
-        existing_sets = tool_bl.get_frozensets()
-        if arg_set not in existing_sets:
-            tool_bl.arg_name_sets.append(record.arg_names)
-
-        # Update pattern distributions
-        for arg_name, pattern in record.arg_patterns.items():
-            dist = tool_bl.arg_pattern_distributions.setdefault(arg_name, {})
-            dist[pattern] = dist.get(pattern, 0) + 1
-
-        # Update time distributions
-        tool_bl.hourly_distribution[record.hour_of_day] = (
-            tool_bl.hourly_distribution.get(record.hour_of_day, 0) + 1
-        )
-        tool_bl.daily_distribution[record.day_of_week] = (
-            tool_bl.daily_distribution.get(record.day_of_week, 0) + 1
-        )
+        _merge_record_into_baseline(self._baselines[server_name], record)
 
     def save_baseline(self, server_name: str) -> Path:
         """Flush in-memory baseline to disk as a JSON file.
+
+        Loads any existing on-disk baseline and merges in-memory records on top
+        of it, so successive CLI invocations accumulate data rather than
+        overwriting it.
 
         Creates the storage directory if it does not exist.
 
@@ -132,8 +111,20 @@ class BaselineTracker:
         self._storage_dir.mkdir(parents=True, exist_ok=True)
         path = self._storage_dir / f"{server_name}.json"
 
-        baseline = self._baselines.get(server_name)
-        if baseline is None:
+        # Load existing on-disk baseline and merge in-memory records on top.
+        on_disk = self.load_baseline(server_name)
+        mem_baseline = self._baselines.get(server_name)
+
+        if on_disk is not None and mem_baseline is not None:
+            # Merge: replay in-memory records onto the on-disk baseline.
+            for record in self._records.get(server_name, []):
+                _merge_record_into_baseline(on_disk, record)
+            baseline = on_disk
+        elif on_disk is not None:
+            baseline = on_disk
+        elif mem_baseline is not None:
+            baseline = mem_baseline
+        else:
             baseline = ServerBaseline(server_name=server_name, recorded_at=time.time())
 
         # Serialise to JSON-safe dict
@@ -239,6 +230,37 @@ class BaselineTracker:
             return "short_string"
         # Fallback for other types (dict, list, etc.)
         return "json_string"
+
+
+# ---------------------------------------------------------------------------
+# Record merge helper (used by both in-memory update and save-time merge)
+# ---------------------------------------------------------------------------
+
+
+def _merge_record_into_baseline(baseline: ServerBaseline, record: ToolCallRecord) -> None:
+    """Merge a single ToolCallRecord into a ServerBaseline in place."""
+    baseline.total_calls += 1
+
+    tool_bl = baseline.tools.setdefault(
+        record.tool_name, ToolBaseline(tool_name=record.tool_name)
+    )
+    tool_bl.call_count += 1
+
+    arg_set = frozenset(record.arg_names)
+    existing_sets = tool_bl.get_frozensets()
+    if arg_set not in existing_sets:
+        tool_bl.arg_name_sets.append(record.arg_names)
+
+    for arg_name, pattern in record.arg_patterns.items():
+        dist = tool_bl.arg_pattern_distributions.setdefault(arg_name, {})
+        dist[pattern] = dist.get(pattern, 0) + 1
+
+    tool_bl.hourly_distribution[record.hour_of_day] = (
+        tool_bl.hourly_distribution.get(record.hour_of_day, 0) + 1
+    )
+    tool_bl.daily_distribution[record.day_of_week] = (
+        tool_bl.daily_distribution.get(record.day_of_week, 0) + 1
+    )
 
 
 # ---------------------------------------------------------------------------
