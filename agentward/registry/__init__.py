@@ -11,6 +11,11 @@ from agentward.registry.models import (
     RiskLevel,
     ServerEntry,
 )
+from agentward.registry.npm_advisories import (
+    NpmAdvisory,
+    NpmAdvisoryRegistry,
+    NpmCheckResult,
+)
 from agentward.registry.registry import ServerRegistry
 
 __all__ = [
@@ -19,4 +24,7 @@ __all__ = [
     "KnownRisk",
     "RecommendedConstraint",
     "RiskLevel",
+    "NpmAdvisoryRegistry",
+    "NpmAdvisory",
+    "NpmCheckResult",
 ]
