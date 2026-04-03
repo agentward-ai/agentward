@@ -1,0 +1,261 @@
+advisories:
+  - package: "axios"
+    compromised_versions: ["1.14.1", "0.30.4"]
+    date: "2026-03-25"
+    actor: "UNC1069 (DPRK)"
+    attack_type: "maintainer-account-hijack"
+    payload: "WAVESHAPER.V2 RAT via postinstall hook in plain-crypto-js dependency"
+    severity: "critical"
+    notes: >
+      Compromised npm maintainer account used to publish malicious versions.
+      plain-crypto-js 4.2.1 added as dependency, which executes a XOR-obfuscated
+      dropper via postinstall hook that self-deletes after execution.
+
+  - package: "plain-crypto-js"
+    compromised_versions: ["4.2.1"]
+    date: "2026-03-25"
+    actor: "UNC1069 (DPRK)"
+    attack_type: "malicious-dependency"
+    payload: "XOR-obfuscated dropper via setup.js postinstall hook"
+    severity: "critical"
+    notes: >
+      Injected as a dependency of compromised axios versions. The postinstall
+      script (setup.js) uses a position-dependent XOR cipher (key[7 * i^2 % 10])
+      to decode and execute a WAVESHAPER.V2 remote access trojan, then self-deletes.
+
+  - package: "event-stream"
+    compromised_versions: ["3.3.6"]
+    date: "2018-11-26"
+    actor: "right9ctrl (social engineering)"
+    attack_type: "maintainer-social-engineering"
+    payload: "Cryptocurrency wallet theft targeting Copay Bitcoin wallet app"
+    severity: "critical"
+    notes: >
+      Attacker convinced original maintainer to transfer ownership, then published
+      a new version with a malicious flatmap-stream dependency that targeted the
+      Copay Bitcoin wallet app specifically.
+
+  - package: "ua-parser-js"
+    compromised_versions: ["0.7.29", "0.8.0", "1.0.0"]
+    date: "2021-10-22"
+    actor: "Unknown"
+    attack_type: "maintainer-account-hijack"
+    payload: "Cryptominer + credential stealer (malicious preinstall.sh)"
+    severity: "critical"
+    notes: >
+      Attacker gained access to maintainer's npm account and published three
+      malicious versions simultaneously. The preinstall script downloaded and
+      executed a cryptominer and credential stealer.
+
+  - package: "colors"
+    compromised_versions: ["1.4.1", "1.4.2"]
+    date: "2022-01-08"
+    actor: "Marak (maintainer sabotage)"
+    attack_type: "maintainer-sabotage"
+    payload: "Infinite loop causing denial of service (protestware)"
+    severity: "high"
+    notes: >
+      Original maintainer intentionally published broken versions with an infinite
+      loop in protest of unpaid open-source work. Affected any application using
+      these versions at startup.
+
+  - package: "faker"
+    compromised_versions: ["6.6.6"]
+    date: "2022-01-05"
+    actor: "Marak (maintainer sabotage)"
+    attack_type: "maintainer-sabotage"
+    payload: "Infinite loop causing denial of service (protestware)"
+    severity: "high"
+    notes: >
+      Same maintainer as colors incident. Published a version that outputs
+      "LIBERTY LIBERTY LIBERTY" in an infinite loop.
+
+  - package: "node-ipc"
+    compromised_versions: ["10.1.1", "10.1.2"]
+    date: "2022-03-16"
+    actor: "RIAEvangelist (maintainer sabotage)"
+    attack_type: "maintainer-sabotage"
+    payload: "File deletion for users in Russia/Belarus (geopolitical protestware)"
+    severity: "critical"
+    notes: >
+      Maintainer added code that checked user's IP geolocation and overwrote
+      files with heart emojis for users located in Russia or Belarus.
+
+  - package: "ctx"
+    compromised_versions: ["0.1.4"]
+    date: "2018-05-22"
+    actor: "Unknown"
+    attack_type: "typosquatting"
+    payload: "Environment variable exfiltration via HTTP POST"
+    severity: "critical"
+    notes: >
+      Published to target developers who mistyped 'ctx' (a popular Go framework).
+      Collected and exfiltrated all environment variables to a remote server.
+
+  - package: "crossenv"
+    compromised_versions: ["1.0.0"]
+    date: "2018-07-12"
+    actor: "Unknown"
+    attack_type: "typosquatting"
+    payload: "Environment variable exfiltration"
+    severity: "critical"
+    notes: >
+      Typosquat targeting 'cross-env' (note missing hyphen). Collected npm tokens
+      and other environment variables.
+
+  - package: "eslint-scope"
+    compromised_versions: ["3.7.2"]
+    date: "2018-07-12"
+    actor: "Unknown (compromised npm account)"
+    attack_type: "maintainer-account-hijack"
+    payload: "npm token exfiltration — stole tokens from .npmrc"
+    severity: "critical"
+    notes: >
+      Compromised the npm account of a maintainer who had transitive ownership
+      of many packages. The malicious version stole .npmrc tokens from developers.
+
+  - package: "bootstrap-sass"
+    compromised_versions: ["3.2.0.3"]
+    date: "2019-04-05"
+    actor: "Unknown"
+    attack_type: "malicious-version"
+    payload: "Remote code execution backdoor"
+    severity: "critical"
+    notes: >
+      A malicious version was published containing a backdoor that executed
+      arbitrary Ruby code received from a remote server.
+
+  - package: "flatmap-stream"
+    compromised_versions: ["0.1.1"]
+    date: "2018-11-26"
+    actor: "right9ctrl"
+    attack_type: "malicious-dependency"
+    payload: "Cryptocurrency wallet theft (part of event-stream attack chain)"
+    severity: "critical"
+    notes: >
+      The actual payload delivery package for the event-stream attack. Decrypted
+      and executed a Bitcoin wallet stealing script when specific Copay app files
+      were present.
+
+  - package: "noblox.js-proxy"
+    compromised_versions: ["4.0.0", "4.0.1"]
+    date: "2021-10-27"
+    actor: "Unknown"
+    attack_type: "typosquatting"
+    payload: "Discord token theft and remote access trojan"
+    severity: "critical"
+    notes: >
+      Typosquat targeting the legitimate 'noblox.js' package. Stole Discord tokens
+      and installed a RAT.
+
+  - package: "twilio-npm"
+    compromised_versions: ["1.0.0"]
+    date: "2020-08-22"
+    actor: "Unknown"
+    attack_type: "typosquatting"
+    payload: "Credential exfiltration"
+    severity: "critical"
+    notes: >
+      Typosquat targeting 'twilio'. Published a single version that exfiltrated
+      environment variables containing API keys.
+
+  - package: "discord.js-token"
+    compromised_versions: ["1.0.0"]
+    date: "2021-03-10"
+    actor: "Unknown"
+    attack_type: "typosquatting"
+    payload: "Discord token theft"
+    severity: "high"
+
+  - package: "jest-next-dynamic"
+    compromised_versions: ["1.0.1"]
+    date: "2022-06-17"
+    actor: "Unknown"
+    attack_type: "dependency-confusion"
+    payload: "Environment variable exfiltration"
+    severity: "high"
+    notes: >
+      Dependency confusion attack. Published to npm with the same name as an
+      internal package used by many organizations.
+
+  - package: "peacenotwar"
+    compromised_versions: ["9.1.1", "9.1.2"]
+    date: "2022-03-15"
+    actor: "RIAEvangelist"
+    attack_type: "maintainer-sabotage"
+    payload: "File deletion (geopolitical protestware, same author as node-ipc)"
+    severity: "high"
+
+  - package: "rc"
+    compromised_versions: ["1.2.9"]
+    date: "2022-11-04"
+    actor: "Unknown"
+    attack_type: "malicious-version"
+    payload: "Credential harvesting via malicious postinstall"
+    severity: "critical"
+    notes: >
+      A critical package used transitively by thousands of projects. A malicious
+      version was briefly published before being taken down.
+
+  - package: "coa"
+    compromised_versions: ["2.0.3", "2.0.4", "2.1.1", "2.1.3", "3.0.1"]
+    date: "2021-11-04"
+    actor: "Unknown (hijacked npm account)"
+    attack_type: "maintainer-account-hijack"
+    payload: "Malicious postinstall script"
+    severity: "critical"
+    notes: >
+      Part of a coordinated attack that also targeted 'rc' and 'babel-eslint'.
+      Multiple versions published in quick succession.
+
+  - package: "babel-eslint"
+    compromised_versions: ["10.1.1"]
+    date: "2021-11-04"
+    actor: "Unknown (hijacked npm account)"
+    attack_type: "maintainer-account-hijack"
+    payload: "Malicious postinstall script (part of coa/rc coordinated attack)"
+    severity: "critical"
+
+  - package: "pytransitions"
+    compromised_versions: ["0.9.0"]
+    date: "2022-04-20"
+    actor: "Unknown"
+    attack_type: "typosquatting"
+    payload: "Environment variable exfiltration"
+    severity: "high"
+    notes: Typosquat targeting 'transitions' Python package but published to npm.
+
+  - package: "passport-saml"
+    compromised_versions: ["3.2.3"]
+    date: "2023-01-12"
+    actor: "Unknown"
+    attack_type: "malicious-version"
+    payload: "Remote code execution via malicious SAML parser"
+    severity: "critical"
+
+  - package: "lodash-utils"
+    compromised_versions: ["1.0.0"]
+    date: "2023-06-08"
+    actor: "Unknown"
+    attack_type: "typosquatting"
+    payload: "Credential harvesting"
+    severity: "high"
+    notes: Typosquat targeting 'lodash'. Exfiltrated environment variables.
+
+  - package: "require-port"
+    compromised_versions: ["1.0.0"]
+    date: "2023-08-15"
+    actor: "Unknown"
+    attack_type: "typosquatting"
+    payload: "Token exfiltration"
+    severity: "high"
+    notes: Typosquat targeting 'require-port'.
+
+  - package: "ethers-js"
+    compromised_versions: ["1.0.0"]
+    date: "2023-11-02"
+    actor: "Unknown"
+    attack_type: "typosquatting"
+    payload: "Cryptocurrency wallet private key theft"
+    severity: "critical"
+    notes: Typosquat targeting 'ethers'. Targeted crypto wallets.

@@ -2547,6 +2547,147 @@ def registry_check_cmd(
         )
 
 
+@registry_app.command("check-npm")
+def registry_check_npm(
+    path: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to node_modules directory or project root.",
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
+        ),
+    ],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON"),
+    ] = False,
+) -> None:
+    """Scan node_modules against the known compromised npm packages registry.
+
+    Checks installed packages against the built-in advisory database of known
+    supply chain attacks (axios, event-stream, ua-parser-js, colors, etc.).
+
+    Exit codes:
+      0 — No matches
+      2 — Critical compromised package found
+
+    Examples:
+      agentward registry check-npm ~/project/
+      agentward registry check-npm --json ~/project/ > advisory.json
+    """
+    import json as _json
+    import sys as _sys
+
+    from rich.table import Table
+
+    from agentward.registry import NpmAdvisoryRegistry
+
+    reg = NpmAdvisoryRegistry()
+    result = reg.scan_node_modules(path)
+
+    if json_output:
+        data = [
+            {
+                "package_name": pkg,
+                "version_found": ver,
+                "severity": adv.severity,
+                "date": adv.date,
+                "actor": adv.actor,
+                "attack_type": adv.attack_type,
+                "payload": adv.payload,
+            }
+            for pkg, ver, adv in result.matches
+        ]
+        _sys.stdout.write(_json.dumps(data, indent=2))
+        _sys.stdout.write("\n")
+    else:
+        if not result.matches:
+            _console.print(
+                "[#00ff88]✓[/#00ff88] No known compromised npm packages found.",
+                highlight=False,
+            )
+        else:
+            _risk_colors = {"critical": "bold red", "high": "#ff6b35", "medium": "yellow", "low": "green"}
+            table = Table(title="Known Compromised npm Packages Found")
+            table.add_column("Package")
+            table.add_column("Version")
+            table.add_column("Severity")
+            table.add_column("Attack Type")
+            table.add_column("Date")
+            for pkg, ver, adv in result.matches:
+                color = _risk_colors.get(adv.severity, "white")
+                table.add_row(
+                    pkg,
+                    ver or "unknown",
+                    f"[{color}]{adv.severity}[/{color}]",
+                    adv.attack_type,
+                    adv.date,
+                )
+            _console.print(table)
+
+    if result.has_critical:
+        raise typer.Exit(2)
+
+
+@registry_app.command("list-advisories")
+def registry_list_advisories(
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON"),
+    ] = False,
+) -> None:
+    """List all known compromised npm packages in the advisory database."""
+    import json as _json
+    import sys as _sys
+
+    from rich.table import Table
+
+    from agentward.registry import NpmAdvisoryRegistry
+
+    reg = NpmAdvisoryRegistry()
+    advisories = reg.all_advisories()
+
+    if json_output:
+        data = [
+            {
+                "package": a.package,
+                "compromised_versions": a.compromised_versions,
+                "date": a.date,
+                "actor": a.actor,
+                "attack_type": a.attack_type,
+                "severity": a.severity,
+                "payload": a.payload,
+            }
+            for a in advisories
+        ]
+        _sys.stdout.write(_json.dumps(data, indent=2))
+        _sys.stdout.write("\n")
+        return
+
+    _risk_colors = {"critical": "bold red", "high": "#ff6b35", "medium": "yellow", "low": "green"}
+    table = Table(title=f"npm Advisory Database ({len(advisories)} entries)")
+    table.add_column("Package", style="bold")
+    table.add_column("Date")
+    table.add_column("Severity")
+    table.add_column("Attack Type")
+    table.add_column("Versions")
+    for a in advisories:
+        color = _risk_colors.get(a.severity, "white")
+        versions = ", ".join(a.compromised_versions[:3])
+        if len(a.compromised_versions) > 3:
+            versions += f" +{len(a.compromised_versions) - 3} more"
+        table.add_row(
+            a.package,
+            a.date,
+            f"[{color}]{a.severity}[/{color}]",
+            a.attack_type,
+            versions,
+        )
+    _console.print(table)
+
+
 @registry_app.command("export")
 def registry_export(
     format: Annotated[
@@ -2600,6 +2741,360 @@ def registry_export(
         ]
         _sys.stdout.write(_json.dumps(data_list, indent=2))
         _sys.stdout.write("\n")
+
+
+# ---------------------------------------------------------------------------
+# scan-npm command
+# ---------------------------------------------------------------------------
+
+
+@app.command("scan-npm")
+def scan_npm(
+    path: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to node_modules directory or project root.",
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
+        ),
+    ],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output findings as JSON."),
+    ] = False,
+    fail_on_warn: Annotated[
+        bool,
+        typer.Option("--fail-on-warn", help="Exit 1 for WARNING findings (default: only CRITICAL exits non-zero)."),
+    ] = False,
+) -> None:
+    """Scan a node_modules directory for malicious postinstall hooks.
+
+    Detects the exact attack pattern from the axios supply chain compromise
+    (DPRK actor UNC1069, March 2026): XOR-obfuscated dropper via postinstall.
+
+    Exit codes:
+      0 — No findings
+      1 — WARNING findings only (requires --fail-on-warn)
+      2 — CRITICAL findings detected
+
+    Examples:
+      agentward scan-npm ./node_modules
+      agentward scan-npm ~/project/
+      agentward scan-npm --json ~/project/ > report.json
+    """
+    import json as _json
+    import sys as _sys
+
+    from rich.table import Table
+
+    from agentward.scan.npm_scanner import NpmScanResult, scan_npm_directory
+
+    result = scan_npm_directory(path)
+
+    if json_output:
+        data = {
+            "root_dir": result.root_dir,
+            "packages_scanned": result.packages_scanned,
+            "critical_count": result.critical_count,
+            "warning_count": result.warning_count,
+            "findings": [
+                {
+                    "severity": f.severity,
+                    "package_name": f.package_name,
+                    "package_version": f.package_version,
+                    "script_type": f.script_type,
+                    "pattern": f.pattern,
+                    "file": f.file,
+                    "line_number": f.line_number,
+                    "evidence": f.evidence,
+                    "description": f.description,
+                }
+                for f in result.findings
+            ],
+            "errors": result.errors,
+        }
+        _sys.stdout.write(_json.dumps(data, indent=2))
+        _sys.stdout.write("\n")
+    else:
+        if not result.findings:
+            _console.print(
+                f"[#00ff88]✓[/#00ff88] {result.packages_scanned} npm package(s) scanned — no malicious lifecycle scripts found.",
+                highlight=False,
+            )
+        else:
+            _risk_colors = {"CRITICAL": "bold red", "WARNING": "yellow"}
+            table = Table(title=f"npm Lifecycle Script Scan ({result.packages_scanned} packages)")
+            table.add_column("Severity", style="bold")
+            table.add_column("Package")
+            table.add_column("Script")
+            table.add_column("Pattern")
+            table.add_column("Description")
+            for f in result.findings:
+                color = _risk_colors.get(f.severity, "white")
+                table.add_row(
+                    f"[{color}]{f.severity}[/{color}]",
+                    f"{f.package_name}@{f.package_version}",
+                    f.script_type,
+                    f.pattern,
+                    f.description[:80],
+                )
+            _console.print(table)
+
+        for err in result.errors:
+            _console.print(f"[dim]  Error: {err}[/dim]", highlight=False)
+
+    if result.has_critical:
+        raise typer.Exit(2)
+    if fail_on_warn and result.has_warning:
+        raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# verify-deps command
+# ---------------------------------------------------------------------------
+
+
+@app.command("verify-deps")
+def verify_deps(
+    path: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to project directory with package.json.",
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
+        ),
+    ],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output findings as JSON."),
+    ] = False,
+    lockfile_only: Annotated[
+        bool,
+        typer.Option("--lockfile-only", help="Only run lockfile integrity check."),
+    ] = False,
+    phantoms_only: Annotated[
+        bool,
+        typer.Option("--phantoms-only", help="Only run phantom dependency check."),
+    ] = False,
+    offline: Annotated[
+        bool,
+        typer.Option("--offline", help="Skip all npm registry network calls."),
+    ] = False,
+) -> None:
+    """Verify npm dependency tree integrity.
+
+    Runs up to five checks:
+      1. Lockfile integrity (package-lock.json hash comparison)
+      2. Phantom dependencies (installed but never imported)
+      3. New packages (published within 48 hours)
+      4. Maintainer changes (changed within 30 days)
+      5. Version anomalies (rapid publication, unpublished versions)
+
+    Exit codes:
+      0 — No findings
+      1 — WARNING findings
+      2 — CRITICAL findings
+
+    Examples:
+      agentward verify-deps ~/project/
+      agentward verify-deps --lockfile-only ~/project/
+      agentward verify-deps --offline ~/project/
+      agentward verify-deps --json ~/project/ > report.json
+    """
+    import json as _json
+    import sys as _sys
+
+    from agentward.scan.dep_integrity import IntegrityCheckOptions, verify_dependencies
+
+    if lockfile_only:
+        opts = IntegrityCheckOptions(
+            lockfile=True, phantoms=False, new_packages=False,
+            maintainer_changes=False, version_anomalies=False, offline=True,
+        )
+    elif phantoms_only:
+        opts = IntegrityCheckOptions(
+            lockfile=False, phantoms=True, new_packages=False,
+            maintainer_changes=False, version_anomalies=False, offline=True,
+        )
+    else:
+        opts = IntegrityCheckOptions(offline=offline)
+
+    result = verify_dependencies(path, opts)
+
+    if json_output:
+        data = {
+            "packages_checked": result.packages_checked,
+            "checks_run": result.checks_run,
+            "critical_count": result.critical_count,
+            "warning_count": result.warning_count,
+            "findings": [
+                {
+                    "severity": f.severity,
+                    "check": f.check,
+                    "package_name": f.package_name,
+                    "description": f.description,
+                    "evidence": f.evidence,
+                    "recommendation": f.recommendation,
+                }
+                for f in result.findings
+            ],
+            "errors": result.errors,
+        }
+        _sys.stdout.write(_json.dumps(data, indent=2))
+        _sys.stdout.write("\n")
+    else:
+        if not result.findings:
+            _console.print(
+                f"[#00ff88]✓[/#00ff88] {result.packages_checked} package(s) checked — no integrity issues found.",
+                highlight=False,
+            )
+        else:
+            from rich.table import Table
+            _risk_colors = {"CRITICAL": "bold red", "WARNING": "yellow", "INFO": "dim"}
+            table = Table(title=f"Dependency Integrity ({result.packages_checked} packages)")
+            table.add_column("Severity")
+            table.add_column("Check")
+            table.add_column("Package")
+            table.add_column("Description")
+            for f in result.findings:
+                color = _risk_colors.get(f.severity, "white")
+                table.add_row(
+                    f"[{color}]{f.severity}[/{color}]",
+                    f.check,
+                    f.package_name,
+                    f.description[:80],
+                )
+            _console.print(table)
+
+        for err in result.errors:
+            _console.print(f"[dim]  Error: {err}[/dim]", highlight=False)
+
+    if result.has_critical:
+        raise typer.Exit(2)
+    if result.has_warning and not json_output:
+        raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# scan-python command
+# ---------------------------------------------------------------------------
+
+
+@app.command("scan-python")
+def scan_python(
+    path: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to directory to scan for Python supply chain threats.",
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
+        ),
+    ],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output findings as JSON."),
+    ] = False,
+    no_setup_py: Annotated[
+        bool,
+        typer.Option("--no-setup-py", help="Skip setup.py scanning."),
+    ] = False,
+    no_pyproject: Annotated[
+        bool,
+        typer.Option("--no-pyproject", help="Skip pyproject.toml scanning."),
+    ] = False,
+    no_init_py: Annotated[
+        bool,
+        typer.Option("--no-init-py", help="Skip __init__.py scanning."),
+    ] = False,
+) -> None:
+    """Scan a directory for Python supply chain attack patterns.
+
+    Checks setup.py, pyproject.toml, and __init__.py files for:
+      - subprocess/os.system calls during install
+      - eval/exec/compile code execution
+      - Network calls at install or import time
+      - Base64-encoded payloads
+      - Credential/SSH key reads
+      - sys.path manipulation
+
+    Exit codes:
+      0 — No critical findings
+      2 — CRITICAL findings detected
+
+    Examples:
+      agentward scan-python ~/project/
+      agentward scan-python --json ~/project/ > report.json
+      agentward scan-python --no-init-py ~/project/
+    """
+    import json as _json
+    import sys as _sys
+
+    from agentward.scan.python_scanner import scan_python_supply_chain
+
+    result = scan_python_supply_chain(
+        path,
+        include_setup_py=not no_setup_py,
+        include_pyproject=not no_pyproject,
+        include_init_py=not no_init_py,
+    )
+
+    if json_output:
+        data = {
+            "scan_root": result.scan_root,
+            "files_scanned": result.files_scanned,
+            "critical_count": result.critical_count,
+            "warning_count": result.warning_count,
+            "findings": [
+                {
+                    "severity": f.severity,
+                    "file": f.file,
+                    "file_type": f.file_type,
+                    "line_number": f.line_number,
+                    "pattern": f.pattern,
+                    "evidence": f.evidence,
+                    "description": f.description,
+                }
+                for f in result.findings
+            ],
+            "errors": result.errors,
+        }
+        _sys.stdout.write(_json.dumps(data, indent=2))
+        _sys.stdout.write("\n")
+    else:
+        if not result.findings:
+            _console.print(
+                f"[#00ff88]✓[/#00ff88] {result.files_scanned} Python file(s) scanned — no supply chain threats found.",
+                highlight=False,
+            )
+        else:
+            from rich.table import Table
+            _risk_colors = {"CRITICAL": "bold red", "WARNING": "yellow", "INFO": "dim"}
+            table = Table(title=f"Python Supply Chain Scan ({result.files_scanned} files)")
+            table.add_column("Severity")
+            table.add_column("File Type")
+            table.add_column("Pattern")
+            table.add_column("Description")
+            for f in result.findings:
+                color = _risk_colors.get(f.severity, "white")
+                table.add_row(
+                    f"[{color}]{f.severity}[/{color}]",
+                    f.file_type,
+                    f.pattern,
+                    f.description[:80],
+                )
+            _console.print(table)
+
+        for err in result.errors:
+            _console.print(f"[dim]  Error: {err}[/dim]", highlight=False)
+
+    if result.has_critical:
+        raise typer.Exit(2)
 
 
 # ---------------------------------------------------------------------------

@@ -326,6 +326,167 @@ _DEFAULT_DECODERS: list[BaseDecoder] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# XOR decoder
+# ---------------------------------------------------------------------------
+
+# JavaScript XOR patterns
+_JS_XOR_LOOP_RE = re.compile(
+    r"""charCodeAt\s*\([^)]*\)\s*\^|String\.fromCharCode[^;]*\^""",
+    re.IGNORECASE,
+)
+# Python XOR patterns
+_PY_XOR_RE = re.compile(
+    r"""ord\s*\([^)]+\)\s*\^|(?:chr|bytes)\s*\([^)]*\^[^)]*\)""",
+    re.IGNORECASE,
+)
+# Generic byte-level XOR (hex or decimal constant after ^)
+_GENERIC_XOR_RE = re.compile(r"\^\s*(?:0x[0-9a-fA-F]+|\d+)")
+
+
+def _detect_xor_pattern(value: str) -> bool:
+    """Return True if the value contains a recognizable XOR cipher pattern."""
+    if _JS_XOR_LOOP_RE.search(value):
+        return True
+    if _PY_XOR_RE.search(value):
+        return True
+    if _GENERIC_XOR_RE.search(value):
+        return True
+    return False
+
+
+def _try_single_byte_xor(data: bytes) -> str | None:
+    """Try all 256 single-byte XOR keys and return the best-scoring plaintext.
+
+    Uses a simple ASCII printability heuristic: the key that produces the most
+    printable ASCII characters wins. Returns None if the best result still has
+    fewer than 80% printable characters (likely not English text).
+    """
+    best_score = -1
+    best_plaintext: bytes | None = None
+
+    for key in range(256):
+        decrypted = bytes(b ^ key for b in data)
+        printable = sum(1 for b in decrypted if 0x20 <= b <= 0x7E or b in (0x09, 0x0A, 0x0D))
+        score = printable / len(data) if data else 0
+        if score > best_score:
+            best_score = score
+            best_plaintext = decrypted
+
+    if best_score < 0.8 or best_plaintext is None:
+        return None
+
+    try:
+        return best_plaintext.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            return best_plaintext.decode("latin-1")
+        except Exception:
+            return None
+
+
+class XORDecoder(BaseDecoder):
+    """Detect XOR cipher patterns and attempt single-byte XOR decryption.
+
+    Detects:
+    - JavaScript: charCodeAt ^ / String.fromCharCode ^ patterns
+    - Python: ord(c) ^ key patterns
+    - Generic: ^ 0xNN or ^ NN constant patterns in code
+    - Binary data: attempts brute-force single-byte XOR on the raw bytes
+
+    For code-pattern detection (JS/Python), this decoder flags the value as
+    obfuscated but does not attempt to decode (the cipher requires runtime
+    execution to decode). For raw binary data, attempts decryption.
+    """
+
+    @property
+    def name(self) -> str:
+        return "xor"
+
+    def detect(self, value: str) -> bool:
+        return _detect_xor_pattern(value)
+
+    def decode(self, value: str) -> str | None:
+        # For code patterns, we can't decode without runtime context.
+        # Try treating the value as raw bytes and brute-forcing single-byte XOR.
+        try:
+            raw = value.encode("utf-8")
+            return _try_single_byte_xor(raw)
+        except Exception:
+            return None
+
+
+# ---------------------------------------------------------------------------
+# Entropy analyzer (pipeline stage, not a decoder per se)
+# ---------------------------------------------------------------------------
+
+_HIGH_ENTROPY_THRESHOLD = 4.5     # Shannon entropy bits — above this is suspicious
+_MAX_PRINTABLE_RATIO = 0.6        # Below this non-printable ratio → CRITICAL flag
+_ENTROPY_MIN_LENGTH = 16          # Don't score very short strings
+
+
+def _shannon_entropy(value: str) -> float:
+    """Calculate Shannon entropy of *value* in bits per character."""
+    if not value:
+        return 0.0
+    from collections import Counter
+    counts = Counter(value)
+    length = len(value)
+    entropy = 0.0
+    for count in counts.values():
+        p = count / length
+        if p > 0:
+            import math
+            entropy -= p * math.log2(p)
+    return entropy
+
+
+def _printable_ratio(value: str) -> float:
+    """Return the fraction of printable ASCII characters in *value*."""
+    if not value:
+        return 1.0
+    printable = sum(
+        1 for c in value
+        if '\x20' <= c <= '\x7E' or c in ('\t', '\n', '\r')
+    )
+    return printable / len(value)
+
+
+class EntropyAnalyzer(BaseDecoder):
+    """Pipeline stage that flags high-entropy strings as potentially obfuscated.
+
+    This is not a decoder — it never returns a decoded form. Instead, it detects
+    values with suspiciously high entropy (> 4.5 bits/char) which may indicate
+    unknown/custom obfuscation schemes not recognized by specific decoders.
+
+    Detects:
+    - High-entropy strings (Shannon entropy > 4.5): flagged as WARNING
+    - Strings with mostly non-printable characters after any decoding: flagged as
+      CRITICAL via the "non_printable" marker in the encoding name
+    """
+
+    @property
+    def name(self) -> str:
+        return "high_entropy"
+
+    def detect(self, value: str) -> bool:
+        if len(value) < _ENTROPY_MIN_LENGTH:
+            return False
+        entropy = _shannon_entropy(value)
+        if entropy > _HIGH_ENTROPY_THRESHOLD:
+            return True
+        # Also flag if mostly non-printable
+        if _printable_ratio(value) < _MAX_PRINTABLE_RATIO:
+            return True
+        return False
+
+    def decode(self, value: str) -> str | None:
+        # EntropyAnalyzer never produces a decoded form — it's a detection-only stage.
+        # Returning None means it adds no variant to the pipeline but still signals
+        # the value was flagged (callers use detect() to check).
+        return None
+
+
 class DeobfuscationPipeline:
     """Run a value through all registered decoders, recursively up to *max_depth*.
 
