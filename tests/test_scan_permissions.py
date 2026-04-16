@@ -330,3 +330,209 @@ class TestSchemaWordBoundaryMatching:
         perm = analyze_tool(tool)
         access_types = {a.type for a in perm.data_access}
         assert DataAccessType.FILESYSTEM in access_types
+
+
+# ---------------------------------------------------------------------------
+# Issue #406 gap 4 — PROCESS_STDIN detection (REPL chain source)
+# ---------------------------------------------------------------------------
+
+
+class TestProcessStdinDetection:
+    """Tests for PROCESS_STDIN DataAccessType classification."""
+
+    def test_stdin_schema_property_detected(self) -> None:
+        """Tool with 'stdin' schema property must get PROCESS_STDIN classification."""
+        tool = _make_tool(
+            "interact_with_process",
+            description="Send input to a running process via its stdin",
+            schema_props={
+                "pid": {"type": "number"},
+                "stdin": {"type": "string"},
+            },
+        )
+        perm = analyze_tool(tool)
+        access_types = {a.type for a in perm.data_access}
+        assert DataAccessType.PROCESS_STDIN in access_types, (
+            "Tool with 'stdin' schema property must be classified as PROCESS_STDIN"
+        )
+
+    def test_interact_in_name_detected(self) -> None:
+        """Tool named 'interact_with_process' must get PROCESS_STDIN via name."""
+        tool = _make_tool("interact_with_process")
+        perm = analyze_tool(tool)
+        access_types = {a.type for a in perm.data_access}
+        assert DataAccessType.PROCESS_STDIN in access_types
+
+    def test_interact_is_execute_verb(self) -> None:
+        """'interact' must be treated as an execute-class verb (not read-only)."""
+        tool = _make_tool("interact_with_process")
+        perm = analyze_tool(tool)
+        assert perm.is_read_only is False
+
+    def test_process_stdin_risk_is_high(self) -> None:
+        """PROCESS_STDIN access must produce at least HIGH risk."""
+        tool = _make_tool(
+            "interact_with_process",
+            schema_props={"stdin": {"type": "string"}, "pid": {"type": "number"}},
+        )
+        perm = analyze_tool(tool)
+        risk_order = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+        assert risk_order.index(perm.risk_level.value) >= risk_order.index("HIGH"), (
+            f"PROCESS_STDIN tool must be at least HIGH risk, got {perm.risk_level}"
+        )
+
+    def test_process_stdin_risk_reason_mentions_repl(self) -> None:
+        from agentward.scan.permissions import DataAccess, compute_risk
+
+        accesses = [DataAccess(type=DataAccessType.PROCESS_STDIN, read=False, write=True, reason="test")]
+        risk, reasons = compute_risk("interact_with_process", accesses, None, False)
+        assert risk.value in ("HIGH", "CRITICAL")
+        combined = " ".join(reasons).lower()
+        assert "stdin" in combined or "repl" in combined or "process" in combined
+
+    def test_get_process_status_no_false_positive(self) -> None:
+        """get_process_status with only 'pid' must NOT be classified as PROCESS_STDIN.
+
+        'pid' alone is too ambiguous — it's used in status-read tools too.
+        Only 'stdin' as a schema property should trigger PROCESS_STDIN.
+        """
+        tool = _make_tool(
+            "get_process_status",
+            schema_props={"pid": {"type": "number"}},
+        )
+        perm = analyze_tool(tool)
+        access_types = {a.type for a in perm.data_access}
+        assert DataAccessType.PROCESS_STDIN not in access_types, (
+            "get_process_status with only 'pid' must not be classified as PROCESS_STDIN"
+        )
+
+    def test_list_processes_no_false_positive(self) -> None:
+        """list_processes with no stdin property must not get PROCESS_STDIN."""
+        tool = _make_tool(
+            "list_processes",
+            schema_props={"filter": {"type": "string"}},
+        )
+        perm = analyze_tool(tool)
+        access_types = {a.type for a in perm.data_access}
+        assert DataAccessType.PROCESS_STDIN not in access_types
+
+
+# ---------------------------------------------------------------------------
+# Issue #406 gap 5 — RUNTIME_CONFIG detection (persistence chain source)
+# ---------------------------------------------------------------------------
+
+
+class TestRuntimeConfigDetection:
+    """Tests for RUNTIME_CONFIG DataAccessType classification."""
+
+    def test_set_config_value_detected(self) -> None:
+        """Desktop Commander's set_config_value must get RUNTIME_CONFIG classification."""
+        tool = _make_tool(
+            "set_config_value",
+            description="Set a configuration key/value pair (e.g. defaultShell)",
+            schema_props={
+                "key": {"type": "string"},
+                "value": {"type": "string"},
+            },
+        )
+        perm = analyze_tool(tool)
+        access_types = {a.type for a in perm.data_access}
+        assert DataAccessType.RUNTIME_CONFIG in access_types, (
+            "set_config_value must be classified as RUNTIME_CONFIG"
+        )
+
+    def test_runtime_config_is_write(self) -> None:
+        """RUNTIME_CONFIG access on set_config_value must be a write operation."""
+        tool = _make_tool("set_config_value")
+        perm = analyze_tool(tool)
+        config_accesses = [a for a in perm.data_access if a.type == DataAccessType.RUNTIME_CONFIG]
+        assert config_accesses
+        assert any(a.write for a in config_accesses)
+
+    def test_update_config_detected(self) -> None:
+        tool = _make_tool("update_config", schema_props={"key": {"type": "string"}})
+        perm = analyze_tool(tool)
+        access_types = {a.type for a in perm.data_access}
+        assert DataAccessType.RUNTIME_CONFIG in access_types
+
+    def test_default_shell_schema_property_detected(self) -> None:
+        """Tool with 'default_shell' schema property must get RUNTIME_CONFIG."""
+        tool = _make_tool(
+            "configure_runtime",
+            schema_props={"default_shell": {"type": "string"}},
+        )
+        perm = analyze_tool(tool)
+        access_types = {a.type for a in perm.data_access}
+        assert DataAccessType.RUNTIME_CONFIG in access_types
+
+    def test_runtime_config_risk_is_high(self) -> None:
+        """RUNTIME_CONFIG write must produce at least HIGH risk."""
+        tool = _make_tool("set_config_value")
+        perm = analyze_tool(tool)
+        risk_order = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+        assert risk_order.index(perm.risk_level.value) >= risk_order.index("HIGH"), (
+            f"set_config_value must be at least HIGH risk, got {perm.risk_level}"
+        )
+
+    def test_get_config_no_false_positive(self) -> None:
+        """get_config (read verb) must NOT be classified as RUNTIME_CONFIG."""
+        tool = _make_tool(
+            "get_config",
+            schema_props={"key": {"type": "string"}},
+        )
+        perm = analyze_tool(tool)
+        access_types = {a.type for a in perm.data_access}
+        assert DataAccessType.RUNTIME_CONFIG not in access_types, (
+            "get_config (read verb) must not be classified as RUNTIME_CONFIG"
+        )
+
+    def test_list_settings_no_false_positive(self) -> None:
+        """list_settings (read verb) must NOT be classified as RUNTIME_CONFIG."""
+        tool = _make_tool("list_settings")
+        perm = analyze_tool(tool)
+        access_types = {a.type for a in perm.data_access}
+        assert DataAccessType.RUNTIME_CONFIG not in access_types
+
+    def test_show_config_no_false_positive(self) -> None:
+        """show_config (read verb) must NOT be classified as RUNTIME_CONFIG."""
+        tool = _make_tool("show_config")
+        perm = analyze_tool(tool)
+        access_types = {a.type for a in perm.data_access}
+        assert DataAccessType.RUNTIME_CONFIG not in access_types
+
+
+# ---------------------------------------------------------------------------
+# Issue #406 gap 3 — readOnlyHint amplifier in compute_risk
+# ---------------------------------------------------------------------------
+
+
+class TestReadOnlyHintAmplifier:
+    """Tests for readOnlyHint=true as silent-exfil amplifier signal in compute_risk."""
+
+    def test_high_risk_tool_with_read_only_hint_gets_amplifier_reason(self) -> None:
+        """compute_risk must add amplifier reason when readOnlyHint=true on HIGH+ tool."""
+        from agentward.scan.permissions import DataAccess, compute_risk
+
+        accesses = [
+            DataAccess(type=DataAccessType.CREDENTIALS, read=True, write=False, reason="test"),
+        ]
+        annotations = ToolAnnotations(read_only_hint=True)
+        risk, reasons = compute_risk("get_token", accesses, annotations, False)
+        assert risk.value in ("HIGH", "CRITICAL")
+        combined = " ".join(reasons).lower()
+        assert "auto" in combined or "silent" in combined or "amplifier" in combined, (
+            f"Expected amplifier reason in compute_risk output, got: {reasons}"
+        )
+
+    def test_low_risk_tool_with_read_only_hint_no_amplifier(self) -> None:
+        """compute_risk must NOT add amplifier reason for LOW risk tools."""
+        from agentward.scan.permissions import DataAccess, compute_risk
+
+        accesses = [
+            DataAccess(type=DataAccessType.FILESYSTEM, read=True, write=False, reason="test"),
+        ]
+        annotations = ToolAnnotations(read_only_hint=True)
+        risk, reasons = compute_risk("read_file", accesses, annotations, False)
+        assert risk == RiskLevel.LOW
+        combined = " ".join(reasons).lower()
+        assert "amplifier" not in combined

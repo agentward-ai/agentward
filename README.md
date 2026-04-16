@@ -91,6 +91,13 @@ The scanner also runs **pre-install security checks** on skill directories befor
 - **Dependency analysis** — detects typosquatting candidates and known-malicious package names
 - **.pth file scanning** (`--scan-site-packages`) — scans Python site-packages directories for malicious `.pth` files that execute code at interpreter startup; see [Supply Chain: .pth File Scanner](#supply-chain-pth-file-scanner)
 
+Tool-schema-level checks the scanner also runs against every MCP server it enumerates:
+
+- **REPL chain detection** (HIGH) — flags servers exposing both an interpreter-launching tool (`start_process` with `python`/`node`/`bash -i`) and a stdin-injection tool (`interact_with_process`); injected code runs inside the REPL and bypasses shell-level pattern matching
+- **Persistence chain detection** (CRITICAL) — flags servers combining arbitrary file write with runtime config mutation (e.g. `write_file` + `set_config_value(defaultShell, …)`), the canonical write-then-reconfigure backdoor pattern
+- **SSRF parameter detection** (HIGH) — flags tool inputs that accept URLs (`url`, `endpoint`, `isUrl`-style booleans) without an allowlist constraint in the description
+- **Session/call-history exposure** (HIGH, escalates to CRITICAL with `readOnlyHint: true`) — flags tools like `get_recent_tool_calls` that let an attacker enumerate prior tool invocations; `readOnlyHint=true` is also surfaced as a silent-auto-approval amplifier on any HIGH+ tool
+
 ```bash
 agentward scan ./my-downloaded-skill/    # pre-install check before installing
 ```

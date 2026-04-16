@@ -117,6 +117,43 @@ _CHAIN_PATTERNS: list[
         "Attacker-controlled API returns prompt injection in its response. "
         "The network skill processes it, and the content chains to the shell skill.",
     ),
+    # -----------------------------------------------------------------------
+    # REPL chain evasion — Issue #406 gap 4
+    # A tool that launches an interactive interpreter (start_process with
+    # python/-i, node, ruby, bash -i …) combined with a tool that injects
+    # arbitrary stdin into a running process creates a REPL injection vector.
+    # The code executes inside the REPL, evading shell-level pattern matching
+    # and most command-audit mechanisms.
+    # -----------------------------------------------------------------------
+    (
+        DataAccessType.SHELL,
+        DataAccessType.PROCESS_STDIN,
+        ChainRisk.HIGH,
+        "Interpreter launch + stdin injection enables REPL code-execution evasion",
+        "Attacker uses a shell-launching tool to start an interactive interpreter "
+        "(python -i, node, ruby, bash -i, perl, php -a, etc.), then injects "
+        "arbitrary code into the running REPL via a separate stdin-injection tool. "
+        "The injected code executes inside the interpreter, bypassing shell-level "
+        "command pattern matching, audit logging, and most policy enforcement hooks.",
+    ),
+    # -----------------------------------------------------------------------
+    # Write-then-reconfigure persistence chain — Issue #406 gap 5
+    # Arbitrary filesystem write combined with a tool that can set the default
+    # shell or interpreter path enables a classic persistent-backdoor attack:
+    # write a malicious executable, then redirect every future shell invocation
+    # to run it.
+    # -----------------------------------------------------------------------
+    (
+        DataAccessType.FILESYSTEM,
+        DataAccessType.RUNTIME_CONFIG,
+        ChainRisk.CRITICAL,
+        "Arbitrary file write + runtime config mutation enables persistent compromise",
+        "Attacker writes a malicious executable to an arbitrary filesystem path, "
+        "then reconfigures the default shell or interpreter (e.g. defaultShell, "
+        "shell_path) to point to that file via the config tool. Every subsequent "
+        "shell invocation executes the attacker's payload with full user privileges — "
+        "a stealthy, persistent backdoor that survives process restarts.",
+    ),
 ]
 
 
