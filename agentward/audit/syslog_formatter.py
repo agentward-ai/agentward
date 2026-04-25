@@ -98,6 +98,15 @@ def _sd_params_for_entry(entry: dict[str, Any]) -> dict[str, Any]:
     event = entry.get("event", "")
     params: dict[str, Any] = {"event": event}
 
+    # Universal fields — emitted on every event so the SIEM has a stable
+    # schema. principal: identity attribution (DORA/MiFID II record-keeping).
+    # hmac: presence-only, so SIEM rules can detect unsigned events without
+    # carrying the full hex digest.
+    if entry.get("principal") is not None:
+        params["principal"] = str(entry["principal"])[:255]
+    if entry.get("hmac"):
+        params["signed"] = "true"
+
     if event == "tool_call":
         for key in ("tool", "decision", "skill", "resource", "reason"):
             if entry.get(key) is not None:

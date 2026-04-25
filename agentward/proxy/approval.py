@@ -1,23 +1,30 @@
 """Approval dialogs for APPROVE policy decisions.
 
-Supports two channels that race in parallel (first response wins):
+Supports three channels that race in parallel — first response wins:
 
-1. **macOS terminal dialog** — native ``osascript`` dialog on the local machine.
-2. **Telegram bot** — remote inline-keyboard message via the Telegram API
+1. **macOS dialog** — native ``osascript`` dialog. Active when
+   ``sys.platform == "darwin"``.
+2. **TTY fallback** — single-character prompt on the controlling terminal
+   (``a`` allow once / ``s`` allow session / ``d`` deny). Active on any
+   platform when both stdin and stderr are interactive TTYs and the
+   operator has not set ``AGENTWARD_DISABLE_TTY_APPROVAL``. Provides a
+   working approval channel on Linux without Telegram.
+3. **Telegram bot** — remote inline-keyboard message via the Telegram API
    proxy (intercepts OpenClaw's ``getUpdates`` responses).
 
 Features:
   - Session-level caching ("Allow for Interaction" skips future dialogs)
   - Concurrency serialization (one approval at a time)
   - Configurable timeout (default 60s, auto-deny on expiry)
-  - Race: terminal + Telegram simultaneously, first response wins
-  - Non-macOS + no Telegram → fail-secure deny
+  - Race: every available channel runs simultaneously, first response wins
+  - Fail-secure deny only when none of the three channels is available
   - Credential redaction in argument previews
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import time
 from enum import Enum
@@ -70,6 +77,13 @@ class ApprovalHandler:
         self._is_macos: bool = sys.platform == "darwin"
         self._telegram_bot = telegram_bot
         self._osascript_proc: asyncio.subprocess.Process | None = None
+        # TTY fallback: enabled when both stdin and stdout are interactive
+        # terminals AND the operator hasn't explicitly disabled it. This is
+        # the Linux-friendly approval channel that prevents fail-deny when
+        # neither macOS osascript nor Telegram is available. Disabled
+        # automatically in stdio-MCP mode (stdin is the protocol stream so
+        # ``isatty()`` is False).
+        self._can_use_tty: bool = _detect_tty_support()
 
     # ------------------------------------------------------------------
     # Public API
@@ -104,10 +118,11 @@ class ApprovalHandler:
             and self._telegram_bot.is_paired
         )
 
-        if not self._is_macos and not has_telegram:
+        if not self._is_macos and not has_telegram and not self._can_use_tty:
             _console.print(
                 f"  [bold red]DENY[/bold red] {tool_name} "
-                "(no approval channel available)",
+                "(no approval channel available — set up Telegram bot or "
+                "run in an interactive TTY)",
                 highlight=False,
             )
             return ApprovalDecision.DENY
@@ -166,6 +181,14 @@ class ApprovalHandler:
         if self._is_macos:
             tasks.append(
                 asyncio.create_task(self._show_dialog(message), name="terminal")
+            )
+
+        if self._can_use_tty:
+            tasks.append(
+                asyncio.create_task(
+                    self._tty_prompt(message),
+                    name="tty",
+                )
             )
 
         if self._telegram_bot is not None and self._telegram_bot.is_paired:
@@ -227,6 +250,70 @@ class ApprovalHandler:
         return result
 
     # ------------------------------------------------------------------
+    # TTY (stdin) approval — Linux fallback
+    # ------------------------------------------------------------------
+
+    async def _tty_prompt(self, message: str) -> ApprovalDecision:
+        """Render an approval prompt to the controlling terminal and read
+        a single character of input from stdin.
+
+        Runs the blocking read on a dedicated executor thread so the proxy
+        event loop stays responsive. Cancels cleanly when another channel
+        wins the race; the executor thread will return when the user
+        presses Enter or the timeout expires.
+
+        Output keys (case-insensitive, single character):
+            * ``a``  → ALLOW_ONCE
+            * ``s``  → ALLOW_SESSION (allow this tool for the rest of the session)
+            * ``d``  → DENY (default)
+
+        Args:
+            message: Pre-formatted dialog message reused from osascript path.
+
+        Returns:
+            The decision parsed from input. Returns DENY on timeout or any
+            I/O error.
+        """
+        prompt = (
+            f"\n\u250c\u2500 AgentWard approval required \u2500\u2510\n"
+            f"{message}\n"
+            f"\u2514 [a]llow once  [s]ession  [d]eny  > "
+        )
+
+        def _blocking_read() -> str:
+            try:
+                # Print and read on the controlling terminal directly. Avoids
+                # contention with rich's stderr output.
+                sys.stderr.write(prompt)
+                sys.stderr.flush()
+                return sys.stdin.readline()
+            except (OSError, ValueError):
+                return ""
+
+        loop = asyncio.get_running_loop()
+        try:
+            answer = await asyncio.wait_for(
+                loop.run_in_executor(None, _blocking_read),
+                timeout=self._timeout,
+            )
+        except asyncio.TimeoutError:
+            sys.stderr.write("\n  [TTY timeout — denying]\n")
+            sys.stderr.flush()
+            return ApprovalDecision.DENY
+        except asyncio.CancelledError:
+            # Another channel won the race; the executor thread will keep
+            # running until the user presses Enter or the proc exits, but
+            # the proxy continues with the winning decision.
+            raise
+
+        first = answer.strip()[:1].lower() if answer else ""
+        if first == "a":
+            return ApprovalDecision.ALLOW_ONCE
+        if first == "s":
+            return ApprovalDecision.ALLOW_SESSION
+        return ApprovalDecision.DENY
+
+    # ------------------------------------------------------------------
     # macOS dialog execution
     # ------------------------------------------------------------------
 
@@ -276,6 +363,31 @@ class ApprovalHandler:
             return ApprovalDecision.DENY
 
         return _parse_osascript_output(stdout.decode())
+
+
+# ----------------------------------------------------------------------
+# TTY detection
+# ----------------------------------------------------------------------
+
+
+def _detect_tty_support() -> bool:
+    """True when both stdin and stdout are attached to an interactive TTY.
+
+    This is the gate for the Linux fallback approval channel. Returns False
+    when:
+
+    * Either stream is a pipe / file / socket (e.g. stdio-MCP mode)
+    * The operator has set ``AGENTWARD_DISABLE_TTY_APPROVAL=1`` to opt out
+      (useful in CI or systemd-managed deployments where stdin is a pty
+      but interactive prompts are still undesirable)
+    * ``isatty()`` raises (closed file descriptor, etc.)
+    """
+    if os.environ.get("AGENTWARD_DISABLE_TTY_APPROVAL"):
+        return False
+    try:
+        return bool(sys.stdin.isatty() and sys.stderr.isatty())
+    except (AttributeError, OSError, ValueError):
+        return False
 
 
 # ----------------------------------------------------------------------

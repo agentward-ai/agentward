@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO, Any
 
+from agentward.audit.integrity import AuditChain, resolve_identity
 from agentward.audit.syslog_formatter import format_rfc5424
 
 from rich.console import Console
@@ -39,6 +40,7 @@ class AuditLogger:
         self,
         log_path: Path | None = None,
         syslog_path: Path | None = None,
+        principal: str | None = None,
     ) -> None:
         """Initialize the audit logger.
 
@@ -49,10 +51,22 @@ class AuditLogger:
                          When log_path is set and syslog_path is None, the
                          syslog file is written alongside the JSONL file with
                          a ``.syslog`` extension.  Ignored when log_path is None.
+            principal: Identity of the human or service running the proxy.
+                       If None, falls back to ``AGENTWARD_PRINCIPAL`` env var,
+                       then OS user, then ``"unknown"``. Threaded into every
+                       audit event as the ``principal`` field for SIEM
+                       attribution and DORA Art. 17 / MiFID II RTS 6
+                       record-keeping.
         """
         self._log_file: IO[str] | None = None
         self._log_path = log_path
         self._syslog_file: IO[str] | None = None
+        self.principal: str = resolve_identity(principal)
+
+        # HMAC chain — enabled only when AGENTWARD_AUDIT_HMAC_KEY is set in
+        # the environment.  Seeds prev_hash from an existing log file so
+        # restarts continue the existing chain rather than splitting it.
+        self._chain = AuditChain(existing_log_path=log_path)
 
         if log_path is not None:
             log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -547,13 +561,26 @@ class AuditLogger:
     def _write_entry(self, entry: dict[str, Any]) -> None:
         """Write a structured JSON entry to both log files.
 
-        If a write fails (disk full, permission error, etc.), logs the
-        failure to stderr and continues — the proxy must not crash due to
-        audit I/O errors.
+        Identity, signing, and write-fault handling are centralised here so
+        every audit event flows through the same path.
+
+        * The ``principal`` field is injected unconditionally — every audit
+          event carries an identity for SIEM attribution.
+        * If ``AGENTWARD_AUDIT_HMAC_KEY`` is set, the HMAC chain populates
+          ``prev_hash`` and ``hmac`` so the JSONL log becomes
+          tamper-evident at source. Verify with ``agentward audit verify``.
+        * Write failures are logged to stderr and the broken handle is
+          closed; the proxy must not crash due to audit I/O errors.
 
         Args:
-            entry: The log entry as a dictionary.
+            entry: The log entry as a dictionary. Mutated in place.
         """
+        # Always carry an identity into every event.
+        entry.setdefault("principal", self.principal)
+
+        # Tamper-evident chain — no-op when not configured.
+        self._chain.sign(entry)
+
         if self._log_file is not None:
             try:
                 self._log_file.write(json.dumps(entry, default=str) + "\n")

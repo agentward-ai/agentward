@@ -7,4 +7,4 @@ LICENSE-CHANGE.md for the rationale.
 Copyright (c) 2026 OpenSafe Inc.
 """
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"

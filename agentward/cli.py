@@ -159,6 +159,17 @@ def inspect(
             "blocking. Use this to test a policy before enforcing it.",
         ),
     ] = False,
+    identity: Annotated[
+        Optional[str],
+        typer.Option(
+            "--identity",
+            help="Principal identity attached to every audit event "
+            "(e.g. user@org or service-account name). "
+            "Falls back to AGENTWARD_PRINCIPAL env var, then OS user, "
+            "then 'unknown'. Required for SIEM attribution and for "
+            "DORA Art. 17 / MiFID II RTS 6 record-keeping.",
+        ),
+    ] = None,
 ) -> None:
     """Start the proxy with policy enforcement.
 
@@ -195,7 +206,9 @@ def inspect(
         if loaded_policy.audit.syslog_path:
             syslog_path = Path(loaded_policy.audit.syslog_path)
 
-    audit_logger = AuditLogger(log_path=log, syslog_path=syslog_path)
+    audit_logger = AuditLogger(
+        log_path=log, syslog_path=syslog_path, principal=identity,
+    )
 
     # Create chain tracker if policy has chaining rules
     from agentward.policy.schema import ChainingMode
@@ -1213,6 +1226,111 @@ def audit(
 
     print_banner(_console)
     render_dashboard(stats, _console, show_timeline=timeline)
+
+
+@app.command(name="audit-verify")
+def audit_verify(
+    log: Annotated[
+        Path,
+        typer.Option(
+            "--log",
+            "-l",
+            help="Path to the JSON Lines audit log file to verify.",
+        ),
+    ] = Path("agentward-audit.jsonl"),
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output verification result as JSON."),
+    ] = False,
+) -> None:
+    """Verify the tamper-evident HMAC chain on a JSONL audit log.
+
+    Walks the log forward, recomputing each entry's expected ``prev_hash``
+    and ``hmac`` against the supplied key. Any modification, deletion, or
+    insertion breaks the chain at the affected line.
+
+    Requires ``AGENTWARD_AUDIT_HMAC_KEY`` to be set in the environment with
+    the same key the proxy used when writing the log.
+
+    Exit codes:
+      0 — chain verified end-to-end (or log was unsigned, no chain to verify)
+      1 — chain broken; first failure line printed
+
+    Example:
+      AGENTWARD_AUDIT_HMAC_KEY=$KEY agentward audit-verify --log audit.jsonl
+    """
+    import json as _json
+    import os as _os
+
+    from agentward.audit.integrity import KEY_ENV_VAR, verify_log
+
+    if not log.exists():
+        _console.print(
+            f"[bold red]Error:[/bold red] log file not found: {log}",
+            highlight=False,
+        )
+        raise typer.Exit(1)
+
+    key_present = bool(_os.environ.get(KEY_ENV_VAR))
+    result = verify_log(log)
+
+    if json_output:
+        output = {
+            "ok": result.ok,
+            "total_lines": result.total_lines,
+            "signed_lines": result.signed_lines,
+            "unsigned_lines": result.unsigned_lines,
+            "first_break": result.first_break,
+            "key_present": key_present,
+            "failures": [
+                {"line": f.line_number, "reason": f.reason}
+                for f in result.failures
+            ],
+        }
+        print(_json.dumps(output, indent=2))
+        raise typer.Exit(0 if result.ok else 1)
+
+    from agentward.banner import print_banner
+
+    print_banner(_console)
+
+    _console.print(f"[bold]Audit chain verification[/bold] — {log}")
+    _console.print(f"  Total lines:    {result.total_lines}")
+    _console.print(f"  Signed lines:   {result.signed_lines}")
+    _console.print(f"  Unsigned lines: {result.unsigned_lines}")
+    if not key_present:
+        _console.print(
+            f"  [yellow]⚠ {KEY_ENV_VAR} is not set in this environment.[/yellow]"
+        )
+        _console.print(
+            "    Set it to the key used by the proxy that wrote this log."
+        )
+
+    if result.ok:
+        if result.signed_lines == 0:
+            _console.print(
+                "\n[bold yellow]Result:[/bold yellow] log is unsigned — "
+                "tamper-evidence was not enabled when this log was written."
+            )
+            raise typer.Exit(0)
+        _console.print(
+            f"\n[bold #00ff88]✓ Verified[/bold #00ff88] — "
+            f"{result.signed_lines} signed entries, chain intact."
+        )
+        raise typer.Exit(0)
+
+    _console.print(
+        f"\n[bold red]✗ Chain broken[/bold red] at line {result.first_break}."
+    )
+    for failure in result.failures[:10]:
+        _console.print(
+            f"  [red]line {failure.line_number}[/red]: {failure.reason}"
+        )
+    if len(result.failures) > 10:
+        _console.print(
+            f"  [dim]…and {len(result.failures) - 10} more failures.[/dim]"
+        )
+    raise typer.Exit(1)
 
 
 @app.command()
