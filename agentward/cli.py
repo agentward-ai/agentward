@@ -1347,6 +1347,8 @@ def comply(
         import agentward.comply.frameworks.gdpr  # noqa: F401
         import agentward.comply.frameworks.sox  # noqa: F401
         import agentward.comply.frameworks.pci_dss  # noqa: F401
+        import agentward.comply.frameworks.dora  # noqa: F401
+        import agentward.comply.frameworks.mifid2  # noqa: F401
     except Exception as e:
         _console.print(
             f"\n[bold red]Error:[/bold red] Failed to load framework modules: {e}",

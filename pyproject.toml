@@ -4,19 +4,20 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentward"
-version = "0.4.0"
-description = "Secure every agent action — from install to runtime. Open-source security platform for AI agents."
+version = "0.5.0"
+description = "Secure every agent action — from install to runtime. Source-available security platform for AI agents."
 readme = "README.md"
-license = "Apache-2.0"
+license = "BUSL-1.1"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [
-    { name = "AgentWard Contributors" },
+    { name = "OpenSafe Inc." },
 ]
 keywords = ["ai", "agents", "mcp", "security", "permissions", "governance"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
+    "License :: Other/Proprietary License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",

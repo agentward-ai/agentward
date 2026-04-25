@@ -643,10 +643,46 @@ def _apply_single_fix(policy: AgentWardPolicy, fix: PolicyFix) -> None:
                     # Compliance fix: restriction (False) overrides permission (True)
                     existing.actions[action_name] = allowed
 
+    elif fix.fix_type == "set_chain_depth":
+        # Bound chain_depth to limit cascading third-party risk.
+        # Only tightens: lower depth wins; current None (unlimited) is the
+        # weakest setting so any fix replaces it.
+        requested = int(fix.params["depth"])
+        current = policy.skill_chain_depth
+        if current is None or requested < current:
+            policy.skill_chain_depth = requested
+
+    elif fix.fix_type == "set_policy_flag":
+        # Toggle a top-level boolean field on the policy.  Used by frameworks
+        # that depend on built-in detection switches (warn_unregistered,
+        # baseline_check, etc.).  Only allows turning a flag on — fix logic
+        # never disables an operator-enabled control.
+        flag_name = fix.params["flag"]
+        target_value = bool(fix.params.get("value", True))
+        # Use a small explicit allowlist so a typo in YAML can't poke at
+        # private or unrelated attributes.
+        _ALLOWED_FLAGS = {
+            "registry_check",
+            "warn_unregistered",
+            "baseline_check",
+            "deobfuscation",
+        }
+        if flag_name not in _ALLOWED_FLAGS:
+            msg = (
+                f"set_policy_flag: '{flag_name}' is not in the allowed "
+                f"set {sorted(_ALLOWED_FLAGS)}."
+            )
+            raise ValueError(msg)
+        current = getattr(policy, flag_name)
+        # Only flip False→True; never weaken an operator-enabled control.
+        if current is False and target_value is True:
+            setattr(policy, flag_name, True)
+
     else:
         msg = (
             f"Unknown fix_type '{fix.fix_type}'. Valid types: "
             f"set_default_action, add_approval_rule, add_chaining_rule, "
-            f"add_data_boundary, enable_sensitive_content, add_skill_restriction."
+            f"add_data_boundary, enable_sensitive_content, "
+            f"add_skill_restriction, set_chain_depth, set_policy_flag."
         )
         raise ValueError(msg)

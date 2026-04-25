@@ -497,6 +497,26 @@ def _policy_to_dict(policy: AgentWardPolicy) -> dict:
             }
         data["data_boundaries"] = boundaries
 
+    # Audit (omit when default — syslog_path None means auto-derived path)
+    if policy.audit.syslog_path is not None:
+        data["audit"] = {"syslog_path": policy.audit.syslog_path}
+
+    # Top-level boolean / numeric flags — only emit when they differ from
+    # the schema default, to keep generated YAML lean.
+    if policy.registry_check is not True:  # default True
+        data["registry_check"] = policy.registry_check
+    if policy.warn_unregistered is not False:  # default False
+        data["warn_unregistered"] = policy.warn_unregistered
+    if policy.baseline_check is not False:  # default False
+        data["baseline_check"] = policy.baseline_check
+    if policy.deobfuscation is not True:  # default True
+        data["deobfuscation"] = policy.deobfuscation
+    # Baseline thresholds: only emit when non-default
+    if policy.baseline_warn_threshold != 0.3:
+        data["baseline_warn_threshold"] = policy.baseline_warn_threshold
+    if policy.baseline_block_threshold != 0.8:
+        data["baseline_block_threshold"] = policy.baseline_block_threshold
+
     # LLM judge (only written when explicitly enabled — default-off feature)
     if policy.llm_judge.enabled:
         j = policy.llm_judge

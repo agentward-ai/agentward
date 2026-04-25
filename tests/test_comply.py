@@ -1068,6 +1068,123 @@ class TestEndToEnd:
         with pytest.raises(ValueError, match="Unknown fix_type"):
             apply_fixes(policy, findings)
 
+    def test_set_chain_depth_from_unbounded(self) -> None:
+        """set_chain_depth fills in a None (unbounded) skill_chain_depth."""
+        policy = _minimal_policy()
+        assert policy.skill_chain_depth is None
+        findings = [
+            ComplianceFinding(
+                control_id="test",
+                skill=None,
+                description="t",
+                fix=PolicyFix(fix_type="set_chain_depth", params={"depth": 3}),
+                severity=ControlSeverity.RECOMMENDED,
+            ),
+        ]
+        fixed = apply_fixes(policy, findings)
+        assert fixed.skill_chain_depth == 3
+
+    def test_set_chain_depth_only_tightens(self) -> None:
+        """set_chain_depth never weakens an existing tighter setting."""
+        policy = _minimal_policy(skill_chain_depth=2)
+        findings = [
+            ComplianceFinding(
+                control_id="test",
+                skill=None,
+                description="t",
+                fix=PolicyFix(fix_type="set_chain_depth", params={"depth": 5}),
+                severity=ControlSeverity.RECOMMENDED,
+            ),
+        ]
+        fixed = apply_fixes(policy, findings)
+        assert fixed.skill_chain_depth == 2  # not loosened to 5
+
+    def test_set_chain_depth_replaces_when_stricter(self) -> None:
+        policy = _minimal_policy(skill_chain_depth=10)
+        findings = [
+            ComplianceFinding(
+                control_id="test",
+                skill=None,
+                description="t",
+                fix=PolicyFix(fix_type="set_chain_depth", params={"depth": 3}),
+                severity=ControlSeverity.RECOMMENDED,
+            ),
+        ]
+        fixed = apply_fixes(policy, findings)
+        assert fixed.skill_chain_depth == 3  # tightened from 10 to 3
+
+    def test_set_policy_flag_enables_baseline_check(self) -> None:
+        policy = _minimal_policy()
+        assert policy.baseline_check is False
+        findings = [
+            ComplianceFinding(
+                control_id="test",
+                skill=None,
+                description="t",
+                fix=PolicyFix(
+                    fix_type="set_policy_flag",
+                    params={"flag": "baseline_check", "value": True},
+                ),
+                severity=ControlSeverity.RECOMMENDED,
+            ),
+        ]
+        fixed = apply_fixes(policy, findings)
+        assert fixed.baseline_check is True
+
+    def test_set_policy_flag_enables_warn_unregistered(self) -> None:
+        policy = _minimal_policy()
+        findings = [
+            ComplianceFinding(
+                control_id="test",
+                skill=None,
+                description="t",
+                fix=PolicyFix(
+                    fix_type="set_policy_flag",
+                    params={"flag": "warn_unregistered", "value": True},
+                ),
+                severity=ControlSeverity.RECOMMENDED,
+            ),
+        ]
+        fixed = apply_fixes(policy, findings)
+        assert fixed.warn_unregistered is True
+
+    def test_set_policy_flag_does_not_disable(self) -> None:
+        """set_policy_flag never flips an operator-enabled True back to False."""
+        policy = _minimal_policy(registry_check=True)
+        findings = [
+            ComplianceFinding(
+                control_id="test",
+                skill=None,
+                description="t",
+                fix=PolicyFix(
+                    fix_type="set_policy_flag",
+                    params={"flag": "registry_check", "value": False},
+                ),
+                severity=ControlSeverity.RECOMMENDED,
+            ),
+        ]
+        fixed = apply_fixes(policy, findings)
+        assert fixed.registry_check is True  # not weakened
+
+    def test_set_policy_flag_rejects_unknown_field(self) -> None:
+        """An unsanctioned flag name must raise — protects against typos
+        poking at private/unrelated attributes."""
+        policy = _minimal_policy()
+        findings = [
+            ComplianceFinding(
+                control_id="test",
+                skill=None,
+                description="t",
+                fix=PolicyFix(
+                    fix_type="set_policy_flag",
+                    params={"flag": "default_action", "value": True},
+                ),
+                severity=ControlSeverity.RECOMMENDED,
+            ),
+        ]
+        with pytest.raises(ValueError, match="set_policy_flag"):
+            apply_fixes(policy, findings)
+
     def test_denied_unrelated_resource_does_not_satisfy_write_check(self) -> None:
         """Denying an unrelated resource shouldn't satisfy integrity control."""
         tool = _perm("update_patient", access=[

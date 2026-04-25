@@ -6,12 +6,12 @@
 
 <p align="center">
   <strong>Secure every agent action — from install to runtime.</strong><br/>
-  Open-source security platform for AI agents.
+  Source-available security platform for AI agents.
 </p>
 
 <p align="center">
   <a href="https://pypi.org/project/agentward/"><img src="https://img.shields.io/pypi/v/agentward?color=00FF41&labelColor=0a0a0a" alt="PyPI"></a>
-  <a href="https://github.com/agentward-ai/agentward/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-00FF41?labelColor=0a0a0a" alt="License"></a>
+  <a href="https://github.com/agentward-ai/agentward/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-BUSL%201.1-00FF41?labelColor=0a0a0a" alt="License"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11+-00FF41?labelColor=0a0a0a" alt="Python"></a>
   <a href="https://glama.ai/mcp/servers/agentward-ai/agent-ward"><img width="380" height="200" src="https://glama.ai/mcp/servers/agentward-ai/agent-ward/badge" alt="Glama MCP Server" /></a>
 </p>
@@ -81,7 +81,7 @@ SCAN → CONFIGURE → ENFORCE → VERIFY → MONITOR
 agentward scan
 ```
 
-Auto-discovers MCP configs (Claude Desktop, Cursor, Windsurf, VS Code), Python tool definitions (OpenAI, LangChain, CrewAI), and OpenClaw skills. Outputs a permission map with risk ratings, skill chain analysis, security recommendations, and developer fix guidance. A markdown report (`agentward-report.md`) is saved automatically.
+Auto-discovers MCP configs (Claude Desktop, Cursor, Windsurf, VS Code), Python tool definitions (OpenAI, LangChain, CrewAI), and OpenClaw skills. Outputs a permission map with risk ratings, skill chain analysis, security recommendations, developer fix guidance, and **compliance-framework hints** — when scan detects PHI, financial, trading, personal-data, or cardholder-data patterns, it surfaces the relevant frameworks (HIPAA / GDPR / SOX / PCI-DSS / DORA / MiFID II) and the exact `agentward comply --framework <name>` command to evaluate against them. A markdown report (`agentward-report.md`) is saved automatically.
 
 The scanner also runs **pre-install security checks** on skill directories before you install them — catching threats at the supply chain stage, before they can execute code at runtime:
 
@@ -190,7 +190,28 @@ Every tool call is now intercepted, evaluated against your policy, and either al
  [APPROVE] gmail.send_email            → waiting for human approval
 ```
 
-#### 5. Verify your policy
+#### 5. Evaluate against compliance frameworks
+
+```bash
+agentward comply --framework hipaa          # or gdpr, sox, pci_dss, dora, mifid2
+agentward comply --framework dora --fix     # auto-generate a compliant policy
+agentward comply --framework mifid2 --json  # machine-readable for CI dashboards
+```
+
+Loads your policy and runs it against the controls of a regulatory framework, producing a per-skill compliance rating (GREEN / YELLOW / RED) and a list of specific gaps. With `--fix`, AgentWard generates a corrected policy file with every required gap closed (zero-trust default, approval gates, chaining isolation, data boundaries, sensitive-content scanning, etc.).
+
+Supported frameworks (53 controls across 6 frameworks):
+
+| Framework | Controls | Coverage |
+|---|---:|---|
+| **HIPAA** Security Rule | 8 | §164.312 Technical Safeguards + §164.308 Administrative Safeguards |
+| **GDPR** | 8 | Art. 5–32 personal-data processing |
+| **SOX** §404 | 8 | Internal controls over financial reporting |
+| **PCI-DSS v4.0** | 8 | Req. 1–10 cardholder data |
+| **DORA** (EU 2022/2554) | 9 | Art. 5/9/10/17/28 — third-party ICT risk, incident management, anomaly detection |
+| **MiFID II / RTS 6** | 10 | Art. 17 / RTS 6 — algorithmic trading governance, kill switch, segregation, record-keeping |
+
+#### 6. Verify your policy
 
 ```bash
 agentward probe --policy agentward.yaml
@@ -212,7 +233,7 @@ agentward probe --strict                      # exit 1 on any FAIL or GAP
 agentward probe --list                        # show all 68 built-in probes
 ```
 
-#### 6. Visualize your permission graph
+#### 7. Visualize your permission graph
 
 ```bash
 agentward map                                   # terminal visualization
@@ -304,20 +325,45 @@ Agent Host                    AgentWard                     Tool Server
 
 ## CLI Commands
 
+**Lifecycle commands** (the daily flow):
+
 | Command | Description |
 |---------|-------------|
 | `agentward init` | One-command setup — scan, generate policy, wire environment, start proxy |
-| `agentward scan` | Static analysis — permission maps, risk ratings, skill chains, fix guidance |
+| `agentward scan` | Static analysis — permission maps, risk ratings, skill chains, compliance hints, fix guidance |
 | `agentward configure` | Generate smart-default policy YAML from scan results |
 | `agentward setup` | Wire proxy into MCP configs or gateway ports |
 | `agentward inspect` | Start runtime proxy with live policy enforcement |
-| `agentward audit` | Read audit logs — summary stats, decision breakdowns, event timelines |
-| `agentward map` | Visualize the permission and chaining graph (terminal or Mermaid) |
-| `agentward diff` | Compare two policy files — shows breaking vs. relaxing changes |
-| `agentward status` | Show live proxy status and current session statistics |
-| `agentward comply` | Evaluate policies against regulatory frameworks (HIPAA, SOX, GDPR, PCI-DSS) with auto-fix |
+| `agentward comply` | Evaluate policies against regulatory frameworks (HIPAA, GDPR, SOX, PCI-DSS, DORA, MiFID II) with auto-fix |
 | `agentward probe` | Policy regression testing — fire adversarial probes through the engine, verify policies block what they should |
-| `agentward session` | Inspect active session state — verdicts, pattern match history, evasion events |
+
+**Inspection & monitoring:**
+
+| Command | Description |
+|---------|-------------|
+| `agentward map` | Visualize the permission and chaining graph (terminal or Mermaid) |
+| `agentward audit` | Read audit logs — summary stats, decision breakdowns, event timelines |
+| `agentward status` | Show live proxy status and current session statistics |
+| `agentward session` | Inspect session-level evasion detection — verdicts, pattern matches, evasion events |
+| `agentward diff` | Compare two policy files — shows breaking vs. relaxing changes |
+
+**Supply chain & deobfuscation:**
+
+| Command | Description |
+|---------|-------------|
+| `agentward preinstall` | Pre-install security check on a skill directory before installing it |
+| `agentward scan-python` | Scan a directory for Python supply-chain attack patterns (`.pth` files, malicious imports, install hooks) |
+| `agentward scan-npm` | Scan a `node_modules` directory for malicious postinstall hooks |
+| `agentward verify-deps` | Verify integrity of an npm dependency tree against expected lockfile state |
+| `agentward sanitize` | Detect and redact PII from a file (15 categories — see [PII Sanitization](#pii-sanitization)) |
+| `agentward decode` | Run a value through the deobfuscation pipeline (base64, hex, URL-encoded, unicode, ROT13, reversed) and show all decoded variants |
+
+**Registry & baseline:**
+
+| Command | Description |
+|---------|-------------|
+| `agentward registry` | Manage the MCP server risk registry — list, lookup, update entries |
+| `agentward baseline` | Behavioral baseline tracking — record normal call patterns, detect anomalies at runtime |
 
 ## Capability Scoping
 
@@ -450,54 +496,6 @@ These messages appear in the audit log, the terminal proxy output, and `agentwar
 | `approve` | Tool call held for human approval before forwarding |
 | `log` | Tool call forwarded, but logged with extra detail |
 | `redact` | Tool call forwarded with sensitive data stripped |
-
-## Declarative Capability Scoping
-
-Policy actions (`allow`/`block`/`approve`) control whether a tool can run at all. Capability scoping goes further: it controls **what values each argument is allowed to take**, at the per-call level.
-
-Add a `capabilities` block to any skill entry in your policy to define per-argument constraints:
-
-```yaml
-capabilities:
-  write_file:
-    path:
-      must_start_with: ["/tmp/", "/workspace/"]
-      must_not_contain: [".."]
-      blocklist: ["/etc/shadow", "/etc/passwd"]
-
-  http_request:
-    url:
-      allowed_domains: ["api.internal.example.com"]
-      allowed_schemes: ["https"]
-      blocked_ips: ["10.0.0.0/8", "172.16.0.0/12"]  # block RFC-1918 SSRF
-    method:
-      one_of: ["GET", "POST"]
-
-  run_query:
-    limit:
-      max: 1000             # prevent bulk data extraction
-    table:
-      one_of: ["reports", "public_metrics"]  # allowlist tables
-```
-
-All constraints on a single argument use **AND logic** — every rule must pass. If any argument fails its constraints, the call is BLOCKED with a specific error naming the violated rule.
-
-**Available constraint types:**
-
-| Type | Constraint | Example |
-|------|-----------|---------|
-| String | `must_start_with`, `must_not_start_with` | `must_start_with: ["/tmp/"]` |
-| String | `must_contain`, `must_not_contain` | `must_not_contain: [".."]` |
-| String | `matches`, `not_matches` (regex) | `matches: ["^[a-z0-9_]+$"]` |
-| String | `one_of`, `not_one_of` (exact values) | `one_of: ["GET", "POST"]` |
-| String | `allowlist`, `blocklist` (glob patterns) | `blocklist: ["/etc/*"]` |
-| String | `max_length` | `max_length: 256` |
-| Network | `allowed_domains` | `allowed_domains: ["api.github.com"]` |
-| Network | `allowed_schemes` | `allowed_schemes: ["https"]` |
-| Network | `blocked_ips` (CIDR) | `blocked_ips: ["10.0.0.0/8"]` |
-| Numeric | `min`, `max` | `max: 1000` |
-
-Missing arguments default to **BLOCK** — if a constraint is defined for an argument and the argument isn't present in the call, the call is rejected unless you add `fail_open: true` to that argument's constraints.
 
 ## Remote Approval via Telegram
 
@@ -872,22 +870,25 @@ ruff check agentward/
 
 ## Current Status & What's Tested
 
-AgentWard is early-stage software. We're being upfront about what works well and what hasn't been battle-tested yet.
+AgentWard is early-stage software (v0.4.0). We're upfront about what works well and what hasn't been battle-tested yet. **3,466 tests pass** across the codebase as of the latest release.
 
 **Tested end-to-end and working well:**
 - `agentward init` — one-command scan, policy generation, and environment wiring (macOS)
-- `agentward scan` — static analysis across MCP configs, Python tools, and OpenClaw skills (macOS); `.pth` supply chain scanner (59 tests)
+- `agentward scan` — static analysis across MCP configs, Python tools, and OpenClaw skills (macOS); `.pth` supply chain scanner; compliance-framework hint surfacing
 - `agentward configure` — policy YAML generation from scan results
 - `agentward setup --gateway openclaw` — OpenClaw gateway port swapping + LaunchAgent plist patching
 - `agentward inspect --gateway openclaw` — runtime enforcement of OpenClaw skill calls via LLM API interception (Anthropic provider, streaming mode). This is our most thoroughly tested path.
-- `agentward comply` — regulatory compliance evaluation across HIPAA (§164.312/§164.308), SOX (§404), GDPR (Art. 5–32), and PCI-DSS v4.0 (Req. 1–10), each with 8 controls, auto-fix policy generation (1500+ tests)
+- `agentward comply` — regulatory compliance evaluation across **HIPAA** (§164.312/§164.308, 8 controls), **GDPR** (Art. 5–32, 8 controls), **SOX §404** (8 controls), **PCI-DSS v4.0** (Req. 1–10, 8 controls), **DORA** (EU 2022/2554 Art. 5/9/10/17/28, 9 controls), and **MiFID II / RTS 6** (Art. 17 algorithmic trading, 10 controls). Auto-fix policy generation. 480+ tests.
 - PII sanitization — 15 categories, regex-based detection with Luhn validation, keyword anchoring, false positive mitigation
+- `agentward probe` — policy regression testing with 68 built-in adversarial probes across 9 attack categories, custom probe support
 
 **Built and unit-tested but not yet end-to-end verified:**
 - MCP stdio proxy (`agentward inspect -- npx server`) — the proxy, protocol parsing, and policy engine are tested in isolation with 1200+ unit tests, but we haven't run a full session with Claude Desktop/Cursor through the proxy yet
 - OpenAI provider interception (Chat Completions + Responses API) — interceptors are unit-tested but no live OpenAI traffic has flowed through them
 - Skill chaining enforcement — the chain tracker and policy evaluation work in tests, but the real-world interaction patterns haven't been validated
 - `agentward setup` for MCP config wrapping (Claude Desktop, Cursor, Windsurf, VS Code) — config rewriting is tested, but we haven't verified the full setup → restart → use cycle for each host
+- LLM-as-judge intent analysis — interceptors and verdict logic are tested, but real cost/latency profile under load is not yet characterized
+- Behavioral baseline anomaly detection — recording and scoring work in unit tests; live drift behavior on production agent traffic has not been measured
 
 **Platform support:**
 - **macOS** — developed and tested here. This is the only platform we're confident about.
@@ -940,7 +941,15 @@ AgentWard auto-detects both the latest OpenClaw (`~/.openclaw/openclaw.json`, `a
 
 ## License
 
-[Apache 2.0](LICENSE)
+AgentWard is licensed under the [Business Source License 1.1](LICENSE) (BUSL 1.1).
+
+- **You may** use, modify, and redistribute AgentWard, including for production use inside your own organization or as part of a non-competing product.
+- **You may not** offer AgentWard to third parties as a hosted or embedded service that competes with OpenSafe Inc.'s paid offerings.
+- **On 2028-04-24** the Licensed Work automatically converts to the Apache License 2.0.
+
+See [`LICENSE-CHANGE.md`](LICENSE-CHANGE.md) for the full rationale and FAQ.
+
+For commercial licensing inquiries: aditya@agentward.ai
 
 ---
 

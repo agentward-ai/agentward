@@ -126,6 +126,9 @@ def print_scan_report(
     # Risk summary footer (compact, website-style)
     _print_risk_footer(scan, chains, console)
 
+    # Compliance-framework suggestions (HIPAA / MiFID II / DORA / …)
+    _print_compliance_hints(scan, console)
+
     # Recommendations (with risk explanations)
     if recommendations:
         _print_recommendations(recommendations, scan, console)
@@ -144,7 +147,15 @@ def print_scan_json(scan: ScanResult, console: Console) -> None:
         scan: The complete scan result.
         console: Rich console to print to.
     """
+    from agentward.scan.compliance_hints import suggest_frameworks
+
     data = json.loads(scan.model_dump_json())
+    # Embed compliance-framework suggestions alongside the scan data so
+    # downstream tooling (CI dashboards, SARIF post-processors) can pick
+    # them up without re-running the scan.
+    data["compliance_suggestions"] = [
+        s.to_dict() for s in suggest_frameworks(scan)
+    ]
     console.print_json(json.dumps(data, indent=2))
 
 
@@ -285,6 +296,27 @@ def generate_scan_markdown(
                 lines.append(f"- **{risk}:** `{src}` → `{tgt}` ({count} chains) — {desc}")
             else:
                 lines.append(f"- **{risk}:** `{group[0].label}` — {desc}")
+        lines.append("")
+
+    # Compliance-framework suggestions
+    from agentward.scan.compliance_hints import suggest_frameworks
+    suggestions = suggest_frameworks(scan)
+    if suggestions:
+        lines.append("## Compliance Frameworks Worth Evaluating")
+        lines.append("")
+        for s in suggestions:
+            triggers_str = ""
+            if s.triggering_skills:
+                head = list(s.triggering_skills[:3])
+                extra = len(s.triggering_skills) - len(head)
+                triggers_str = f" (triggered by: {', '.join(head)}"
+                if extra > 0:
+                    triggers_str += f", +{extra} more"
+                triggers_str += ")"
+            lines.append(f"- **{s.display_name}** — {s.reason}{triggers_str}")
+            lines.append(f"  ```bash")
+            lines.append(f"  {s.command}")
+            lines.append(f"  ```")
         lines.append("")
 
     # Recommendations (grouped)
@@ -852,6 +884,49 @@ def _print_risk_footer(
         f"[{_CLR_GREEN}]\u2192[/{_CLR_GREEN}] Run "
         f"[bold {_CLR_GREEN}]agentward configure[/bold {_CLR_GREEN}] to generate policies"
     )
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# Compliance-framework hints
+# ---------------------------------------------------------------------------
+
+
+def _print_compliance_hints(scan: ScanResult, console: Console) -> None:
+    """Render compliance-framework suggestions if the scan triggered any.
+
+    Emits a short, color-coded block listing the frameworks worth
+    evaluating, why, and the exact CLI command to run.  Silent when no
+    suggestions apply, so non-regulated scans stay quiet.
+    """
+    from agentward.scan.compliance_hints import suggest_frameworks
+
+    suggestions = suggest_frameworks(scan)
+    if not suggestions:
+        return
+
+    console.print(
+        f"[bold {_CLR_CYAN}]Compliance frameworks worth evaluating:[/bold {_CLR_CYAN}]"
+    )
+    for s in suggestions:
+        # Show up to 3 triggering skills inline; truncate the rest.
+        if s.triggering_skills:
+            head = list(s.triggering_skills[:3])
+            extra = len(s.triggering_skills) - len(head)
+            skill_blob = ", ".join(head)
+            if extra > 0:
+                skill_blob += f", +{extra} more"
+            triggers = f"  [dim](triggered by: {skill_blob})[/dim]"
+        else:
+            triggers = ""
+
+        console.print(
+            f"  [{_CLR_GREEN}]\u2192[/{_CLR_GREEN}] "
+            f"[bold]{s.display_name}[/bold] \u2014 {s.reason}{triggers}"
+        )
+        console.print(
+            f"    [dim]$[/dim] [bold {_CLR_GREEN}]{s.command}[/bold {_CLR_GREEN}]"
+        )
     console.print()
 
 
