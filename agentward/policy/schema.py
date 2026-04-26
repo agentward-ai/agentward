@@ -920,6 +920,77 @@ class AuditConfig(BaseModel):
     )
 
 
+class SubcontractorEntry(BaseModel):
+    """A single ICT third-party / subcontractor in a skill's data path.
+
+    Used by DORA Art. 28 (third-party risk management) and EU AI Act Art. 25
+    (provider/distributor/importer obligations) to capture *who else touches
+    the data* when a skill executes — e.g. an LLM API provider, a vector-DB
+    SaaS, a hosted MCP server, a managed search index.
+
+    The fields are deliberately minimal: they capture what an auditor needs
+    in order to follow up (vendor name, what the vendor does, where data
+    lands, whether a written contract is in place). Anything more elaborate
+    (questionnaires, control attestations, exit plans) belongs in the
+    operator's own GRC system, not in the policy file.
+    """
+
+    vendor: str = Field(
+        description="Vendor / company name (e.g. 'Anthropic PBC', 'Pinecone Systems')."
+    )
+    role: str = Field(
+        description=(
+            "What the vendor does in this skill's data path "
+            "(e.g. 'LLM inference', 'vector storage', 'managed MCP host')."
+        ),
+    )
+    data_residency: str | None = Field(
+        default=None,
+        description=(
+            "Where the vendor processes data (e.g. 'eu-west-1', 'US', 'global'). "
+            "Important for GDPR Art. 44–49 transfer assessments and DORA Art. 28(3)."
+        ),
+    )
+    contract_status: str | None = Field(
+        default=None,
+        description=(
+            "Free-form contract status (e.g. 'signed-2026-01-15', 'pending', "
+            "'BAA-on-file'). Surfaces in compliance findings; not parsed."
+        ),
+    )
+
+
+class SkillMetadata(BaseModel):
+    """Operator-supplied metadata about a skill, separate from its permissions.
+
+    This metadata is not used by the runtime policy engine — it does not
+    change ALLOW/BLOCK decisions. It exists so that compliance frameworks
+    (DORA Art. 28, EU AI Act Art. 17/25) can report *who is accountable*
+    for a skill and *which third parties* sit in its data path.
+
+    Empty by default; populated only when an operator wants to drive
+    third-party-risk findings or evidence-pack output from the policy file
+    rather than maintain it in a separate GRC document.
+    """
+
+    owner: str | None = Field(
+        default=None,
+        description=(
+            "Accountable party for this skill — typically a team, role, or "
+            "email (e.g. 'platform-team@example.com'). Surfaces in audit "
+            "events and compliance reports as the responsible owner."
+        ),
+    )
+    subcontractor_chain: list[SubcontractorEntry] = Field(
+        default_factory=list,
+        description=(
+            "ICT third parties / subcontractors involved when this skill "
+            "executes. Used by DORA Art. 28 third-party risk findings and "
+            "EU AI Act Art. 25 provider-chain disclosures."
+        ),
+    )
+
+
 class DefaultAction(str, Enum):
     """Default action for tools that don't match any policy rule.
 
@@ -961,6 +1032,15 @@ class AgentWardPolicy(BaseModel):
         description="Sensitive content classifier configuration.",
     )
     data_boundaries: dict[str, DataBoundary] = Field(default_factory=dict)
+    skill_metadata: dict[str, SkillMetadata] = Field(
+        default_factory=dict,
+        description=(
+            "Per-skill operator-supplied metadata (owner, subcontractor chain). "
+            "Used by compliance frameworks (DORA Art. 28, EU AI Act Art. 25) "
+            "to report accountability and third-party data-path information. "
+            "Does not affect runtime policy decisions."
+        ),
+    )
     sequence_rules: list[SequenceRule] = Field(
         default_factory=list,
         description="Ordered sequence patterns for multi-step chaining detection. "

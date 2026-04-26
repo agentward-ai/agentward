@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentward"
-version = "0.5.1"
+version = "0.5.2"
 description = "Secure every agent action — from install to runtime. Source-available security platform for AI agents."
 readme = "README.md"
 license = "BUSL-1.1"

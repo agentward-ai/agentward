@@ -413,6 +413,53 @@ def _check_unregistered_third_party_warning(
     return findings
 
 
+def _check_subcontractor_chain(
+    policy: AgentWardPolicy,
+    scan: ScanResult | None,
+    analysis: SkillAnalysis,
+) -> list[ComplianceFinding]:
+    """Art. 28 — Subcontractor chain documented for each ICT service.
+
+    DORA Art. 28(3)(g)/(h) and Art. 29 require the register to capture
+    *the chain* of subcontractors a third-party service relies on, plus
+    the entity owner / point of accountability. AgentWard cannot infer
+    those automatically — they are operator-supplied facts. We surface
+    a RECOMMENDED finding for every scanned skill that lacks either an
+    `owner` or a non-empty `subcontractor_chain` in `skill_metadata`,
+    so the operator knows what to fill in for the evidence pack.
+    """
+    findings: list[ComplianceFinding] = []
+
+    for skill in sorted(analysis.all_skills):
+        meta = policy.skill_metadata.get(skill)
+        has_owner = bool(meta and meta.owner)
+        has_chain = bool(meta and meta.subcontractor_chain)
+        if has_owner and has_chain:
+            continue
+        missing: list[str] = []
+        if not has_owner:
+            missing.append("owner")
+        if not has_chain:
+            missing.append("subcontractor_chain")
+        findings.append(ComplianceFinding(
+            control_id="dora-art28.subcontractor-chain",
+            skill=skill,
+            description=(
+                f"Third-party ICT service '{skill}' is missing "
+                f"{' and '.join(missing)} in skill_metadata. DORA "
+                f"Art. 28(3) requires the register to capture the "
+                f"accountable owner and any subcontractors involved in "
+                f"the service's data path. AgentWard cannot infer this; "
+                f"document it in policy.skill_metadata so the evidence "
+                f"pack carries it through."
+            ),
+            fix=None,  # operator-supplied facts; no auto-fix possible
+            severity=ControlSeverity.RECOMMENDED,
+        ))
+
+    return findings
+
+
 # -----------------------------------------------------------------------
 # Control registry
 # -----------------------------------------------------------------------
@@ -505,6 +552,18 @@ DORA_CONTROLS: list[ComplianceControl] = [
         ),
         severity=ControlSeverity.RECOMMENDED,
         check=_check_anomaly_detection,
+    ),
+    ComplianceControl(
+        control_id="dora-art28.subcontractor-chain",
+        section="Art. 28",
+        title="Subcontractor Chain & Accountable Owner",
+        description=(
+            "Each third-party ICT service should have an accountable "
+            "owner and documented subcontractor chain in skill_metadata "
+            "for the DORA register (Art. 28(3))."
+        ),
+        severity=ControlSeverity.RECOMMENDED,
+        check=_check_subcontractor_chain,
     ),
     ComplianceControl(
         control_id="dora-art28.unregistered",

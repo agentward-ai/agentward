@@ -82,6 +82,7 @@ _SUGGESTION_ORDER: tuple[str, ...] = (
     "gdpr",
     "sox",
     "dora",
+    "eu_ai_act",
 )
 
 
@@ -210,6 +211,27 @@ def suggest_frameworks(scan: ScanResult) -> list[FrameworkSuggestion]:
             reason=reason,
             triggering_skills=triggering,
             command="agentward comply --framework dora",
+        )
+
+    # EU AI Act: broad scope. Any setup with multiple network-capable
+    # third-party AI components is in scope for Art. 12/14 oversight
+    # discipline regardless of risk classification. Triggers on the
+    # same broad-ICT-estate condition as DORA so EU operators see the
+    # AI Act mapping alongside DORA's third-party-risk one.
+    if broad_ict_estate or trading_skills or analysis.personal_data_skills:
+        triggers: set[str] = set(network_servers)
+        triggers.update(trading_skills)
+        triggers.update(analysis.personal_data_skills)
+        by_framework["eu_ai_act"] = FrameworkSuggestion(
+            framework="eu_ai_act",
+            display_name="EU AI Act (Reg. 2024/1689)",
+            reason=(
+                f"{len(triggers)} AI component(s) detected — EU AI Act "
+                f"Art. 12/14 record-keeping and oversight obligations "
+                f"apply to any production AI system."
+            ),
+            triggering_skills=tuple(sorted(triggers)),
+            command="agentward comply --framework eu_ai_act",
         )
 
     # Emit in canonical order, omit unset entries.

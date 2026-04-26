@@ -11,8 +11,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from agentward.comply.controls import (
     ComplianceRating,
     ControlSeverity,
@@ -24,12 +22,11 @@ from agentward.comply.frameworks.dora import DORA_CONTROLS
 from agentward.policy.schema import (
     AgentWardPolicy,
     ApprovalRule,
-    ChainingRule,
-    DataBoundary,
     DefaultAction,
     ResourcePermissions,
     SensitiveContentConfig,
-    ViolationAction,
+    SkillMetadata,
+    SubcontractorEntry,
 )
 from agentward.scan.config import ServerConfig, TransportType
 from agentward.scan.enumerator import ToolInfo
@@ -41,7 +38,6 @@ from agentward.scan.permissions import (
     ServerPermissionMap,
     ToolPermission,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -123,7 +119,7 @@ class TestRegistry:
     def test_get_dora_returns_controls(self) -> None:
         controls = get_framework("dora")
         assert controls is DORA_CONTROLS
-        assert len(controls) == 9
+        assert len(controls) == 10
 
     def test_case_insensitive_lookup(self) -> None:
         assert get_framework("DORA") == DORA_CONTROLS
@@ -409,6 +405,48 @@ class TestUnregisteredWarning:
         assert "dora-art28.unregistered" not in _control_ids(report)
 
 
+class TestSubcontractorChain:
+    def test_missing_metadata_fires(self) -> None:
+        scan = _scan(_server("filesystem", [_perm("read_file")]))
+        policy = _bare()
+        report = evaluate_compliance(policy, scan, DORA_CONTROLS, "dora")
+        finds = [f for f in report.findings
+                 if f.control_id == "dora-art28.subcontractor-chain"]
+        assert len(finds) == 1
+        assert finds[0].skill == "filesystem"
+        assert finds[0].severity == ControlSeverity.RECOMMENDED
+        assert finds[0].fix is None
+
+    def test_owner_only_still_fires(self) -> None:
+        scan = _scan(_server("filesystem", [_perm("read_file")]))
+        policy = _bare(skill_metadata={
+            "filesystem": SkillMetadata(owner="team@example.com"),
+        })
+        report = evaluate_compliance(policy, scan, DORA_CONTROLS, "dora")
+        assert "dora-art28.subcontractor-chain" in _control_ids(report)
+
+    def test_chain_only_still_fires(self) -> None:
+        scan = _scan(_server("filesystem", [_perm("read_file")]))
+        policy = _bare(skill_metadata={
+            "filesystem": SkillMetadata(
+                subcontractor_chain=[SubcontractorEntry(vendor="X", role="y")],
+            ),
+        })
+        report = evaluate_compliance(policy, scan, DORA_CONTROLS, "dora")
+        assert "dora-art28.subcontractor-chain" in _control_ids(report)
+
+    def test_owner_and_chain_passes(self) -> None:
+        scan = _scan(_server("filesystem", [_perm("read_file")]))
+        policy = _bare(skill_metadata={
+            "filesystem": SkillMetadata(
+                owner="team@example.com",
+                subcontractor_chain=[SubcontractorEntry(vendor="X", role="y")],
+            ),
+        })
+        report = evaluate_compliance(policy, scan, DORA_CONTROLS, "dora")
+        assert "dora-art28.subcontractor-chain" not in _control_ids(report)
+
+
 # ---------------------------------------------------------------------------
 # Skill rating roll-up
 # ---------------------------------------------------------------------------
@@ -437,6 +475,14 @@ class TestSkillRatings:
             sensitive_content=SensitiveContentConfig(
                 enabled=True, patterns=["api_key"],
             ),
+            skill_metadata={
+                "github": SkillMetadata(
+                    owner="platform-team@example.com",
+                    subcontractor_chain=[
+                        SubcontractorEntry(vendor="GitHub Inc.", role="repo hosting"),
+                    ],
+                ),
+            },
         )
         report = evaluate_compliance(policy, scan, DORA_CONTROLS, "dora")
         assert report.skill_ratings["github"] == ComplianceRating.GREEN
@@ -555,6 +601,14 @@ def _compliant_policy(skill: str = "github") -> AgentWardPolicy:
             },
         },
         require_approval=[ApprovalRule(tool_name=skill)],
+        skill_metadata={
+            skill: SkillMetadata(
+                owner="platform-team@example.com",
+                subcontractor_chain=[
+                    SubcontractorEntry(vendor="Example Vendor", role="hosting"),
+                ],
+            ),
+        },
     )
 
 

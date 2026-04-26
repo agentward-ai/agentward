@@ -1467,6 +1467,7 @@ def comply(
         import agentward.comply.frameworks.pci_dss  # noqa: F401
         import agentward.comply.frameworks.dora  # noqa: F401
         import agentward.comply.frameworks.mifid2  # noqa: F401
+        import agentward.comply.frameworks.eu_ai_act  # noqa: F401
     except Exception as e:
         _console.print(
             f"\n[bold red]Error:[/bold red] Failed to load framework modules: {e}",
@@ -1625,6 +1626,205 @@ def comply(
                 raise typer.Exit(1)
         else:
             raise typer.Exit(1)
+
+
+@app.command()
+def report(
+    output: Annotated[
+        Path,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Path for the generated HTML Evidence Pack.",
+        ),
+    ] = Path("agentward-evidence-pack.html"),
+    policy: Annotated[
+        Path,
+        typer.Option(
+            "--policy",
+            "-p",
+            help="Path to the agentward.yaml policy file.",
+        ),
+    ] = Path("agentward.yaml"),
+    frameworks: Annotated[
+        str,
+        typer.Option(
+            "--frameworks",
+            "-f",
+            help="Comma-separated list of frameworks to evaluate "
+            "(e.g. dora,mifid2,eu_ai_act).",
+        ),
+    ] = "dora,mifid2,eu_ai_act",
+    audit_log: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--audit-log",
+            help="Path to a JSONL audit log to verify and embed.",
+        ),
+    ] = None,
+    target: Annotated[
+        Optional[Path],
+        typer.Argument(
+            help="Path to scan for tool metadata. "
+            "If omitted, auto-discovers from known locations.",
+        ),
+    ] = None,
+    timeout: Annotated[
+        float,
+        typer.Option(
+            "--timeout",
+            "-t",
+            help="Timeout in seconds for MCP server enumeration.",
+        ),
+    ] = 15.0,
+) -> None:
+    """Generate a self-contained HTML Evidence Pack for an audit.
+
+    Bundles policy summary, per-framework compliance evaluation, audit
+    log integrity verification, and scan inventory into a single HTML
+    file that can be archived or printed to PDF in a browser.
+
+    Examples:
+      agentward report
+      agentward report -o evidence.html --frameworks dora,mifid2
+      agentward report --audit-log /var/log/agentward/audit.jsonl
+    """
+    from agentward.banner import print_banner
+    from agentward.comply.controls import evaluate_compliance
+    from agentward.comply.frameworks import get_framework
+    from agentward.policy.loader import load_policy
+    from agentward.report import build_evidence_pack
+
+    # Import all framework modules to trigger registration.
+    try:
+        import agentward.comply.frameworks.hipaa  # noqa: F401
+        import agentward.comply.frameworks.gdpr  # noqa: F401
+        import agentward.comply.frameworks.sox  # noqa: F401
+        import agentward.comply.frameworks.pci_dss  # noqa: F401
+        import agentward.comply.frameworks.dora  # noqa: F401
+        import agentward.comply.frameworks.mifid2  # noqa: F401
+        import agentward.comply.frameworks.eu_ai_act  # noqa: F401
+    except Exception as e:
+        _console.print(
+            f"\n[bold red]Error:[/bold red] Failed to load framework modules: {e}",
+            highlight=False,
+        )
+        raise typer.Exit(1)
+
+    print_banner(_console)
+
+    # Parse framework list
+    framework_names = [
+        name.strip().lower()
+        for name in frameworks.split(",")
+        if name.strip()
+    ]
+    if not framework_names:
+        _console.print(
+            "\n[bold red]Error:[/bold red] --frameworks must list at least one framework.",
+            highlight=False,
+        )
+        raise typer.Exit(1)
+
+    # Load policy
+    try:
+        loaded_policy = load_policy(policy)
+    except FileNotFoundError as e:
+        _console.print(f"\n[bold red]Error:[/bold red] {e}", highlight=False)
+        raise typer.Exit(1)
+    except Exception as e:
+        _console.print(f"\n[bold red]Error:[/bold red] {e}", highlight=False)
+        raise typer.Exit(1)
+
+    # Run scan (optional — gracefully degrade if no tools found)
+    scan_result = None
+    try:
+        scan_result, _recommendations, _config_paths, _chains = _run_scan(
+            target, timeout, _console,
+        )
+    except (typer.Exit, SystemExit):
+        _console.print(
+            "[dim]No tools discovered — generating policy-only Evidence Pack.[/dim]\n"
+        )
+    except Exception as e:
+        _console.print(
+            f"[dim]Scan failed ({type(e).__name__}: {e}) "
+            f"— generating policy-only Evidence Pack.[/dim]\n"
+        )
+
+    # Evaluate every requested framework
+    reports = {}
+    for fw_name in framework_names:
+        try:
+            controls = get_framework(fw_name)
+        except ValueError as e:
+            _console.print(
+                f"\n[bold red]Error:[/bold red] {e}",
+                highlight=False,
+            )
+            raise typer.Exit(1)
+        reports[fw_name] = evaluate_compliance(
+            loaded_policy, scan_result, controls, fw_name,
+        )
+
+    # Build the Evidence Pack
+    pack = build_evidence_pack(
+        loaded_policy,
+        policy_path=policy,
+        reports=reports,
+        scan_result=scan_result,
+        audit_log_path=audit_log,
+    )
+
+    # Write HTML
+    try:
+        output.write_text(pack.to_html(), encoding="utf-8")
+    except PermissionError:
+        _console.print(
+            f"\n[bold red]Error:[/bold red] Permission denied writing to {output}.",
+            highlight=False,
+        )
+        raise typer.Exit(1)
+
+    # Summary line
+    total_required = sum(
+        sum(
+            1 for f in r.findings
+            if f.severity.value == "required"
+        )
+        for r in reports.values()
+    )
+    total_recommended = sum(
+        sum(
+            1 for f in r.findings
+            if f.severity.value == "recommended"
+        )
+        for r in reports.values()
+    )
+    audit_note = ""
+    if pack.audit_verification is not None:
+        v = pack.audit_verification
+        if v.total_lines > 0 and v.ok and v.signed_lines > 0:
+            audit_note = f" · audit chain VERIFIED ({v.signed_lines}/{v.total_lines})"
+        elif v.total_lines > 0 and not v.ok:
+            audit_note = (
+                f" · audit chain BROKEN at line {v.first_break}"
+            )
+        elif v.total_lines > 0:
+            audit_note = f" · audit log present ({v.total_lines} entries, unsigned)"
+        else:
+            audit_note = " · audit log empty"
+
+    _console.print(
+        f"\n[bold #00ff88]Evidence Pack written:[/bold #00ff88] {output}\n"
+        f"[dim]"
+        f"frameworks: {', '.join(framework_names)} · "
+        f"required gaps: {total_required} · "
+        f"recommended gaps: {total_recommended}"
+        f"{audit_note}"
+        f"[/dim]\n"
+        f"[dim]Open in a browser and use Print → Save as PDF for archive.[/dim]\n"
+    )
 
 
 @app.command()

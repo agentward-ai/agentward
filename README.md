@@ -200,7 +200,7 @@ agentward comply --framework mifid2 --json  # machine-readable for CI dashboards
 
 Loads your policy and runs it against the controls of a regulatory framework, producing a per-skill compliance rating (GREEN / YELLOW / RED) and a list of specific gaps. With `--fix`, AgentWard generates a corrected policy file with every required gap closed (zero-trust default, approval gates, chaining isolation, data boundaries, sensitive-content scanning, etc.).
 
-Supported frameworks (53 controls across 6 frameworks):
+Supported frameworks (62 controls across 7 frameworks):
 
 | Framework | Controls | Coverage |
 |---|---:|---|
@@ -208,8 +208,9 @@ Supported frameworks (53 controls across 6 frameworks):
 | **GDPR** | 8 | Art. 5–32 personal-data processing |
 | **SOX** §404 | 8 | Internal controls over financial reporting |
 | **PCI-DSS v4.0** | 8 | Req. 1–10 cardholder data |
-| **DORA** (EU 2022/2554) | 9 | Art. 5/9/10/17/28 — third-party ICT risk, incident management, anomaly detection |
+| **DORA** (EU 2022/2554) | 10 | Art. 5/9/10/17/28 — third-party ICT risk, incident management, subcontractor chain, anomaly detection |
 | **MiFID II / RTS 6** | 10 | Art. 17 / RTS 6 — algorithmic trading governance, kill switch, segregation, record-keeping |
+| **EU AI Act** (Reg. 2024/1689) | 8 | Art. 9/12/13/14/15/25 — risk management, record-keeping, human oversight, value-chain disclosure |
 
 #### 6. Verify your policy
 
@@ -334,7 +335,8 @@ Agent Host                    AgentWard                     Tool Server
 | `agentward configure` | Generate smart-default policy YAML from scan results |
 | `agentward setup` | Wire proxy into MCP configs or gateway ports |
 | `agentward inspect` | Start runtime proxy with live policy enforcement |
-| `agentward comply` | Evaluate policies against regulatory frameworks (HIPAA, GDPR, SOX, PCI-DSS, DORA, MiFID II) with auto-fix |
+| `agentward comply` | Evaluate policies against regulatory frameworks (HIPAA, GDPR, SOX, PCI-DSS, DORA, MiFID II, EU AI Act) with auto-fix |
+| `agentward report` | Generate a self-contained HTML Evidence Pack for an audit (policy + per-framework findings + audit-chain integrity + scan inventory) |
 | `agentward probe` | Policy regression testing — fire adversarial probes through the engine, verify policies block what they should |
 
 **Inspection & monitoring:**
