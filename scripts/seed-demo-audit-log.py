@@ -7,14 +7,30 @@ the ``AGENTWARD_AUDIT_HMAC_KEY`` environment variable.
 
 The 8 entries simulate a morning workflow performed by an AI research
 assistant -- not by the firm's trading engine. AgentWard sits in the
-AI-agent path; it never touches the trading hot path. The keystone
-event in the timeline is line 5: the assistant tried to call
-``submit_order`` on the trading skill and AgentWard blocked it,
-because the policy explicitly denies write access on ``trading-engine``
-to AI agents. Order submission is reserved for the algorithmic
-trading runtime AgentWard does not proxy.
+AI-agent path; it never touches the trading hot path.
 
-Run from the repo root with the venv active:
+The keystone event in the timeline is line 5: the assistant attempted
+to call ``append_note`` with a path *outside the configured research
+scope* (``/etc/cron.d/exfil.sh``). AgentWard's policy attaches a
+``must_start_with`` capability constraint to ``append_note``'s ``path``
+argument. The constraint refused the call.
+
+This is the canonical capability-scoping story:
+
+  * The agent *should* be allowed to write -- writing notebooks is its
+    job. Action-level permissions allow ``append_note`` in general.
+  * But only within scope -- the ``must_start_with`` constraint pins
+    every ``path`` argument to ``/Users/research/notebooks/``.
+  * Even a prompt-injected agent cannot escape the scope, because the
+    constraint is enforced *outside* the LLM's context window.
+
+Field shape matches the production ``AuditLogger`` exactly:
+``timestamp``, ``event``, ``tool``, ``arguments``, ``decision``,
+``reason``, ``skill``, ``resource``, ``principal``, plus the HMAC chain
+fields ``prev_hash`` / ``hmac``. All reason strings use plain ASCII so
+the on-disk JSON is human-readable without ``\\u2014`` escapes.
+
+Run from the repo root with the venv active::
 
     AGENTWARD_AUDIT_HMAC_KEY=flowtraders-demo-hmac-key-2026 \
         python3 scripts/seed-demo-audit-log.py
@@ -22,9 +38,6 @@ Run from the repo root with the venv active:
 The output is deterministic given a fixed key -- useful for rehearsing
 the Evidence Pack demo and for unit-testing tamper detection on real
 fixture data.
-
-Note: all reason strings use plain ASCII (hyphens, not em-dashes) so
-the on-disk JSON is human-readable without ``\\u2014`` escapes.
 """
 
 from __future__ import annotations
@@ -35,10 +48,13 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+# Path-prefix that the policy's must_start_with capability constraint pins
+# every append_note path argument to. The keystone BLOCK on line 5 is the
+# agent attempting to write *outside* this prefix.
+SCOPE_PREFIX = "/Users/research/notebooks/"
+
 
 def main() -> int:
-    # Defer the import so a missing AgentWard install fails with a
-    # readable error rather than a stack trace.
     try:
         from agentward.audit.integrity import AuditChain
     except ImportError:
@@ -60,69 +76,115 @@ def main() -> int:
     out_dir.mkdir(exist_ok=True)
     out = out_dir / "audit.jsonl"
 
-    # 8 entries -- a morning workflow performed by an AI research
-    # assistant. Read-only / reporting actions, plus one BLOCK that
-    # demonstrates AgentWard refusing to let the assistant cross into
-    # the trading path. All reasons are plain ASCII to keep the on-disk
-    # JSON readable without unicode escapes.
     base = datetime(2026, 4, 25, 8, 30, 0, tzinfo=UTC)
-    actor = "research-assistant-v1"
+    principal = "research-assistant-v1"
 
-    events: list[tuple[str, str, str, str]] = [
-        # (skill, tool, decision, reason)
-        (
-            "market-data-feed", "list_symbols", "ALLOW",
-            "Action 'read' on resource 'feed' is allowed for skill 'market-data-feed'.",
-        ),
-        (
-            "trading-engine", "read_positions", "ALLOW",
-            "Action 'read' on resource 'order' is allowed for skill 'trading-engine'.",
-        ),
-        (
-            "research-notebook", "read_notebook", "ALLOW",
-            "Action 'read' on resource 'file' is allowed for skill 'research-notebook'.",
-        ),
-        (
-            "research-notebook", "append_note", "APPROVE",
-            "Tool 'append_note' requires human approval before execution (write to file).",
-        ),
+    # 8 entries -- a morning workflow performed by an AI research
+    # assistant. Read-only / reporting actions, two gated writes, plus
+    # the keystone BLOCK on line 5: an attempt to write outside the
+    # configured research scope, refused by a path-prefix capability
+    # constraint.
+    events: list[dict[str, object]] = [
+        {
+            "tool": "list_symbols",
+            "skill": "market-data-feed",
+            "resource": "feed",
+            "arguments": {},
+            "decision": "ALLOW",
+            "reason": "Action 'read' on resource 'feed' is allowed for skill 'market-data-feed'.",
+        },
+        {
+            "tool": "read_positions",
+            "skill": "trading-engine",
+            "resource": "order",
+            "arguments": {},
+            "decision": "ALLOW",
+            "reason": "Action 'read' on resource 'order' is allowed for skill 'trading-engine'.",
+        },
+        {
+            "tool": "read_notebook",
+            "skill": "research-notebook",
+            "resource": "file",
+            "arguments": {"path": SCOPE_PREFIX + "momentum-strategy.ipynb"},
+            "decision": "ALLOW",
+            "reason": "Action 'read' on resource 'file' is allowed for skill 'research-notebook'.",
+        },
+        {
+            "tool": "append_note",
+            "skill": "research-notebook",
+            "resource": "file",
+            "arguments": {
+                "path": SCOPE_PREFIX + "morning-brief.md",
+                "content": "<redacted>",
+            },
+            "decision": "APPROVE",
+            "reason": "Tool 'append_note' requires human approval before execution (write_file).",
+        },
         # ---- KEYSTONE BLOCK (line 5) ------------------------------------
-        # The AI assistant attempted to submit an order via the trading
-        # skill. The policy denies write access on trading-engine to AI
-        # agents -- order submission is owned by the algorithmic trading
-        # runtime, which AgentWard does not proxy. AgentWard kept the
-        # agent out of the trading path.
-        (
-            "trading-engine", "submit_order", "BLOCK",
-            "Action 'write' on resource 'order' is denied for skill 'trading-engine'. "
-            "Tool 'submit_order' blocked.",
-        ),
-        # -------------------------------------------------------------------
-        (
-            "market-data-feed", "snapshot_book", "ALLOW",
-            "Action 'read' on resource 'feed' is allowed for skill 'market-data-feed'.",
-        ),
-        (
-            "trading-engine", "read_positions", "ALLOW",
-            "Action 'read' on resource 'order' is allowed for skill 'trading-engine'.",
-        ),
-        (
-            "research-notebook", "append_note", "APPROVE",
-            "Tool 'append_note' requires human approval before execution (write to file).",
-        ),
+        # The AI assistant attempted to append a note *outside* the
+        # configured research scope -- a path-prefix capability
+        # constraint refused the call. The reason string is the exact
+        # format AgentWard's capability engine produces.
+        {
+            "tool": "append_note",
+            "skill": "research-notebook",
+            "resource": "file",
+            "arguments": {
+                "path": "/etc/cron.d/exfil.sh",
+                "content": "<redacted>",
+            },
+            "decision": "BLOCK",
+            "reason": (
+                f"BLOCKED [must_start_with]: Argument 'path' value "
+                f"'/etc/cron.d/exfil.sh' must start with one of "
+                f"['{SCOPE_PREFIX}']."
+            ),
+        },
+        # -----------------------------------------------------------------
+        {
+            "tool": "snapshot_book",
+            "skill": "market-data-feed",
+            "resource": "feed",
+            "arguments": {"symbol": "ES"},
+            "decision": "ALLOW",
+            "reason": "Action 'read' on resource 'feed' is allowed for skill 'market-data-feed'.",
+        },
+        {
+            "tool": "read_positions",
+            "skill": "trading-engine",
+            "resource": "order",
+            "arguments": {},
+            "decision": "ALLOW",
+            "reason": "Action 'read' on resource 'order' is allowed for skill 'trading-engine'.",
+        },
+        {
+            "tool": "append_note",
+            "skill": "research-notebook",
+            "resource": "file",
+            "arguments": {
+                "path": SCOPE_PREFIX + "eod-summary.md",
+                "content": "<redacted>",
+            },
+            "decision": "APPROVE",
+            "reason": "Tool 'append_note' requires human approval before execution (write_file).",
+        },
     ]
 
     chain = AuditChain(key=key_env.encode("utf-8"))
     with out.open("w", encoding="utf-8") as f:
-        for i, (skill, tool, decision, reason) in enumerate(events):
+        for i, event_data in enumerate(events):
             entry: dict[str, object] = {
-                "ts": (base + timedelta(minutes=i * 3)).isoformat(timespec="seconds"),
+                "timestamp": (
+                    base + timedelta(minutes=i * 3)
+                ).isoformat(timespec="seconds"),
                 "event": "tool_call",
-                "actor": actor,
-                "skill": skill,
-                "tool": tool,
-                "decision": decision,
-                "reason": reason,
+                "tool": event_data["tool"],
+                "arguments": event_data["arguments"],
+                "decision": event_data["decision"],
+                "reason": event_data["reason"],
+                "skill": event_data["skill"],
+                "resource": event_data["resource"],
+                "principal": principal,
             }
             chain.sign(entry)
             f.write(json.dumps(entry) + "\n")
