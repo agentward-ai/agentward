@@ -397,10 +397,16 @@ def _section_executive_summary(pack: EvidencePack) -> str:
         else:
             color = _RATING_COLORS[ComplianceRating.GREEN]
             label = "CLEAN"
+        # Disambiguate the count: these are FAILURES / GAPS, not passes.
+        # The word "gaps" makes it unambiguous against an auditor's quick
+        # read where "0 required" alone could be misread as "0 controls
+        # passed required-tier" rather than "0 required-tier failures".
         cards.append(
             f'<div class="summary-card">'
             f'<div class="label">{_esc(fw.upper())}</div>'
             f'<div class="value">{required} required · {recommended} recommended</div>'
+            f'<div style="font-size: 11px; color: #6b7280; margin-top: 2px;">'
+            f'control gaps</div>'
             f'<div style="margin-top: 6px;">{_badge(label, color)}</div>'
             f'</div>'
         )
@@ -423,6 +429,8 @@ def _section_executive_summary(pack: EvidencePack) -> str:
             f'<div class="summary-card">'
             f'<div class="label">AUDIT CHAIN</div>'
             f'<div class="value">{v.signed_lines}/{v.total_lines} signed</div>'
+            f'<div style="font-size: 11px; color: #6b7280; margin-top: 2px;">'
+            f'HMAC entries verified</div>'
             f'<div style="margin-top: 6px;">{_badge(audit_label, audit_color)}</div>'
             f'</div>'
         )
@@ -568,16 +576,69 @@ def _section_framework_findings(pack: EvidencePack) -> str:
             "</div>"
         )
         if report.skill_ratings:
+            # Pre-bucket findings by skill so each row's count is O(1).
+            findings_by_skill: dict[str, list[ComplianceFinding]] = {}
+            for finding in report.findings:
+                if finding.skill is not None:
+                    findings_by_skill.setdefault(finding.skill, []).append(finding)
+
             rating_rows = []
             for skill in sorted(report.skill_ratings.keys()):
                 rating = report.skill_ratings[skill]
+                skill_findings = findings_by_skill.get(skill, [])
+                req = sum(
+                    1 for f in skill_findings
+                    if f.severity == ControlSeverity.REQUIRED
+                )
+                rec = sum(
+                    1 for f in skill_findings
+                    if f.severity == ControlSeverity.RECOMMENDED
+                )
+                if req == 0 and rec == 0:
+                    findings_cell = (
+                        "<span class='muted'>none</span>"
+                    )
+                else:
+                    findings_cell = (
+                        f"<span style='color: #dc2626; font-weight: 600;'>{req}</span>"
+                        f" <span class='muted'>required</span> · "
+                        f"<span style='color: #d97706; font-weight: 600;'>{rec}</span>"
+                        f" <span class='muted'>recommended</span>"
+                    )
+                # Owner from skill_metadata, if declared.
+                meta = pack.policy.skill_metadata.get(skill)
+                if meta and meta.owner:
+                    owner_cell = _esc(meta.owner)
+                else:
+                    owner_cell = "<span class='muted'>—</span>"
+                # Subcontractor count — quick visual cue for register completeness.
+                sub_count = (
+                    len(meta.subcontractor_chain)
+                    if meta and meta.subcontractor_chain else 0
+                )
+                if sub_count > 0:
+                    sub_cell = str(sub_count)
+                else:
+                    sub_cell = "<span class='muted'>—</span>"
                 rating_rows.append(
-                    f"<tr><td><strong>{_esc(skill)}</strong></td>"
-                    f"<td>{_rating_badge(rating)}</td></tr>"
+                    "<tr>"
+                    f"<td><strong>{_esc(skill)}</strong></td>"
+                    f"<td>{_rating_badge(rating)}</td>"
+                    f"<td>{findings_cell}</td>"
+                    f"<td>{owner_cell}</td>"
+                    f"<td style='text-align: center;'>{sub_cell}</td>"
+                    "</tr>"
                 )
             parts.append(
                 "<table>\n"
-                "<tr><th style='width: 280px;'>Skill</th><th>Rating</th></tr>\n"
+                "<tr>"
+                "<th style='width: 200px;'>Skill</th>"
+                "<th style='width: 90px;'>Rating</th>"
+                "<th>Findings</th>"
+                "<th>Owner</th>"
+                "<th style='width: 100px; text-align: center;'>"
+                "Subcontractors</th>"
+                "</tr>\n"
                 + "\n".join(rating_rows) + "\n</table>\n"
             )
         parts.append(_findings_table(report.findings))
