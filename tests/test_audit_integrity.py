@@ -310,7 +310,7 @@ class TestAuditLoggerIdentity:
     ) -> None:
         monkeypatch.delenv(KEY_ENV_VAR, raising=False)
         log = tmp_path / "audit.jsonl"
-        logger = AuditLogger(log_path=log, principal="alice@flowtraders.com")
+        logger = AuditLogger(log_path=log, principal="alice@firm.example")
         try:
             logger.log_tool_call(
                 tool_name="read_file",
@@ -327,7 +327,7 @@ class TestAuditLoggerIdentity:
 
         line = log.read_text().strip()
         entry = json.loads(line)
-        assert entry["principal"] == "alice@flowtraders.com"
+        assert entry["principal"] == "alice@firm.example"
         assert entry["event"] == "tool_call"
 
     def test_principal_falls_back_to_env(
