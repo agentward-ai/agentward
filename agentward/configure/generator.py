@@ -517,6 +517,44 @@ def _policy_to_dict(policy: AgentWardPolicy) -> dict:
     if policy.baseline_block_threshold != 0.8:
         data["baseline_block_threshold"] = policy.baseline_block_threshold
 
+    # Capability constraints (per-tool argument scoping).
+    # Round-trip through model_dump so nested ArgumentConstraints fields
+    # serialize cleanly. Omit any tool whose args dict is empty.
+    if policy.capabilities:
+        caps_dict: dict = {}
+        for tool_name, cap_spec in policy.capabilities.items():
+            args_dict: dict = {}
+            for arg_name, constraint in cap_spec.args.items():
+                # Pydantic model_dump gives us a dict; strip default-valued
+                # fields so the YAML doesn't bloat with empty lists.
+                raw = constraint.model_dump(exclude_defaults=True)
+                if raw:  # only emit non-empty constraint sets
+                    args_dict[arg_name] = raw
+            if args_dict:
+                caps_dict[tool_name] = {"args": args_dict}
+        if caps_dict:
+            data["capabilities"] = caps_dict
+
+    # Skill metadata (operator-supplied: owner + subcontractor chain).
+    # This block is operator-authored, not auto-generated, so we
+    # round-trip it through write to avoid silently dropping content
+    # the operator put in their policy file.
+    if policy.skill_metadata:
+        meta_dict: dict = {}
+        for skill_name, meta in policy.skill_metadata.items():
+            entry: dict = {}
+            if meta.owner is not None:
+                entry["owner"] = meta.owner
+            if meta.subcontractor_chain:
+                entry["subcontractor_chain"] = [
+                    sub.model_dump(exclude_defaults=True)
+                    for sub in meta.subcontractor_chain
+                ]
+            if entry:
+                meta_dict[skill_name] = entry
+        if meta_dict:
+            data["skill_metadata"] = meta_dict
+
     # LLM judge (only written when explicitly enabled — default-off feature)
     if policy.llm_judge.enabled:
         j = policy.llm_judge

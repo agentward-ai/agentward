@@ -506,3 +506,79 @@ class TestPolicyToDict:
         )
         d = _policy_to_dict(policy)
         assert d["skills"]["server"]["resource"] == {"denied": True}
+
+    def test_skill_metadata_round_trips(self, tmp_path: Path) -> None:
+        """Regression: operator-supplied skill_metadata must survive
+        write -> load. Previously dropped silently by _policy_to_dict,
+        which meant `agentward comply --fix` lost owner / subcontractor
+        chain content the operator had authored."""
+        from agentward.policy.schema import SkillMetadata, SubcontractorEntry
+
+        original = AgentWardPolicy(
+            version="1.0",
+            skill_metadata={
+                "trading-engine": SkillMetadata(
+                    owner="platform@firm.example",
+                    subcontractor_chain=[
+                        SubcontractorEntry(
+                            vendor="AWS",
+                            role="compute",
+                            data_residency="eu-west-1",
+                            contract_status="msa-2025",
+                        ),
+                    ],
+                ),
+            },
+        )
+        d = _policy_to_dict(original)
+        assert "skill_metadata" in d
+        assert d["skill_metadata"]["trading-engine"]["owner"] == "platform@firm.example"
+        chain = d["skill_metadata"]["trading-engine"]["subcontractor_chain"]
+        assert len(chain) == 1
+        assert chain[0]["vendor"] == "AWS"
+        assert chain[0]["data_residency"] == "eu-west-1"
+
+        # Full write -> load round-trip via the public API.
+        out = tmp_path / "p.yaml"
+        write_policy(original, out)
+        loaded = load_policy(out)
+        assert "trading-engine" in loaded.skill_metadata
+        assert loaded.skill_metadata["trading-engine"].owner == "platform@firm.example"
+        assert len(loaded.skill_metadata["trading-engine"].subcontractor_chain) == 1
+        sub = loaded.skill_metadata["trading-engine"].subcontractor_chain[0]
+        assert sub.vendor == "AWS"
+        assert sub.contract_status == "msa-2025"
+
+    def test_capabilities_round_trip(self, tmp_path: Path) -> None:
+        """Regression: per-tool capability constraints must survive write
+        -> load. Same root cause as the skill_metadata bug -- the
+        serializer omitted the field, silently dropping operator-authored
+        capability scoping on `agentward comply --fix`."""
+        from agentward.policy.schema import (
+            ArgumentConstraint,
+            CapabilitySpec,
+        )
+
+        original = AgentWardPolicy(
+            version="1.0",
+            capabilities={
+                "append_note": CapabilitySpec(
+                    args={
+                        "path": ArgumentConstraint(
+                            allowed_prefixes=["/Users/research/notebooks/"],
+                        ),
+                    },
+                ),
+            },
+        )
+        d = _policy_to_dict(original)
+        assert "capabilities" in d
+        path_constraint = d["capabilities"]["append_note"]["args"]["path"]
+        assert path_constraint["allowed_prefixes"] == ["/Users/research/notebooks/"]
+
+        out = tmp_path / "p.yaml"
+        write_policy(original, out)
+        loaded = load_policy(out)
+        assert "append_note" in loaded.capabilities
+        loaded_path = loaded.capabilities["append_note"].args["path"]
+        assert loaded_path.allowed_prefixes == ["/Users/research/notebooks/"]
