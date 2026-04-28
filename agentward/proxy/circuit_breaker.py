@@ -97,7 +97,14 @@ class CircuitBreaker:
         if not self.config.use_args_hash or not arguments:
             return tool_name
 
-        # Deterministic hash of arguments for grouping identical calls
+        # Deterministic hash of arguments for grouping identical calls.
+        # MD5 here is a non-cryptographic identifier (bucket key for the
+        # rate-limiter), not a security primitive — collision resistance
+        # is not required and `usedforsecurity=False` tells linters and
+        # readers exactly that.
         args_str = json.dumps(arguments, sort_keys=True, default=str)
-        args_hash = hashlib.md5(args_str.encode()).hexdigest()[:12]
+        args_hash = hashlib.md5(  # noqa: S324  (non-security identifier)
+            args_str.encode(),
+            usedforsecurity=False,
+        ).hexdigest()[:12]
         return f"{tool_name}:{args_hash}"
