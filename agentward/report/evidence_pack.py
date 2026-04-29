@@ -246,6 +246,18 @@ h3 { font-size: 16px; margin: 24px 0 8px 0; color: #374151; }
     font-weight: 600;
     color: #111827;
 }
+.summary-card .metric {
+    font-size: 13px;
+    color: #1f2937;
+    margin: 3px 0;
+    line-height: 1.3;
+}
+.summary-card .metric .metric-num {
+    font-size: 18px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-right: 3px;
+}
 .badge {
     display: inline-block;
     padding: 2px 10px;
@@ -398,15 +410,22 @@ def _section_executive_summary(pack: EvidencePack) -> str:
             color = _RATING_COLORS[ComplianceRating.GREEN]
             label = "CLEAN"
         # Disambiguate the count: these are FAILURES / GAPS, not passes.
-        # The word "gaps" makes it unambiguous against an auditor's quick
-        # read where "0 required" alone could be misread as "0 controls
-        # passed required-tier" rather than "0 required-tier failures".
+        # Each line spells out the noun explicitly (e.g. "0 required
+        # control gaps" rather than "0 required") so a skim can't
+        # mis-parse this as "0 controls passing required-tier".
+        req_word = "control gap" if required == 1 else "control gaps"
+        rec_word = "control gap" if recommended == 1 else "control gaps"
         cards.append(
             f'<div class="summary-card">'
             f'<div class="label">{_esc(fw.upper())}</div>'
-            f'<div class="value">{required} required · {recommended} recommended</div>'
-            f'<div style="font-size: 11px; color: #6b7280; margin-top: 2px;">'
-            f'control gaps</div>'
+            f'<div class="metric">'
+            f'<span class="metric-num">{required}</span>'
+            f' required {req_word}'
+            f'</div>'
+            f'<div class="metric">'
+            f'<span class="metric-num">{recommended}</span>'
+            f' recommended {rec_word}'
+            f'</div>'
             f'<div style="margin-top: 6px;">{_badge(label, color)}</div>'
             f'</div>'
         )
@@ -425,12 +444,15 @@ def _section_executive_summary(pack: EvidencePack) -> str:
         else:
             audit_label = "BROKEN"
             audit_color = _RATING_COLORS[ComplianceRating.RED]
+        entries_word = "entry" if v.total_lines == 1 else "entries"
         cards.append(
             f'<div class="summary-card">'
             f'<div class="label">AUDIT CHAIN</div>'
-            f'<div class="value">{v.signed_lines}/{v.total_lines} signed</div>'
-            f'<div style="font-size: 11px; color: #6b7280; margin-top: 2px;">'
-            f'HMAC entries verified</div>'
+            f'<div class="metric">'
+            f'<span class="metric-num">{v.signed_lines}</span>'
+            f' of <span class="metric-num">{v.total_lines}</span>'
+            f' {entries_word} HMAC-verified'
+            f'</div>'
             f'<div style="margin-top: 6px;">{_badge(audit_label, audit_color)}</div>'
             f'</div>'
         )
