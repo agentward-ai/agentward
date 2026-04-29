@@ -2,7 +2,7 @@
 """Seed a signed audit log for the FlowTraders demo.
 
 Writes 8 deterministic HMAC-signed JSONL entries to
-``/tmp/agentward-comply-demo/audit.jsonl``. The HMAC key is read from
+``/tmp/agentward-flowtraders/audit.jsonl``. The HMAC key is read from
 the ``AGENTWARD_AUDIT_HMAC_KEY`` environment variable.
 
 The 8 entries simulate a morning workflow performed by an AI research
@@ -72,7 +72,7 @@ def main() -> int:
         )
         return 1
 
-    out_dir = Path("/tmp/agentward-comply-demo")
+    out_dir = Path("/tmp/agentward-flowtraders")
     out_dir.mkdir(exist_ok=True)
     out = out_dir / "audit.jsonl"
 
@@ -123,8 +123,9 @@ def main() -> int:
         # ---- KEYSTONE BLOCK (line 5) ------------------------------------
         # The AI assistant attempted to append a note *outside* the
         # configured research scope -- a path-prefix capability
-        # constraint refused the call. The reason string is the exact
-        # format AgentWard's capability engine produces.
+        # constraint refused the call. The reason string matches the
+        # exact format AgentWard's path-constraint engine produces
+        # for an allowed_prefixes violation (constraints.py).
         {
             "tool": "append_note",
             "skill": "research-notebook",
@@ -135,9 +136,8 @@ def main() -> int:
             },
             "decision": "BLOCK",
             "reason": (
-                f"BLOCKED [must_start_with]: Argument 'path' value "
-                f"'/etc/cron.d/exfil.sh' must start with one of "
-                f"['{SCOPE_PREFIX}']."
+                f"Path '/etc/cron.d/exfil.sh' (from argument 'path') "
+                f"is not under any allowed prefix: ['{SCOPE_PREFIX}']."
             ),
         },
         # -----------------------------------------------------------------

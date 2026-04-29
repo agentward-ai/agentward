@@ -8,7 +8,7 @@ the Evidence Pack without us needing to ship a real trading-firm
 MCP server stack.
 
 Usage in demo-mcp.json:
-    {"command": "python3", "args": ["mock-mcp-server.py", "--skill", "trading-engine"]}
+    {"command": "python3", "args": ["demo-tools-server.py", "--skill", "trading-engine"]}
 """
 from __future__ import annotations
 
