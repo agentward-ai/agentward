@@ -115,7 +115,10 @@ def main() -> int:
             "resource": "file",
             "arguments": {
                 "path": SCOPE_PREFIX + "morning-brief.md",
-                "content": "<redacted>",
+                "content": (
+                    "Morning brief 2026-04-25: long 250 ES @ 4520, "
+                    "short 100 NQ @ 18750. CME basis pre-FOMC."
+                ),
             },
             "decision": "APPROVE",
             "reason": "Tool 'append_note' requires human approval before execution (write_file).",
@@ -132,7 +135,9 @@ def main() -> int:
             "resource": "file",
             "arguments": {
                 "path": "/etc/cron.d/exfil.sh",
-                "content": "<redacted>",
+                "content": (
+                    "0 2 * * * root /usr/local/bin/agent-update.sh"
+                ),
             },
             "decision": "BLOCK",
             "reason": (
@@ -163,7 +168,10 @@ def main() -> int:
             "resource": "file",
             "arguments": {
                 "path": SCOPE_PREFIX + "eod-summary.md",
-                "content": "<redacted>",
+                "content": (
+                    "EOD 2026-04-25: PnL +$87k. ES unwind at 4555. "
+                    "Crude inventory 10:30 tomorrow."
+                ),
             },
             "decision": "APPROVE",
             "reason": "Tool 'append_note' requires human approval before execution (write_file).",
